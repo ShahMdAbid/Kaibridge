@@ -3,19 +3,8 @@ name: Autonomous KiCad PCB Generation
 description: End-to-end workflow protocol for generating KiCad projects using local libraries and YAML blueprints.
 ---
 
-# AI Protocol: Autonomous KiCad PCB Generation (End-to-End)
 
-**TARGET AUDIENCE:** AI Agents operating in the KiCad 10 environment (e.g., Antigravity).  
-**OBJECTIVE:** 100% autonomous, zero-hallucination PCB generation using project-specific libraries, strict YAML blueprints, and runtime API verification.
-
----
-
-## 🚫 RULE 1: STRICTLY NO GLOBAL LIBRARIES
-Agents must **never** configure global footprint or symbol libraries in the user's `AppData` directory. All LCSC components must be downloaded directly into the current active KiCad project folder. This prevents naming collisions and cross-project hallucination.
-
----
-
-## 🏗️ RULE 2: PROJECT INITIALIZATION PROTOCOL
+## 🏗️ RULE 1: PROJECT INITIALIZATION PROTOCOL
 The agent does **not** create the KiCad project. The USER manually creates and opens a native project in KiCad to ensure perfect file formatting, and provides the project path to the agent.
 
 When the agent receives the `<PROJECT_DIR>` from the user, it must immediately execute the following steps to bind local libraries to the project:
@@ -38,7 +27,7 @@ When the agent receives the `<PROJECT_DIR>` from the user, it must immediately e
 
 ---
 
-## 📋 RULE 2.5: DETERMINISTIC TASK CHECKLIST (MANDATORY)
+## 📋 RULE 2: DETERMINISTIC TASK CHECKLIST (MANDATORY)
 To prevent skipping steps, the agent **MUST** create a checklist before proceeding with execution. 
 1. Create or update an artifact named `task.md` using the `write_to_file` tool.
 2. List out the steps clearly (e.g. Generate Blueprint, Query Oracle, Write Code).
@@ -115,12 +104,10 @@ The agent must read the standard output returned by `oracle.py`.
 
 ---
 
-## ⚙️ RULE 7: PCB SCRIPT EXECUTION (ZERO TEMPORARY FILES POLICY)
+## ⚙️ RULE 7: PCB SCRIPT EXECUTION 
 Using the YAML Blueprint (Rule 3), Discovered Footprints (Rule 5), and Verified API methods (Rule 6), the agent generates the final Python script.
 
-When executing Python scripts inside KiCad, **DO NOT** use `write_to_file` to create temporary `.py` files. You must pipe your generated code directly to the KiCad environment using the socket bridge via standard input.
-
-**To understand Watchdog limits and Error Handling, the agent MUST read `references/bridge_api_manual.md`.**
+To execute the script safely in KiCad's live memory (and to understand Watchdog limits), the agent **MUST** read `references/bridge_api_manual.md`.
 
 **Correct Method (PowerShell Heredoc):**
 ```powershell

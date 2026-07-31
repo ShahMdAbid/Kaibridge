@@ -1,10 +1,12 @@
-# Agent Behavioral Rules
+## 🛠️ KiCad Project Protection and Skill Redirect
 
-## 🛑 Git Push Safety Rule
-**NEVER** execute `git push`, `git push -f`, or any command that modifies a remote repository without asking the user for explicit confirmation on the CURRENT turn. 
-Even if the user previously asked to "push to github" in an earlier conversation turn, if new commits, amends, or code changes have been made since then, you MUST ask for permission again before running the push command. 
+**Always** use the `kicad_agent_bridge.py` socket to apply changes safely in memory via the KiCad Python API.
 
-**Workflow:**
-1. Stage and commit the changes locally.
-2. Tell the user the commit is ready and ask: "Are you ready for me to push this to GitHub?"
-3. WAIT for the user to say yes before executing `run_command` with `git push`.
+If the user asks you to design, route, or modify a PCB in this workspace, you MUST NOT attempt to do it blindly. 
+Instead, you MUST immediately read `.agents/skills/kicad_autonomous_flow/SKILL.md` and strictly follow the KiCad Autonomous Flow protocols.
+
+##  Global Library Protection
+**NEVER** configure global footprint or symbol libraries in the user's `AppData` directory (e.g. `fp-lib-table` in roaming). All KiCad libraries (like LCSC assets) must be downloaded and mapped locally inside the current active project folder to prevent naming collisions and cross-project hallucination.
+
+##  Zero Temporary Files Policy
+When executing Python scripts inside KiCad via the bridge, **DO NOT** use `write_to_file` to create temporary `.py` scratch files on the disk. You must always pipe your generated code directly into the KiCad environment via standard input (e.g. using a PowerShell Heredoc).
