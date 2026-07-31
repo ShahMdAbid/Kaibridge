@@ -1,5 +1,5 @@
 ---
-name: Autonomous KiCad PCB Generation (End-to-End)
+name: Autonomous KiCad PCB Generation
 description: End-to-end workflow protocol for generating KiCad projects using local libraries and YAML blueprints.
 ---
 
@@ -120,6 +120,8 @@ Using the YAML Blueprint (Rule 3), Discovered Footprints (Rule 5), and Verified 
 
 When executing Python scripts inside KiCad, **DO NOT** use `write_to_file` to create temporary `.py` files. You must pipe your generated code directly to the KiCad environment using the socket bridge via standard input.
 
+**To understand Watchdog limits and Error Handling, the agent MUST read `references/bridge_api_manual.md`.**
+
 **Correct Method (PowerShell Heredoc):**
 ```powershell
 @'
@@ -132,3 +134,26 @@ board.Save()
 print("Executed directly in KiCad memory!")
 '@ | python kicad_agent_bridge.py --stdin
 ```
+
+---
+
+## 🔄 RULE 8: ITERATIVE DEVELOPMENT & STATE FETCHING
+Complex PCBs cannot always be routed in a single shot. If the user requests modifications to an existing board or asks for step-by-step routing, you MUST fetch the current state of the board before generating new layout code.
+
+**How to fetch state:**
+Because execution is strictly stateless, you must run the pre-built `currentboardfetcher.py` script via `kicad_agent_bridge.py` to extract the full JSON state of the board.
+
+**Command to run (Token-Efficient Summary):**
+```powershell
+@'
+import currentboardfetcher as fetcher
+import json
+# Fetch the 'summary' mode to avoid blowing out token limits (hides track geometries)
+ctx = fetcher.ai_context(mode="summary")
+print(json.dumps(ctx, indent=2, default=fetcher.safe_json_default))
+'@ | python kicad_agent_bridge.py --stdin
+```
+*(Note: If you need to filter the output, you can pipe the output through `jq` or Python to extract only what you need).*
+
+Read the JSON output to understand the board's current state, and ONLY THEN proceed to generate the next layout script following Rule 7.
+

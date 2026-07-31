@@ -1,65 +1,4 @@
-"""
-======================================================================
-AI AGENT INSTRUCTIONS: KiCad Remote Execution Bridge
-======================================================================
-This script lets an AI agent execute Python code inside a running KiCad
-PCB Editor, via the abIDE plugin. abIDE must be open in KiCad
-(Tools > External Plugins > abIDE) - it runs a small local TCP server
-for as long as its window stays open. There is no polling and no temp
-files: one connection = one request/response, answered as soon as
-KiCad's GUI thread is free.
-
-USAGE:
-  1) Run a script file (fresh, stateless namespace - the default):
-       python kicad_agent_bridge.py path/to/script.py [--timeout 30]
-  2) Run code via stdin - use this for anything non-trivial. It avoids
-     shell-quoting problems entirely, so it's the right default choice
-     for any multi-line or otherwise non-trivial snippet:
-       python kicad_agent_bridge.py --stdin --timeout 30 <<'PYEOF'
-       import pcbnew
-       board = pcbnew.GetBoard()
-       ...
-       PYEOF
-  3) Run inline code - only for genuine one-liners. Quoting gets fragile
-     fast for anything longer, so prefer --stdin as soon as the snippet
-     is more than a single simple statement:
-       python kicad_agent_bridge.py --code "print(1 + 1)"
-  4) Query the pcbnew API ("oracle" mode):
-       python kicad_agent_bridge.py --oracle "FOOTPRINT SetOrientationDegrees"
-  5) Opt into REPL-style continuity across calls:
-       python kicad_agent_bridge.py --stdin --keep-state <<'PYEOF'
-       board = pcbnew.GetBoard()
-       PYEOF
-       python kicad_agent_bridge.py --code "print(board.GetFileName())" --keep-state
-  6) Clear the shared namespace without running anything:
-       python kicad_agent_bridge.py --reset-state
-
-STATE: every agent call gets a completely fresh execution namespace by
-default - equivalent to starting a new Python process each time. This
-is deliberate: state silently leaking between calls (e.g. a stale
-`board` object left over from a script you ran five minutes ago) is a
-worse failure mode than a `NameError` from forgetting to re-import
-something, so the safe default absorbs the annoying failure, not the
-dangerous one.
-
-Pass --keep-state to opt into a shared, persistent namespace across
-calls instead (like a REPL) - only do this when you actually want
-continuity between calls. Note that KiCad's manual "Run" button in the
-abIDE window always uses that same shared namespace, since a human
-tracking their own context is a different situation from an agent that
-might not be. Pass --reset-state at any time (with or without
---keep-state) to wipe the shared namespace clean; call it with no other
-arguments to just reset without running anything.
-
-WARNING: Your code runs on KiCad's main GUI thread! Do NOT use infinite
-loops (`while True:`) or long `time.sleep()` calls, or you will freeze
-KiCad's UI until the process is killed. This is a KiCad/pcbnew
-constraint, not something this bridge can work around.
-
-If you get "KICAD NOT CONNECTED": abIDE is not open in KiCad. Tell the
-user to open it, then retry once. Do NOT search the filesystem.
-======================================================================
-"""
+"""CLI bridge for sending python commands to the KiCad abIDE plugin."""
 import sys
 import os
 import json
@@ -199,3 +138,4 @@ if __name__ == "__main__":
         parser.error("Must provide a script_path, --stdin, --code, an --oracle query, or --reset-state")
     run_kicad_code(args.script_path, args.stdin, args.code, args.oracle,
                     args.timeout, args.keep_state, args.reset_state)
+

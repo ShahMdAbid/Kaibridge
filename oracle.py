@@ -111,3 +111,4 @@ if __name__ == "__main__":
                 print(f"Invalid format: '{line}' -> Please use 'ClassName MethodName'")
     else:
         print(get_kicad_signature(file_content, args.class_name, args.method_name))
+

@@ -518,3 +518,4 @@ class ScriptRunnerPlugin(pcbnew.ActionPlugin):
     def Run(self):
         frame = ScriptRunnerFrame(None)
         frame.Show()
+

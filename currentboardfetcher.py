@@ -1058,3 +1058,4 @@ def quick_diff(board=None, against=None):
 if __name__ == "__main__":
     _b = pcbnew.GetBoard()
     print(json.dumps(get_full_board_state(_b), indent=2, default=safe_json_default))
+
