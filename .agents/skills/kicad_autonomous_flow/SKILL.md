@@ -94,10 +94,23 @@ Now that the agent has hard data from Rule 5 (exact pin names and counts), it ge
 
 ---
 
-## 👁️ RULE 7: BLUEPRINT VISUALIZATION & USER APPROVAL (PLACEHOLDER)
-*This rule will be implemented in a future update. It will use `yaml_visualizer.py` to render the YAML blueprint as an interactive HTML block diagram for the user to review before code execution.*
+## 👁️ RULE 7: REAL-SHAPE BLUEPRINT VISUALIZATION & USER APPROVAL
+After generating the YAML blueprint (Rule 6), the agent **MUST** visualize it using the real schematic symbol geometry from `.kicad_sym` files.
 
-**For now:** After generating the YAML, the agent must present the blueprint to the user in the chat and **explicitly ask for approval** before proceeding. The agent must NOT auto-proceed to Oracle queries or code execution without user confirmation.
+**Step 1 — Generate the visual:**
+```powershell
+python <PATH_TO_YOUR_PLUGIN>\yaml_visualizer.py "<PROJECT_DIR>\circuit_blueprint.yaml"
+```
+This reads `<PROJECT_DIR>/libs/easyeda2kicad/easyeda2kicad.kicad_sym` automatically and produces `<PROJECT_DIR>/blueprint_view.html`.
+
+**Step 2 — Present to the user:**
+Tell the user to open `blueprint_view.html` in their browser by explicitly providing a clickable file link in the chat (e.g. `[blueprint_view.html](file:///<PROJECT_DIR>/blueprint_view.html)`). The diagram shows real schematic symbol shapes with labeled pins and color-coded wires:
+- 🟠 Orange = Power, 🔵 Blue = Digital, 🟣 Purple = Analog
+- 🟢 Green = Bus, 🔵 Teal = PWM, 🟠 Deep Orange = Net
+- Pan with mouse drag, Zoom with scroll wheel.
+
+**Step 3 — Wait for approval:**
+The agent **MUST NOT** proceed to Rule 8 (Oracle Query) until the user explicitly approves the blueprint. If changes are requested, regenerate the YAML (Rule 6) and re-run the visualizer.
 
 ---
 

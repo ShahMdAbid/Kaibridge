@@ -6,6 +6,7 @@ This plugin connects external AI agents directly into KiCad (compatible with the
 
 - **Bypasses KiCad's Closed Terminal:** Pipe Python scripts from any external AI agent straight into KiCad via socket (`kicad_agent_bridge.py`). The included `.agents/` folder teaches your agentic IDE how to use the bridge and execute python scripts in KiCad.
 - **YAML Blueprinting Protocol:** Enforces a strict YAML-based hardware definition protocol. AI agents must draft the components, nets, and design intent before touching code.
+- **Interactive YAML Visualizer:** Automatically renders the YAML blueprint as an interactive SVG schematic (`yaml_visualizer.py`) using real KiCad symbol geometry from `.kicad_sym` files, requiring explicit user approval before execution.
 - **Built-in API Oracle:** Solves AI hallucination by querying exact KiCad 10 SWIG bindings via `oracle.py` rather than guessing.
 - **Multiple Inheritance Support:** Flawlessly climbs the C++ object tree to find hidden base methods.
 - **Iterative Development & State Fetching:** Agents can fetch exact component and unrouted net data in a token-optimized JSON format via `currentboardfetcher.py`.
