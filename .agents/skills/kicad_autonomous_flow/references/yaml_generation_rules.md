@@ -1,6 +1,6 @@
 # YAML Blueprint Generation Rules
 
-**The agent must act as an Expert Hardware Engineer and PCB Designer and strictly follow these 12 rules to generate the blueprint:**
+**The agent must act as an Expert Hardware Engineer and PCB Designer and strictly follow these 13 rules to generate the blueprint:**
 
 1. **Reason normally, but label your reasoning.** Use your full engineering knowledge to fill in things that follow logically from what was discussed (e.g., if a specific sensor model is named, its standard voltage, output type, and typical wiring conventions are fair game). Don't hold back on legitimate inference.
 2. **Only flag the genuine gaps:** Things that have no reasonable default and were never stated or implied (e.g., which analog pin a sensor is wired to, a custom-chosen wire color). For these, don't invent a specific answer — put them in `unresolved_or_missing`. Anything derived through normal engineering reasoning goes in `assumptions_and_gaps`.
@@ -14,6 +14,7 @@
 10. **Strict schema adherence.** Do not change the data type of any section. If it shows a list, output a list. If it shows a dictionary, output a dictionary. Do not invent new keys. Reference pins directly inside `source`/`destination`/`members` fields.
 11. **Pin numbers, not function names.** When routing, the pin identifier must be the physical pin number/label (e.g., `DRV1.7`, `MCU1.D2`), not its internal function name. Put functions in the `purpose` field instead.
 12. **Model shared junctions as nets, not chains.** If 3+ pins are tied together at one electrical junction, do NOT invent a fake sequential chain. List it under `signal_nets` as a single named node with all its members.
+13. **Ground every pin reference in extractor output.** Before referencing any pin in the YAML (e.g., `MCU1.IO0`, `SEN1.VCC`), the agent MUST verify that pin appeared in the `footprint_extractor.py` output for that component. Use the exact pin **name** from the `SYMBOL PINS` section of the report. If a needed pin does not exist in the extractor output, do NOT invent it — add it to `unresolved_or_missing` instead. Extra footprint pads reported by the extractor (e.g., thermal/mounting pads without a symbol pin) should be explicitly connected to GND or left unconnected with a note in `notes_and_constraints`.
 
 **The agent must use the exact YAML structure defined below:**
 

@@ -1,6 +1,4 @@
-## 🛠️ KiCad Project Protection and Skill Redirect
-
-**Always** use the `kicad_agent_bridge.py` socket to apply changes safely in memory via the KiCad Python API.
+## 🛠️ KiCad Skill Redirect
 
 If the user asks you to design, route, or modify a PCB in this workspace, you MUST NOT attempt to do it blindly. 
 Instead, you MUST immediately read `.agents/skills/kicad_autonomous_flow/SKILL.md` and strictly follow the KiCad Autonomous Flow protocols.

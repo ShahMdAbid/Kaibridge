@@ -30,49 +30,78 @@ When the agent receives the `<PROJECT_DIR>` from the user, it must immediately e
 ## 📋 RULE 2: DETERMINISTIC TASK CHECKLIST (MANDATORY)
 To prevent skipping steps, the agent **MUST** create a checklist before proceeding with execution. 
 1. Create or update an artifact named `task.md` using the `write_to_file` tool.
-2. List out the steps clearly (e.g. Generate Blueprint, Query Oracle, Write Code).
+2. List out the steps clearly (e.g. Identify Components, Download, Extract Pins, Generate Blueprint, Query Oracle, Write Code).
 3. Update the checklist (`[ ]` to `[x]`) as you progress through the workflow. Do NOT proceed to the next step until the current one is validated.
 
 ---
 
-## 📝 RULE 3: GENERATE BLUEPRINT (YAML)
-Before importing parts or writing any KiCad layout code, the agent **MUST** generate a structured YAML `circuit_blueprint`. This YAML file acts as the single source of truth for the BOM (Bill of Materials) and Netlist.
+## 🔎 RULE 3: COMPONENT IDENTIFICATION
+Before downloading anything, the agent must analyze the user's prompt, conversation history, and any hand-drawn diagrams to determine exactly which physical components are needed.
 
-**To generate this blueprint correctly, the agent MUST read and strictly follow the 12 expert engineering rules and the exact YAML structure defined in `references/yaml_generation_rules.md`.**
+**For each component the agent must determine:**
+1. **What it is:** e.g., "ESP32 module", "10kΩ pull-up resistor", "SSD1306 OLED display".
+2. **Its LCSC part number:** e.g., `C2913202`. 
+
+**If the user did NOT provide an LCSC ID**, the agent must **ask the user** for the specific LCSC part number rather than guessing. The agent should suggest what to search for on [JLCPCB Parts](https://jlcpcb.com/parts) to help the user find the right part.
+
+**The agent must NEVER proceed to Rule 4 without a confirmed LCSC ID for every component.**
 
 ---
 
-## 📥 RULE 4: LCSC COMPONENT IMPORT PROTOCOL
-Extract the required LCSC IDs from the YAML Blueprint and import the physical assets directly into the project directory using `run_command`.
+## 📥 RULE 4: LCSC COMPONENT IMPORT + VALIDATION
+Using the confirmed LCSC IDs from Rule 3, download the physical assets (footprints + symbols) directly into the project directory.
 
-**Command Structure:**
+**Step 1 — Download:**
 ```bash
 mkdir -Force "<PROJECT_DIR>/libs/easyeda2kicad"
 easyeda2kicad --lcsc_id <LCSC_ID_1> <LCSC_ID_2> --full --output "<PROJECT_DIR>/libs/easyeda2kicad"
 ```
 *Note: You must manually create the `libs/easyeda2kicad` directory using `mkdir` before running `easyeda2kicad`, otherwise it will fail with a folder not found error.*
 
+**Step 2 — Validate the download:**
+After the command completes, the agent **MUST verify** that every requested LCSC ID produced output files:
+1. Check that a `.kicad_mod` file exists in `<PROJECT_DIR>/libs/easyeda2kicad/easyeda2kicad.pretty/` for each component.
+2. Check that the `.kicad_sym` file at `<PROJECT_DIR>/libs/easyeda2kicad/easyeda2kicad.kicad_sym` exists and is non-empty.
+
+**If any component is missing**, the agent must stop and report the failure to the user (e.g., wrong LCSC ID, discontinued part, network error). Do NOT proceed with missing components.
+
 ---
 
-## 🔍 RULE 5: COMPONENT DISCOVERY (ANTI-HALLUCINATION)
-After a successful import, the agent must **never guess** the generated KiCad footprint names. To map the YAML components to physical KiCad footprints, execute the following Python snippet:
+## 📌 RULE 5: FULL PIN EXTRACTION (ANTI-HALLUCINATION)
+After a validated download, the agent must run `footprint_extractor.py` to discover the **exact** pin names, pad numbers, and electrical types for every downloaded component. The agent must **never guess or assume** pin configurations.
 
-```python
-import os
-import glob
-
-pretty_dir = r"C:\Path\To\NewProject\libs\easyeda2kicad\easyeda2kicad.pretty"
-footprints = [os.path.splitext(os.path.basename(f))[0] 
-              for f in glob.glob(os.path.join(pretty_dir, "*.kicad_mod"))]
-
-for fp in footprints:
-    print(f"Discovered Footprint: {fp}")
+**Command:**
+```powershell
+python <PATH_TO_YOUR_PLUGIN>\footprint_extractor.py "<PROJECT_DIR>\libs\easyeda2kicad"
 ```
-*Use the exact strings printed by this script for all subsequent placement instructions.*
+
+**What the extractor reports for each component:**
+- **Symbol Pins:** The logical pin names (e.g., `GND`, `3V3`, `IO0`) and their electrical types (e.g., `power_in`, `bidirectional`). These are the names the agent will use in the YAML blueprint.
+- **Footprint Pads:** The physical pad numbers and mount types (e.g., `Pad 1 (smd, rect)`).
+- **Pin-to-Pad Cross-Reference:** Which logical pin maps to which physical pad.
+- **Extra Pads:** Pads that have no symbol pin (e.g., thermal/mounting pads). These must still be connected to the correct net (usually GND) in the YAML.
+
+**The agent MUST read and internalize this output before proceeding to YAML generation.** Any pin name not listed in this output **does not exist** and must not be used.
 
 ---
 
-## 🧠 RULE 6: AUTONOMOUS ORACLE QUERY
+## 📝 RULE 6: GENERATE BLUEPRINT (YAML)
+Now that the agent has hard data from Rule 5 (exact pin names and counts), it generates the structured YAML `circuit_blueprint`. This YAML file acts as the single source of truth for the BOM (Bill of Materials) and Netlist.
+
+**To generate this blueprint correctly, the agent MUST read and strictly follow the 13 expert engineering rules and the exact YAML structure defined in `references/yaml_generation_rules.md`.**
+
+**Critical constraint:** Every pin referenced in the YAML (e.g., `MCU1.IO0`, `SEN1.VCC`) **must** come from the extractor output (Rule 5). If a needed pin does not appear in the extractor report, the agent must flag it in `unresolved_or_missing` rather than inventing a pin name.
+
+---
+
+## 👁️ RULE 7: BLUEPRINT VISUALIZATION & USER APPROVAL (PLACEHOLDER)
+*This rule will be implemented in a future update. It will use `yaml_visualizer.py` to render the YAML blueprint as an interactive HTML block diagram for the user to review before code execution.*
+
+**For now:** After generating the YAML, the agent must present the blueprint to the user in the chat and **explicitly ask for approval** before proceeding. The agent must NOT auto-proceed to Oracle queries or code execution without user confirmation.
+
+---
+
+## 🧠 RULE 8: AUTONOMOUS ORACLE QUERY
 Before generating the final PCB layout Python script, the agent **MUST NOT guess or hallucinate** any KiCad 10 API method names or signatures. KiCad 10's Python API (SWIG bindings) differs significantly from KiCad 5/6/7. Your internal training data is likely outdated. The agent must autonomously query the KiCad API Oracle (`oracle.py`).
 
 **Step 1: Analyze and Map Needed APIs**
@@ -104,8 +133,8 @@ The agent must read the standard output returned by `oracle.py`.
 
 ---
 
-## ⚙️ RULE 7: PCB SCRIPT EXECUTION 
-Using the YAML Blueprint (Rule 3), Discovered Footprints (Rule 5), and Verified API methods (Rule 6), the agent generates the final Python script.
+## ⚙️ RULE 9: PCB SCRIPT EXECUTION 
+Using the YAML Blueprint (Rule 6), Discovered Pins/Footprints (Rule 5), and Verified API methods (Rule 8), the agent generates the final Python script.
 
 To execute the script safely in KiCad's live memory (and to understand Watchdog limits), the agent **MUST** read `references/bridge_api_manual.md`.
 
@@ -124,7 +153,7 @@ print("Executed directly in KiCad memory!")
 
 ---
 
-## 🔄 RULE 8: ITERATIVE DEVELOPMENT & STATE FETCHING
+## 🔄 RULE 10: ITERATIVE DEVELOPMENT & STATE FETCHING
 Complex PCBs cannot always be routed in a single shot. If the user requests modifications to an existing board or asks for step-by-step routing, you MUST fetch the current state of the board before generating new layout code.
 
 **How to fetch state:**
@@ -142,5 +171,4 @@ print(json.dumps(ctx, indent=2, default=fetcher.safe_json_default))
 ```
 *(Note: If you need to filter the output, you can pipe the output through `jq` or Python to extract only what you need).*
 
-Read the JSON output to understand the board's current state, and ONLY THEN proceed to generate the next layout script following Rule 7.
-
+Read the JSON output to understand the board's current state, and ONLY THEN proceed to generate the next layout script following Rule 9.
