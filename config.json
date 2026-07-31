@@ -1,5 +1,0 @@
-{
-    "last_script_path": "",
-    "last_code": "\nimport pcbnew\nboard = pcbnew.GetBoard()\nrefs = [f\"U{i}\" for i in range(1, 9)]\nfor ref in refs:\n    fp = board.FindFootprintByReference(ref)\n    if fp:\n        current = fp.GetOrientationDegrees()\n        new_ori = (current - 90.0) % 360.0\n        fp.SetOrientationDegrees(new_ori)\n        print(f\"{ref} rotated from {current}\u00b0 to {new_ori}\u00b0\")\npcbnew.UpdateUserInterface()\npcbnew.Refresh()\nprint(\"All LEDs rotated backward by 90 degrees.\")\n",
-    "favorite_scripts": []
-}

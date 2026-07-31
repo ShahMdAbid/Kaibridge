@@ -153,7 +153,13 @@ def run_kicad_code(script_path=None, code_stdin=False, inline_code=None,
             print("--- KICAD ERROR ---")
             print("Connection closed by abIDE with no response.")
             return
-        resp = json.loads(raw.decode('utf-8'))
+        try:
+            resp = json.loads(raw.decode('utf-8'))
+        except json.JSONDecodeError:
+            print("--- KICAD ERROR ---")
+            print("Zombie Port Detected! Connected to a wrong program.")
+            print("Please reopen the abIDE window in KiCad to refresh the port.")
+            return
         status = resp.get("status", "unknown")
         output = resp.get("output", "")
         print(f"--- KICAD {status.upper()} ---")

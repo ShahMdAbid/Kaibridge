@@ -9,7 +9,6 @@ import traceback
 import io
 import time
 
-CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.json")
 PORT_FILE = os.path.join(os.path.dirname(__file__), "kicad_agent_bridge.port")
 DEBUG_LOG = os.path.join(os.path.dirname(__file__), "kicad_agent_bridge_debug.log")
 
@@ -38,21 +37,6 @@ class ScriptRunnerFrame(wx.Frame):
         self.btn_browse.Bind(wx.EVT_BUTTON, self.OnBrowse)
         hbox1.Add(self.btn_browse, flag=wx.ALIGN_CENTER_VERTICAL | wx.LEFT, border=8)
         vbox_file.Add(hbox1, proportion=0, flag=wx.EXPAND | wx.ALL, border=20)
-        hbox_fav_lbl = wx.BoxSizer(wx.HORIZONTAL)
-        lbl_fav = wx.StaticText(self.tab_file, label="Favorite Scripts (Max 5):")
-        hbox_fav_lbl.Add(lbl_fav, flag=wx.ALIGN_CENTER_VERTICAL)
-        vbox_file.Add(hbox_fav_lbl, flag=wx.LEFT | wx.RIGHT, border=20)
-        self.lst_favorites = wx.ListBox(self.tab_file, style=wx.LB_SINGLE)
-        self.lst_favorites.Bind(wx.EVT_LISTBOX, self.OnFavoriteSelect)
-        vbox_file.Add(self.lst_favorites, proportion=1, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, border=10)
-        hbox_fav_btns = wx.BoxSizer(wx.HORIZONTAL)
-        self.btn_add_fav = wx.Button(self.tab_file, label="Add to Favorites")
-        self.btn_add_fav.Bind(wx.EVT_BUTTON, self.OnFavoriteAdd)
-        hbox_fav_btns.Add(self.btn_add_fav, flag=wx.RIGHT, border=10)
-        self.btn_remove_fav = wx.Button(self.tab_file, label="Remove Selected")
-        self.btn_remove_fav.Bind(wx.EVT_BUTTON, self.OnFavoriteRemove)
-        hbox_fav_btns.Add(self.btn_remove_fav)
-        vbox_file.Add(hbox_fav_btns, flag=wx.ALIGN_CENTER | wx.ALL, border=10)
         self.tab_file.SetSizer(vbox_file)
         self.tab_code = wx.Panel(self.notebook)
         vbox_code = wx.BoxSizer(wx.VERTICAL)
@@ -109,7 +93,6 @@ class ScriptRunnerFrame(wx.Frame):
         self.CenterOnScreen()
         self.Bind(wx.EVT_CLOSE, self.OnCloseWindow)
         self.notebook.Bind(wx.EVT_NOTEBOOK_PAGE_CHANGED, self.OnTabChanged)
-        self.load_config()
 
         # Shared execution namespace: OPT-IN only. The manual "Run" button
         # always uses this (a human tracking their own context is a
@@ -315,6 +298,24 @@ class ScriptRunnerFrame(wx.Frame):
             globals_dict['__name__'] = '__main__'
         had_file = '__file__' in globals_dict
         old_file = globals_dict.get('__file__')
+
+        # --- WATCHDOG SETUP ---
+        start_time = time.time()
+        instruction_count = [0]
+        timeout_seconds = 15.0
+
+        def trace_calls(frame, event, arg):
+            instruction_count[0] += 1
+            if instruction_count[0] > 1000:
+                instruction_count[0] = 0
+                if time.time() - start_time > timeout_seconds:
+                    raise Exception(f"Execution timed out ({timeout_seconds}s limit exceeded). Killed by abIDE Watchdog to prevent KiCad freeze.")
+            return trace_calls
+
+        old_trace = sys.gettrace()
+        sys.settrace(trace_calls)
+        # ----------------------
+
         try:
             if is_file_mode:
                 sys.argv = [path]
@@ -334,6 +335,7 @@ class ScriptRunnerFrame(wx.Frame):
         except Exception:
             error_tb = traceback.format_exc()
         finally:
+            sys.settrace(old_trace)
             sys.stdout = old_stdout
             sys.stderr = old_stderr
             sys.argv = old_argv
@@ -470,35 +472,6 @@ class ScriptRunnerFrame(wx.Frame):
             self.txt_path.SetValue(dialog.GetPath())
         dialog.Destroy()
 
-    def OnFavoriteSelect(self, event):
-        sel = self.lst_favorites.GetSelection()
-        if sel != wx.NOT_FOUND:
-            self.txt_path.SetValue(self.lst_favorites.GetString(sel))
-
-    def OnFavoriteAdd(self, event):
-        path = self.txt_path.GetValue().strip()
-        if not path:
-            return
-        if not os.path.exists(path):
-            wx.MessageBox("Path does not exist!", "Error", wx.OK | wx.ICON_ERROR)
-            return
-        if path in self.favorite_scripts:
-            wx.MessageBox("Already in favorites!", "Info", wx.OK | wx.ICON_INFORMATION)
-            return
-        if len(self.favorite_scripts) >= 5:
-            wx.MessageBox("You can only have up to 5 favorite scripts. Please remove one first.", "Limit Reached", wx.OK | wx.ICON_WARNING)
-            return
-        self.favorite_scripts.append(path)
-        self.lst_favorites.Append(path)
-
-    def OnFavoriteRemove(self, event):
-        sel = self.lst_favorites.GetSelection()
-        if sel != wx.NOT_FOUND:
-            path = self.lst_favorites.GetString(sel)
-            self.lst_favorites.Delete(sel)
-            if path in self.favorite_scripts:
-                self.favorite_scripts.remove(path)
-
     def OnRun(self, event):
         active_tab = self.notebook.GetSelection()
         path = self.txt_path.GetValue().strip()
@@ -513,7 +486,6 @@ class ScriptRunnerFrame(wx.Frame):
                 is_file_mode = False
         if active_tab == 1:
             is_file_mode = False
-        self.save_config()
         if is_file_mode:
             if not path or not os.path.exists(path):
                 wx.MessageBox("Please select a valid Python script file.", "File Not Found", wx.OK | wx.ICON_ERROR, self)
@@ -533,51 +505,8 @@ class ScriptRunnerFrame(wx.Frame):
 
     def OnCloseWindow(self, event):
         self.stop_agent_server()
-        config = {
-            "last_script_path": self.txt_path.GetValue(),
-            "last_code": self.txt_code.GetValue(),
-            "favorite_scripts": getattr(self, 'favorite_scripts', [])
-        }
-        try:
-            with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
-                json.dump(config, f, indent=4)
-        except:
-            pass
         event.Skip()
 
-    def load_config(self):
-        self.favorite_scripts = []
-        if os.path.exists(CONFIG_FILE):
-            try:
-                with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                path = data.get("last_script_path", "")
-                if path and os.path.exists(path):
-                    self.txt_path.SetValue(path)
-                self.favorite_scripts = data.get("favorite_scripts", [])
-                for f in self.favorite_scripts:
-                    self.lst_favorites.Append(f)
-                code = data.get("last_code", "")
-                if code:
-                    self.txt_code.SetValue(code)
-                tab_idx = data.get("active_tab", 0)
-                if tab_idx == 2:
-                    tab_idx = 0
-                if 0 <= tab_idx < self.notebook.GetPageCount():
-                    self.notebook.SetSelection(tab_idx)
-            except Exception as e:
-                pass
-
-    def save_config(self):
-        try:
-            with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
-                json.dump({
-                    "script_path": self.txt_path.GetValue(),
-                    "snippet_code": self.txt_code.GetValue(),
-                    "active_tab": self.notebook.GetSelection()
-                }, f, indent=4, ensure_ascii=False)
-        except:
-            pass
 
 
 class ScriptRunnerPlugin(pcbnew.ActionPlugin):

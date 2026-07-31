@@ -12,8 +12,8 @@ It connects external AI agents directly into KiCad (compatible with the latest v
 ### How to Use
 
 **1. Installation**
-- Copy this entire folder into your KiCad 10 `scripting/plugins/` directory.
-- Open KiCad and click the abIDE icon to start the bridge GUI.
+- Clone or copy this entire folder into your KiCad 10 `scripting/plugins/` directory.
+- Open KiCad (PCB Editor) and click the abIDE icon to start the bridge GUI.
 
 **2. Querying the Oracle (For AI Agents)**
 Search for method signatures using standard input:
