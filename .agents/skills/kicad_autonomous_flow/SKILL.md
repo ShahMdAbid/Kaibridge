@@ -25,23 +25,13 @@ If any command returns a non-zero exit code, an `EXECUTION ERROR`, or `KICAD NOT
 ## 🏗️ RULE 1: PROJECT INITIALIZATION PROTOCOL
 The agent does **not** create the KiCad project. The USER manually creates and opens a native project in KiCad to ensure perfect file formatting, and provides the project path to the agent.
 
-When the agent receives the `<PROJECT_DIR>` from the user, it must immediately execute the following steps to bind local libraries to the project:
+When the agent receives the `<PROJECT_DIR>` from the user, it must immediately execute the following to bind local libraries:
 
-1. **Generate Local Footprint Table (`<PROJECT_DIR>/fp-lib-table`)**:
-   Write the following exact content to define a project-relative (`${KIPRJMOD}`) footprint library:
-   ```lisp
-   (fp_lib_table
-     (lib (name "easyeda2kicad") (type "KiCad") (uri "${KIPRJMOD}/libs/easyeda2kicad/easyeda2kicad.pretty") (options "") (descr "Local LCSC Footprints"))
-   )
-   ```
+```powershell
+python <PLUGIN_DIR>\lib_table_writer.py "<PROJECT_DIR>"
+```
 
-2. **Generate Local Symbol Table (`<PROJECT_DIR>/sym-lib-table`)**:
-   Write the following exact content to define a project-relative symbol library:
-   ```lisp
-   (sym_lib_table
-     (lib (name "easyeda2kicad") (type "KiCad") (uri "${KIPRJMOD}/libs/easyeda2kicad/easyeda2kicad.kicad_sym") (options "") (descr "Local LCSC Symbols"))
-   )
-   ```
+This safely upserts the `easyeda2kicad` library into the project's `fp-lib-table` and `sym-lib-table` **without touching or shadowing** KiCad's global libraries (Device, Resistor_SMD, etc.). The agent MUST NEVER manually write library table files or use nicknames reserved by KiCad's global set.
 
 ---
 
@@ -53,57 +43,48 @@ To prevent skipping steps, the agent **MUST** create a checklist before proceedi
 
 ---
 
-## 🔎 RULE 3: COMPONENT IDENTIFICATION & INTAKE (§4.2)
+## 🔎 RULE 3: COMPONENT IDENTIFICATION & INTAKE (§4.2) — HYBRID MODEL
 Before downloading anything, the agent must collect **all** required information in a **single message**. Do not scatter these questions across multiple rounds.
 
 **Ask the user for ALL of the following at once:**
 1. **Board dimensions:** width × height in mm
 2. **Layer count:** 2 or 4
-3. **For each component:** A functional description for search
+3. **For each component:** A functional description (e.g., "10k 0603 resistor", "ESP32 module")
 
-The agent describes each component as a PartSpec — never an LCSC ID.
-Write `<PROJECT_DIR>/parts_spec.yaml` using the component_requirements schema.
-The agent MUST NOT write an lcsc_id field anywhere by hand.
+**Component Classification:**
+The agent MUST classify each component as either **`native`** or **`lcsc`**:
+- **`native`** — Generic passives (resistors, capacitors, inductors, LEDs, diodes, pin headers, crystals, fuses, test points). These use KiCad's built-in library and require ZERO network access.
+- **`lcsc`** — Complex ICs, modules, regulators, specific connectors, sensors, or any part not in KiCad's default library. These are resolved via the JLCPCB search API and downloaded using `easyeda2kicad`.
 
-## ✅ RULE 3.5: AUTONOMOUS PART RESOLUTION (MANDATORY GATE)
-```powershell
-python <PLUGIN_DIR>\part_resolver.py --spec "<PROJECT_DIR>\parts_spec.yaml" --out "<PROJECT_DIR>\resolved_parts.json"
+**For native parts**, the agent MUST use `component_classifier.py` to derive the correct `symbol` and `footprint` from the user's plain-language description. The agent MUST NOT guess or hand-type KiCad library names. Example:
+```python
+from component_classifier import classify_component
+r = classify_component("10k 1% 0603 pullup", ref="R1")
+# r.entry -> { "symbol": "Device:R", "footprint": "Resistor_SMD:R_0603_1608Metric", ... }
 ```
+
+**For LCSC parts**, the agent writes a `requirements` block (query, mpn, package, etc.) and leaves `lcsc_id: null`. The resolver will fill it in.
+
+Write `<PROJECT_DIR>/parts_spec.yaml` using the hybrid schema (see `hybrid_pipeline.py` for the exact format).
+The agent MUST NOT write an `lcsc_id` field by hand.
+
+## ✅ RULE 3.5: UNIFIED RESOLUTION & DOWNLOAD (MANDATORY GATE)
+```powershell
+python <PLUGIN_DIR>\hybrid_pipeline.py --project "<PROJECT_DIR>" --spec "<PROJECT_DIR>\parts_spec.yaml"
+```
+
+This single command handles BOTH native validation AND LCSC resolution+download:
+- **Native parts** are validated against the local KiCad installation (footprint/symbol existence, pad count). No network needed.
+- **LCSC parts** are resolved via `part_resolver.py`, verified via `easyeda_client.py`, and downloaded via `easyeda2kicad` in a single batch.
+- Output: `<PROJECT_DIR>/build_manifest.json` — a unified list of all resolved parts.
 
 Exit code contract:
-- 0  AUTO       -> every part resolved with high confidence. Proceed to Rule 4.
-- 2  AMBIGUOUS  -> STOP. Present the scored shortlist (ID, MPN, package, stock, reasons) to the user and ask which to use. Never pick one yourself when the resolver refused to.
-- 1  REJECT     -> STOP. No viable part. Report the disqualification reasons and ask the user to loosen the requirement, OR ask the user to manually search jlcpcb.com/parts and provide the exact LCSC ID.
+- 0  ALL OK     -> every part resolved/validated. Proceed to Rule 5.
+- 2  AMBIGUOUS  -> STOP. Present the scored shortlist to the user for LCSC parts, or the `suggest_footprint()` near-misses for native parts. Ask the user which to use.
+- 1  REJECT     -> STOP. Report the failure reasons. For LCSC: ask the user to provide a manual LCSC ID from jlcpcb.com/parts. For native: fix the typo or switch to LCSC source.
 
-If the resolver completely fails (REJECT) or if the API is unreachable, the agent MUST ask the user to manually find and provide the correct LCSC ID.
+If the pipeline completely fails or the API is unreachable for LCSC parts, the agent MUST ask the user to manually provide the correct LCSC ID.
 
-Only LCSC IDs found in resolved_parts.json with status AUTO (or explicitly confirmed by the user) may be passed to easyeda2kicad in Rule 4.
-
----
-
-## 📥 RULE 4: LCSC COMPONENT IMPORT + VALIDATION
-Using the confirmed LCSC IDs from Rule 3, download the physical assets (footprints + symbols) directly into the project directory.
-
-**Step 1 — Download:**
-```powershell
-mkdir -Force "<PROJECT_DIR>/libs/easyeda2kicad"
-easyeda2kicad --lcsc_id <LCSC_ID_1> <LCSC_ID_2> --full --output "<PROJECT_DIR>/libs/easyeda2kicad"
-```
-*Note: You must manually create the `libs/easyeda2kicad` directory using `mkdir` before running `easyeda2kicad`, otherwise it will fail with a folder not found error.*
-
-**Step 2 — Validate the download:**
-After the command completes, the agent **MUST verify** that every requested LCSC ID produced output files:
-1. Check that a `.kicad_mod` file exists in `<PROJECT_DIR>/libs/easyeda2kicad/easyeda2kicad.pretty/` for each component.
-2. Check that the `.kicad_sym` file at `<PROJECT_DIR>/libs/easyeda2kicad/easyeda2kicad.kicad_sym` exists and is non-empty.
-
-**Step 3 — Post-Download Gate:**
-After easyeda2kicad completes, for every component run:
-```powershell
-python <PLUGIN_DIR>\part_resolver.py --verify-download <LCSC_ID> "<PROJECT_DIR>\libs\easyeda2kicad"
-```
-Non-zero exit = the file on disk does not match what was resolved. Do NOT proceed to Rule 5.
-
-**If any component is missing or fails verification**, the agent must stop and report the failure to the user (e.g., wrong LCSC ID, discontinued part, network error). Do NOT proceed with missing components.
 
 ---
 
