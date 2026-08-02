@@ -117,26 +117,23 @@ Now that the agent has hard data from Rule 5 (exact pin names and counts), it ge
 
 ---
 
-## 👁️ RULE 7: REAL-SHAPE BLUEPRINT VISUALIZATION & USER APPROVAL
-After generating the YAML blueprint (Rule 6), the agent **MUST** visualize it using the real schematic symbol geometry from `.kicad_sym` files.
+## 👁️ RULE 7: NATIVE SCHEMATIC GENERATION & USER APPROVAL
+After generating the YAML blueprint (Rule 6), the agent **MUST** compile it into a native KiCad schematic using `blueprint_to_sch.py`. This provides a flawless visual representation of the logic and primes the KiCad project for physical layout.
 
-**Step 1 — Generate the visual:**
+**Step 1 — Generate the Schematic:**
 ```powershell
-python <PLUGIN_DIR>\yaml_visualizer.py "<PROJECT_DIR>\circuit_blueprint.yaml"
+python <PLUGIN_DIR>\blueprint_to_sch.py "<PROJECT_DIR>\circuit_blueprint.yaml" --lib "<PROJECT_DIR>\libs\easyeda2kicad\easyeda2kicad.kicad_sym" --out "<PROJECT_DIR>\<PROJECT_NAME>.kicad_sch" --emit-project --project-name "<PROJECT_NAME>"
 ```
-This reads `<PROJECT_DIR>/libs/easyeda2kicad/easyeda2kicad.kicad_sym` automatically and produces `<PROJECT_DIR>/blueprint_view.html`.
+*Note: Replace `<PROJECT_NAME>` with the actual name of the project file (e.g., if the project is `testxyz.kicad_pro`, use `testxyz`).*
 
 **Step 2 — Present to the user:**
-Tell the user to open `blueprint_view.html` in their browser by explicitly providing a clickable file link in the chat (e.g. `[blueprint_view.html](file:///<PROJECT_DIR>/blueprint_view.html)`). The diagram shows real schematic symbol shapes with labeled pins and color-coded wires:
-- 🟠 Orange = Power, 🔵 Blue = Digital, 🟣 Purple = Analog
-- 🟢 Green = Bus, 🔵 Teal = PWM, 🟠 Deep Orange = Net
-- Pan with mouse drag, Zoom with scroll wheel.
+Tell the user to open `<PROJECT_NAME>.kicad_sch` directly in their KiCad Schematic Editor. The generated schematic will show real symbol shapes, perfectly wired using stub wires and net labels.
 
 **Step 3 — Wait for approval:**
-The agent **MUST NOT** proceed to Rule 8 (Oracle Query) until the user explicitly approves the blueprint.
-- **CRITICAL GATE:** Check the `RESULT: {"unresolved": N, "refs": [...]}` line printed by the visualizer. If `unresolved > 0` (or if the visualizer crashes without printing the line), the agent **MUST NOT** present the file to the user for approval. It must attempt to fix the YAML blueprint and re-run the visualizer **ONCE**. 
-- If the warning persists after 1 retry, stop and report the exact missing `refs` list verbatim in the chat to the user so they can diagnose the hallucinated pads.
-- If the user requests manual changes, regenerate the YAML (Rule 6) and re-run the visualizer.
+The agent **MUST NOT** proceed to Rule 8 (Oracle Query / F8 Sync) until the user explicitly approves the schematic.
+- **CRITICAL GATE:** Check the `stdout/stderr` of `blueprint_to_sch.py`. If it warns about missing symbols or unparsed pins, it will generate placeholders. If placeholders are generated, the agent **MUST NOT** ask for approval yet. It must attempt to fix the YAML blueprint and re-run the generator **ONCE**.
+- If the warning persists, stop and report the exact warnings verbatim in the chat so the user can diagnose the hallucinated pads or missing symbols.
+- If the user requests manual changes, regenerate the YAML (Rule 6) and re-run the generator.
 
 ---
 
@@ -185,16 +182,12 @@ The agent MUST:
 7. DO NOT route traces yet.
 
 **YAML to KiCad Net Mapping Logic:**
-The agent must extract nets from the YAML blueprint using the following logic to create `NETINFO_ITEM`s and assign pads:
-
-| YAML Section | How to generate the net |
-|---|---|
-| `power_distribution.<net_name>` | Net `<net_name>` → members: `[source] + [connections]` |
-| `signal_routing.digital_signals[i]` | Net `digital_sig_<i>` → members: `[source, destination]` |
-| `signal_routing.analog_signals[i]` | Net `analog_sig_<i>` → members: `[source, destination]` |
-| `signal_routing.pwm_signals[i]` | Net `pwm_sig_<i>` → members: `[source, destination]` |
-| `signal_nets[i]` | Net `<net_name>` → members: `[members]` |
-| `communication_buses.<bus_type>[i].<line>`| Net `<bus_type><id>_<line>` → members: `[source] + [destinations]` |
+The agent must extract nets from the YAML blueprint's `nets` dictionary to create `NETINFO_ITEM`s and assign pads. The `nets` section is a simple key-value dictionary where the key is the net name (e.g., `GND`, `VCC`, `SIG_IN`) and the value is a list of pin strings (`Ref.Pin`):
+```python
+for net_name, pins in blueprint.get("nets", {}).items():
+    # create NETINFO_ITEM for net_name
+    # for pin in pins: split by '.' and assign pad to net
+```
 
 To execute the script safely in KiCad's live memory (and to understand Watchdog limits), the agent **MUST** read `references/bridge_api_manual.md`.
 
