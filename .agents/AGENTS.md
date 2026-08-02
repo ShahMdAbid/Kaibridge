@@ -8,3 +8,6 @@ Instead, you MUST immediately read `.agents/skills/kicad_autonomous_flow/SKILL.m
 
 ##  Zero Scratch Script Policy
 When executing Python scripts inside KiCad via the bridge, **DO NOT** use `write_to_file` to create temporary `.py` scratch files on the disk. You must always pipe your generated code directly into the KiCad environment via standard input (e.g. using a PowerShell Heredoc). Persistent project artifacts (`task.md`, YAML blueprints, state snapshots) are expected and allowed.
+
+## Local Cache Policy
+**NEVER** create `.part_cache` or any other temporary caching files in the global plugin directory (`abIDE-main`). All caching, temp files, and trial downloads must be generated cleanly inside the active `<PROJECT_DIR>` where the work is happening, so as to avoid polluting the plugin's root directory.

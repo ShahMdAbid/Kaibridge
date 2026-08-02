@@ -2,4 +2,7 @@
 kicad_agent_bridge.port
 kicad_agent_bridge_debug.log
 __pycache__/
+.part_cache/
+scratch_test/
+
 

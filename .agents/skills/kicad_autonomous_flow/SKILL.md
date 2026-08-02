@@ -59,11 +59,25 @@ Before downloading anything, the agent must collect **all** required information
 **Ask the user for ALL of the following at once:**
 1. **Board dimensions:** width × height in mm
 2. **Layer count:** 2 or 4
-3. **For each component:** A description AND its LCSC part number (e.g., `C2913202`)
+3. **For each component:** A functional description for search
 
-**If the user did NOT provide an LCSC ID**, the agent must **ask the user** for the specific LCSC part number rather than guessing. The agent should suggest what to search for on [JLCPCB Parts](https://jlcpcb.com/parts) to help the user find the right part.
+The agent describes each component as a PartSpec — never an LCSC ID.
+Write `<PROJECT_DIR>/parts_spec.yaml` using the component_requirements schema.
+The agent MUST NOT write an lcsc_id field anywhere by hand.
 
-**The agent must NEVER proceed to Rule 4 without a confirmed LCSC ID for every component.**
+## ✅ RULE 3.5: AUTONOMOUS PART RESOLUTION (MANDATORY GATE)
+```powershell
+python <PLUGIN_DIR>\part_resolver.py --spec "<PROJECT_DIR>\parts_spec.yaml" --out "<PROJECT_DIR>\resolved_parts.json"
+```
+
+Exit code contract:
+- 0  AUTO       -> every part resolved with high confidence. Proceed to Rule 4.
+- 2  AMBIGUOUS  -> STOP. Present the scored shortlist (ID, MPN, package, stock, reasons) to the user and ask which to use. Never pick one yourself when the resolver refused to.
+- 1  REJECT     -> STOP. No viable part. Report the disqualification reasons and ask the user to loosen the requirement, OR ask the user to manually search jlcpcb.com/parts and provide the exact LCSC ID.
+
+If the resolver completely fails (REJECT) or if the API is unreachable, the agent MUST ask the user to manually find and provide the correct LCSC ID.
+
+Only LCSC IDs found in resolved_parts.json with status AUTO (or explicitly confirmed by the user) may be passed to easyeda2kicad in Rule 4.
 
 ---
 
@@ -82,7 +96,14 @@ After the command completes, the agent **MUST verify** that every requested LCSC
 1. Check that a `.kicad_mod` file exists in `<PROJECT_DIR>/libs/easyeda2kicad/easyeda2kicad.pretty/` for each component.
 2. Check that the `.kicad_sym` file at `<PROJECT_DIR>/libs/easyeda2kicad/easyeda2kicad.kicad_sym` exists and is non-empty.
 
-**If any component is missing**, the agent must stop and report the failure to the user (e.g., wrong LCSC ID, discontinued part, network error). Do NOT proceed with missing components.
+**Step 3 — Post-Download Gate:**
+After easyeda2kicad completes, for every component run:
+```powershell
+python <PLUGIN_DIR>\part_resolver.py --verify-download <LCSC_ID> "<PROJECT_DIR>\libs\easyeda2kicad"
+```
+Non-zero exit = the file on disk does not match what was resolved. Do NOT proceed to Rule 5.
+
+**If any component is missing or fails verification**, the agent must stop and report the failure to the user (e.g., wrong LCSC ID, discontinued part, network error). Do NOT proceed with missing components.
 
 ---
 
