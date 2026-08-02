@@ -145,7 +145,7 @@ class PlacementConstraints:
         self.valid = False
         self.unresolved_refs = []   # refs in YAML but not found on board (§3 logging)
 
-        if yaml is None:
+        if yaml is None and not str(yaml_path).endswith(".json"):
             msg = "[Constraints] PyYAML not installed. Cannot load constraints."
             print(msg)
             if strict:
@@ -153,7 +153,7 @@ class PlacementConstraints:
             return
 
         if not yaml_path or not os.path.isfile(yaml_path):
-            msg = f"[Constraints] No YAML found at '{yaml_path}'."
+            msg = f"[Constraints] No file found at '{yaml_path}'."
             print(msg)
             if strict:
                 raise FileNotFoundError(msg)
@@ -161,7 +161,11 @@ class PlacementConstraints:
 
         try:
             with open(yaml_path, "r", encoding="utf-8") as f:
-                data = yaml.safe_load(f)
+                if str(yaml_path).endswith(".json"):
+                    import json
+                    data = json.load(f)
+                else:
+                    data = yaml.safe_load(f)
         except Exception as e:
             msg = f"[Constraints] YAML parse error: {e}"
             print(msg)

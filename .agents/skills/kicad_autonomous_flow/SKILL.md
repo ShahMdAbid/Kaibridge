@@ -180,7 +180,7 @@ The agent MUST:
 2. **Set the copper layer count** from `board_config.layers`.
 3. **Load all footprints** from the local library.
 4. **Apply reference designators** via `fp.SetReference("U1")` using the `ref:` field from the YAML. This is **mandatory** — the autoplacer uses KiCad refs (`U1`, `C1`, `J1`), not semantic IDs (`MCU1`).
-5. **Set rough initial positions** on a grid.
+5. **Set rough initial positions** on a grid. (Note: Do not use legacy unit conversions like `Millimeter2iu`. Always use `pcbnew.FromMM()`).
 6. **Create all nets** from the YAML (`NETINFO_ITEM`) and assign pads to their respective nets.
 7. DO NOT route traces yet.
 
@@ -209,7 +209,7 @@ board = pcbnew.GetBoard()
 
 board.BuildConnectivity()
 pcbnew.Refresh()
-board.Save()
+pcbnew.SaveBoard(board.GetFileName(), board)
 print("Skeleton generated directly in KiCad memory! Ratsnest is now visible.")
 '@ | python <PLUGIN_DIR>\kicad_agent_bridge.py --stdin --timeout 60
 ```
