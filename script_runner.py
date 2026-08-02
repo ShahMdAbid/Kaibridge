@@ -3,6 +3,7 @@ import sys
 import json
 import socket
 import threading
+import secrets
 import wx
 import pcbnew
 import traceback
@@ -106,6 +107,10 @@ class ScriptRunnerFrame(wx.Frame):
         self._server_socket = None
         self._server_thread = None
         self._server_running = False
+        self._server_port = None          # Track our port for safe cleanup (§2.12)
+        self._auth_token = None           # Auth token for bridge security (§2.8)
+        self._execution_busy = False      # Busy guard to prevent phantom execution (§2.7)
+        self._cancel_pending = False      # Cancellation flag for timed-out requests (§2.7)
         self.start_agent_server()
 
     def log_debug(self, msg):
@@ -135,8 +140,11 @@ class ScriptRunnerFrame(wx.Frame):
             srv.settimeout(0.5)
             self._server_socket = srv
             port = srv.getsockname()[1]
+            self._server_port = port
+            # §2.8: Generate auth token and write port:token to discovery file
+            self._auth_token = secrets.token_hex(32)
             with open(PORT_FILE, "w", encoding="utf-8") as f:
-                f.write(str(port))
+                f.write(f"{port}:{self._auth_token}")
             self._server_running = True
             self._server_thread = threading.Thread(target=self._serve_forever, daemon=True)
             self._server_thread.start()
@@ -152,9 +160,13 @@ class ScriptRunnerFrame(wx.Frame):
                 self._server_socket.close()
         except Exception:
             pass
+        # §2.12: Only delete PORT_FILE if it contains our port
         try:
             if os.path.exists(PORT_FILE):
-                os.remove(PORT_FILE)
+                content = open(PORT_FILE, "r", encoding="utf-8").read().strip()
+                file_port = int(content.split(":")[0])
+                if self._server_port and file_port == self._server_port:
+                    os.remove(PORT_FILE)
         except Exception:
             pass
 
@@ -208,14 +220,34 @@ class ScriptRunnerFrame(wx.Frame):
             except Exception as e:
                 self._send_json(conn, {"status": "error", "output": f"Bad request JSON: {e}"})
                 return
+
+            # §2.8: Verify auth token
+            if self._auth_token and req.get("token") != self._auth_token:
+                self._send_json(conn, {"status": "error", "output": "Authentication failed: invalid or missing token."})
+                return
+
+            # §2.7: Reject if another execution is in flight
+            if self._execution_busy:
+                self._send_json(conn, {"status": "error", "output": "Server busy: another execution is in progress. Retry later."})
+                return
+
             mode = req.get("mode", "execute")
             timeout = float(req.get("timeout", 30.0))
             keep_state = bool(req.get("keep_state", False))
             reset_state = bool(req.get("reset_state", False))
             done = threading.Event()
             result = {"status": "error", "output": "Internal error: no result produced."}
+
+            self._execution_busy = True
+            self._cancel_pending = False
+
             def run_on_main():
                 try:
+                    # §2.7: Check cancellation flag before executing
+                    if self._cancel_pending:
+                        result["status"] = "error"
+                        result["output"] = "Execution cancelled: timeout expired before main thread started."
+                        return
                     if reset_state:
                         self.shared_globals = globals().copy()
                         self.shared_globals['__name__'] = '__main__'
@@ -227,7 +259,7 @@ class ScriptRunnerFrame(wx.Frame):
                         result["status"] = "success"
                         result["output"] = out
                     else:
-                        out, ok = self._run_code_for_agent(req.get("code", ""), keep_state)
+                        out, ok = self._run_code_for_agent(req.get("code", ""), keep_state, timeout)
                         result["status"] = "success" if ok else "error"
                         result["output"] = out
                 except Exception as e:
@@ -236,10 +268,14 @@ class ScriptRunnerFrame(wx.Frame):
                     result["output"] = err
                     self.log_debug(err)
                 finally:
+                    self._execution_busy = False
                     done.set()
+
             wx.CallAfter(run_on_main)
             finished = done.wait(timeout=timeout + 5)
             if not finished:
+                # §2.7: Set cancellation flag so run_on_main bails out if it hasn't started
+                self._cancel_pending = True
                 self._send_json(conn, {
                     "status": "error",
                     "output": ("Execution did not finish within the timeout. KiCad's main "
@@ -249,7 +285,7 @@ class ScriptRunnerFrame(wx.Frame):
                 return
             self._send_json(conn, result)
 
-    def _run_code_for_agent(self, code_str, keep_state):
+    def _run_code_for_agent(self, code_str, keep_state, timeout_seconds=15.0):
         """Runs agent-submitted code on the main thread and updates the GUI.
         Stateless by default (fresh namespace, nothing can leak in from a
         previous call) - keep_state=True reuses the shared namespace
@@ -264,7 +300,7 @@ class ScriptRunnerFrame(wx.Frame):
         self.notebook.SetSelection(2)
         tag = "[KEEP-STATE]" if keep_state else "[STATELESS]"
         self.txt_output.AppendText(f"\n[{time.strftime('%H:%M:%S')}] [AI AGENT EXECUTED CODE] {tag}\n")
-        return self._execute(code_str=code_str, is_file_mode=False, use_shared=keep_state)
+        return self._execute(code_str=code_str, is_file_mode=False, use_shared=keep_state, timeout_seconds=timeout_seconds)
 
     def _run_oracle_for_agent(self, query):
         if not query:
@@ -275,7 +311,7 @@ class ScriptRunnerFrame(wx.Frame):
         self.notebook.SetSelection(3)
         return self._execute_oracle(query)
 
-    def _execute(self, path="", code_str="", is_file_mode=False, use_shared=True):
+    def _execute(self, path="", code_str="", is_file_mode=False, use_shared=True, timeout_seconds=15.0):
         """Core execution routine. Returns (output_text, success).
         use_shared=True runs against self.shared_globals, which persists
         across calls like a REPL - this is what the manual 'Run' button
@@ -294,15 +330,20 @@ class ScriptRunnerFrame(wx.Frame):
         if use_shared:
             globals_dict = self.shared_globals
         else:
-            globals_dict = globals().copy()
-            globals_dict['__name__'] = '__main__'
+            # §2.12: Minimal namespace for stateless agent runs.
+            # Only provide pcbnew and builtins — agent code must import what it needs.
+            globals_dict = {
+                '__name__': '__main__',
+                '__builtins__': __builtins__,
+                'pcbnew': pcbnew,
+            }
         had_file = '__file__' in globals_dict
         old_file = globals_dict.get('__file__')
 
         # --- WATCHDOG SETUP ---
         start_time = time.time()
         instruction_count = [0]
-        timeout_seconds = 15.0
+        # timeout_seconds passed as argument
 
         def trace_calls(frame, event, arg):
             instruction_count[0] += 1
@@ -329,8 +370,6 @@ class ScriptRunnerFrame(wx.Frame):
             else:
                 code_obj = compile(code_str, '<Code Snippet>', 'exec')
                 exec(code_obj, globals_dict)
-            pcbnew.UpdateUserInterface()
-            pcbnew.Refresh()
             success = True
         except Exception:
             error_tb = traceback.format_exc()
@@ -341,14 +380,18 @@ class ScriptRunnerFrame(wx.Frame):
             sys.argv = old_argv
             if script_dir and script_dir in sys.path:
                 sys.path.remove(script_dir)
-            # __file__ must never linger in a namespace beyond the run that
-            # set it - restore whatever was there before (usually nothing),
-            # regardless of which namespace we just ran against.
             if is_file_mode:
                 if had_file:
                     globals_dict['__file__'] = old_file
                 else:
                     globals_dict.pop('__file__', None)
+            # §2.12: Always refresh UI, even on partial failure, so the user
+            # sees the actual board state instead of a stale canvas.
+            try:
+                pcbnew.UpdateUserInterface()
+                pcbnew.Refresh()
+            except Exception:
+                pass
         out_text = captured_output.getvalue()
         if error_tb:
             out_text += "\n--- EXECUTION ERROR ---\n" + error_tb
@@ -374,12 +417,13 @@ class ScriptRunnerFrame(wx.Frame):
                 file_content = f.read()
             lines = [l.strip() for l in input_text.split('\n') if l.strip()]
             output_text = ""
+            from oracle import get_kicad_signature
             for line in lines:
                 parts = line.split(' ')
                 if len(parts) >= 2:
                     class_name = parts[0]
                     method_name = parts[1]
-                    output_text += self._get_kicad_signature(file_content, class_name, method_name) + '\n'
+                    output_text += get_kicad_signature(file_content, class_name, method_name) + '\n'
                 else:
                     output_text += f"[Invalid format: \"{line}\"] -> Please use \"ClassName MethodName\"\n\n"
             self.txt_oracle_out.SetValue(output_text)
@@ -389,66 +433,7 @@ class ScriptRunnerFrame(wx.Frame):
             self.txt_oracle_out.SetValue(err_msg)
             return err_msg
 
-    def _get_kicad_signature(self, file_content, class_name, method_name):
-        import re
-        if not class_name or not method_name:
-            return ""
-            
-        def extract_docstring(method_body):
-            doc_match = re.search(r'^[ \t]*def[^\n]+:\s*r?(?:"""|\'\'\')[\s\S]*?(?:"""|\'\'\')', method_body, re.MULTILINE)
-            if doc_match:
-                return doc_match.group(0)
-            lines = method_body.split('\n')
-            if len(lines) > 1:
-                return lines[0] + '\n' + lines[1]
-            return lines[0]
-            
-        if class_name.upper() in ["GLOBAL", "NONE"]:
-            method_regex = re.compile(rf'(?:^|\n)[ \t]*def {method_name}\b[\s\S]*?(?=(?:\n[ \t]*def |\n[ \t]*class |$))')
-            match = method_regex.search(file_content)
-            if not match:
-                return f"[GLOBAL.{method_name}] -> GLOBAL FUNCTION NOT FOUND.\n"
-            final_output = extract_docstring(match.group(0).strip())
-            return f"[GLOBAL.{method_name}] EXACT SWIG OUTPUT:\n{final_output.strip()}\n"
-            
-        queue = [class_name]
-        visited_classes = set()
-        
-        while queue:
-            current_class = queue.pop(0)
-            if current_class in visited_classes or current_class == 'object':
-                continue
-            visited_classes.add(current_class)
-            
-            class_regex = re.compile(rf'(?:^|\n)class {current_class}\b(?:\(([^)]+)\))?:')
-            class_match = class_regex.search(file_content)
-            
-            if not class_match:
-                if current_class == class_name:
-                    return f"[{class_name}.{method_name}] -> CLASS '{current_class}' NOT FOUND.\n"
-                continue
-                
-            class_start_index = class_match.start()
-            next_class_index = file_content.find('\nclass ', class_start_index + 1)
-            if next_class_index == -1:
-                next_class_index = len(file_content)
-            class_body = file_content[class_start_index:next_class_index]
-            
-            method_regex = re.compile(rf'(?:^|\n)[ \t]*def {method_name}\b[\s\S]*?(?=(?:\n[ \t]*def |\n[ \t]*class |$))')
-            method_match = method_regex.search(class_body)
-            
-            if method_match:
-                final_output = extract_docstring(method_match.group(0).strip())
-                result = f"[{current_class}.{method_name}] EXACT SWIG OUTPUT:\n{final_output.strip()}\n"
-                if current_class != class_name:
-                    result = f"(Inherited from base class: {current_class})\n" + result
-                return result
-                
-            if class_match.group(1):
-                parents = [p.strip() for p in class_match.group(1).split(',')]
-                queue.extend(parents)
-                
-        return f"[{class_name}.{method_name}] -> METHOD NOT FOUND.\n"
+
 
     def OnTabChanged(self, event):
         sel = self.notebook.GetSelection()

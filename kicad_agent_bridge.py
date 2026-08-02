@@ -11,14 +11,21 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PORT_FILE = os.path.join(SCRIPT_DIR, "kicad_agent_bridge.port")
 
 
-def get_port():
+def get_port_and_token():
+    """Read the port file which now contains 'port:token' format (§2.8)."""
     if os.path.exists(PORT_FILE):
         try:
             with open(PORT_FILE, 'r', encoding='utf-8') as f:
-                return int(f.read().strip())
+                content = f.read().strip()
+            if ':' in content:
+                parts = content.split(':', 1)
+                return int(parts[0]), parts[1]
+            else:
+                # Legacy format (just port number)
+                return int(content), None
         except Exception:
             pass
-    return None
+    return None, None
 
 
 def _recv_line(sock, max_bytes=10_000_000):
@@ -64,7 +71,7 @@ def run_kicad_code(script_path=None, code_stdin=False, inline_code=None,
         "timeout": timeout,
     }
 
-    port = get_port()
+    port, token = get_port_and_token()
     if port is None:
         print("--- KICAD NOT CONNECTED ---")
         print("FATAL ERROR: No port file found - abIDE has not been opened yet "
@@ -73,6 +80,10 @@ def run_kicad_code(script_path=None, code_stdin=False, inline_code=None,
         print("AI AGENT: Do NOT search the filesystem or guess a fix - just ask "
               "the user to open abIDE, then retry once.")
         return
+
+    # §2.8: Include auth token in payload
+    if token:
+        payload["token"] = token
 
     try:
         sock = socket.create_connection(("127.0.0.1", port), timeout=3)

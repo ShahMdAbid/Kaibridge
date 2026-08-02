@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 yaml_visualizer.py - Renders a circuit_blueprint YAML into an interactive
 HTML schematic using real KiCad symbol geometry from .kicad_sym files.
@@ -48,35 +48,7 @@ NODE_COLORS = {
 # S-EXPRESSION HELPERS (copied from footprint_extractor.py for consistency)
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _find_matching_close(text, open_pos):
-    """Return position of the ')' matching the '(' at open_pos."""
-    depth = 0
-    in_string = False
-    i = open_pos
-    while i < len(text):
-        ch = text[i]
-        if ch == '"' and (i == 0 or text[i - 1] != '\\'):
-            in_string = not in_string
-        elif not in_string:
-            if ch == '(':
-                depth += 1
-            elif ch == ')':
-                depth -= 1
-                if depth == 0:
-                    return i
-        i += 1
-    return len(text) - 1
-
-
-def _extract_blocks(content, keyword):
-    """Find every S-expression block starting with (keyword ...)."""
-    blocks = []
-    pattern = re.compile(r'\(' + re.escape(keyword) + r'[\s"]')
-    for m in pattern.finditer(content):
-        start = m.start()
-        end = _find_matching_close(content, start)
-        blocks.append(content[start:end + 1])
-    return blocks
+from sexp_utils import _find_matching_close, _extract_blocks
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -368,13 +340,17 @@ def _classify(comp_id):
 # DUMMY SYMBOL GENERATOR (when .kicad_sym data is missing)
 # ═══════════════════════════════════════════════════════════════════════════
 
+def _pad_sort_key(n):
+    try: return (0, int(n), '')
+    except ValueError: return (1, 0, n)
+
 def _generate_dummy_symbol(comp_id, pin_names_needed):
     """Create a generic rectangular symbol with evenly-spaced pins.
 
     pin_names_needed: set of pin names that this component must have
                       (collected from YAML connection references).
     """
-    pin_list = sorted(pin_names_needed) if pin_names_needed else ['1', '2']
+    pin_list = sorted(pin_names_needed, key=_pad_sort_key) if pin_names_needed else ['1', '2']
     n_pins = len(pin_list)
     half = (n_pins + 1) // 2
 
@@ -398,7 +374,7 @@ def _generate_dummy_symbol(comp_id, pin_names_needed):
             'tip_y': y,
             'angle': 0,
             'length': 2.54,
-            'number': str(i + 1),
+            'number': pin_name,
         }
     # Right-side pins (angle 180 = stub extends left toward body)
     for i in range(half, n_pins):
@@ -409,7 +385,7 @@ def _generate_dummy_symbol(comp_id, pin_names_needed):
             'tip_y': y,
             'angle': 180,
             'length': 2.54,
-            'number': str(i + 1),
+            'number': pin_name,
         }
 
     return {'primitives': primitives, 'pins': pins}
@@ -632,7 +608,7 @@ def generate_svg(layout, blueprint):
                     f'stroke="{stroke_color}" stroke-width="2"/>'
                 )
 
-        # -- Pins --
+        # -- Pins (Pass 1: Draw and set authoritative names) --
         for pin_name, pin in sym.get('pins', {}).items():
             tx = pin['tip_x'] * SCALE
             ty = -pin['tip_y'] * SCALE  # Y invert for SVG
@@ -674,8 +650,21 @@ def generate_svg(layout, blueprint):
                 f'font-size="10" fill="#c0caf5" font-family="monospace">{safe_name}</text>'
             )
 
-            # Store ABSOLUTE pin tip location for wiring
+            # Store ABSOLUTE pin tip location for wiring (names are authoritative)
             pin_locations[f"{comp_id}.{pin_name}"] = (ox + tx, oy + ty)
+
+        # -- Pins (Pass 2: Aliases fill gaps without overwriting) --
+        for pin_name, pin in sym.get('pins', {}).items():
+            num = pin.get('number')
+            if not num:
+                continue
+            alias = f"{comp_id}.{num}"
+            coord = (ox + pin['tip_x'] * SCALE, oy - pin['tip_y'] * SCALE)
+            if alias in pin_locations:
+                if pin_locations[alias] != coord:
+                    print(f"       [WARN] ambiguous pin ref '{alias}' — name/number collide, keeping name")
+                continue
+            pin_locations[alias] = coord
 
         # -- Component ID label (above the symbol) --
         min_x, min_y, _, _ = _symbol_bounds(sym)
@@ -691,12 +680,15 @@ def generate_svg(layout, blueprint):
 
     # --- Pass 2: Draw wires ---
     wire_parts = []
+    unresolved_endpoints = set()
 
     def draw_wire(src_pin, dst_pin, label, category):
         """Draw a single wire between two pin references."""
         src_pos = pin_locations.get(src_pin)
         dst_pos = pin_locations.get(dst_pin)
         if not src_pos or not dst_pos:
+            if not src_pos and src_pin: unresolved_endpoints.add(src_pin)
+            if not dst_pos and dst_pin: unresolved_endpoints.add(dst_pin)
             return  # pin not found, skip silently
         sx, sy = src_pos
         dx, dy = dst_pos
@@ -800,14 +792,26 @@ def generate_svg(layout, blueprint):
     svg.extend(comp_svg_parts)
     svg.append('</g>')
     svg.append('</svg>')
-    return '\n'.join(svg)
+    
+    unresolved_list = sorted(unresolved_endpoints)
+    import json
+    if unresolved_list:
+        print(f"\n[WARN] {len(unresolved_list)} wire endpoints unresolved in blueprint:")
+        for ep in unresolved_list[:10]:
+            print(f"  - {ep}")
+        if len(unresolved_list) > 10:
+            print(f"  ... and {len(unresolved_list) - 10} more")
+        print("These wires will not appear in the visualization.")
+    print(f"RESULT: {json.dumps({'unresolved': len(unresolved_list), 'refs': unresolved_list})}\n")
+
+    return '\n'.join(svg), unresolved_list
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # HTML PAGE GENERATOR (with pan/zoom)
 # ═══════════════════════════════════════════════════════════════════════════
 
-def generate_html(svg_content, metadata):
+def generate_html(svg_content, metadata, unresolved=None):
     """Wrap SVG in a dark-themed HTML page with pan/zoom."""
     project = metadata.get('project_name', 'Circuit Blueprint')
     desc = metadata.get('description', '')
@@ -815,6 +819,10 @@ def generate_html(svg_content, metadata):
     # Escape for HTML
     project = project.replace('&', '&amp;').replace('<', '&lt;')
     desc = desc.replace('&', '&amp;').replace('<', '&lt;')
+    
+    banner = ""
+    if unresolved:
+        banner = f'<div style="background: #f03e3e; color: white; padding: 0.6rem 1.2rem; font-size: 0.9rem; font-weight: bold; z-index: 20; position: relative;">[WARNING] {len(unresolved)} wire endpoints unresolved! The AI must fix these before you approve the blueprint. Example missing pins: {", ".join(unresolved[:5])}</div>'
 
     return f'''<!DOCTYPE html>
 <html lang="en">
@@ -865,6 +873,7 @@ body {{
 </style>
 </head>
 <body>
+{banner}
 <div class="toolbar">
     <div>
         <h1>{project}</h1>
@@ -989,12 +998,12 @@ def main():
     print(f"       Placed {len(layout)} components")
 
     print("[4/5] Generating SVG...")
-    svg = generate_svg(layout, blueprint)
+    svg, unresolved = generate_svg(layout, blueprint)
 
     metadata = blueprint.get('metadata', {}) if isinstance(blueprint.get('metadata'), dict) else {}
 
     print("[5/5] Generating HTML...")
-    html = generate_html(svg, metadata)
+    html = generate_html(svg, metadata, unresolved)
 
     with open(html_path, 'w', encoding='utf-8') as f:
         f.write(html)

@@ -44,6 +44,15 @@ def _try(fn, default=None, key=None):
             _warn_once(key, "%s -> %s: %s" % (key, type(e).__name__, e))
         return default
 
+def _call_any(obj, method_names, default=None):
+    for name in method_names:
+        fn = getattr(obj, name, None)
+        if fn is not None:
+            try:
+                return fn()
+            except Exception:
+                continue
+    return default
 
 def _enum(mod_name, default=None):
     return getattr(pcbnew, mod_name, default)

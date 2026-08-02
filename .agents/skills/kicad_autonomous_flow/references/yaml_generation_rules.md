@@ -1,20 +1,23 @@
 # YAML Blueprint Generation Rules
 
-**The agent must act as an Expert Hardware Engineer and PCB Designer and strictly follow these 13 rules to generate the blueprint:**
+**The agent must act as an Expert Hardware Engineer and PCB Designer and strictly follow these 14 rules to generate the blueprint:**
 
 1. **Reason normally, but label your reasoning.** Use your full engineering knowledge to fill in things that follow logically from what was discussed (e.g., if a specific sensor model is named, its standard voltage, output type, and typical wiring conventions are fair game). Don't hold back on legitimate inference.
 2. **Only flag the genuine gaps:** Things that have no reasonable default and were never stated or implied (e.g., which analog pin a sensor is wired to, a custom-chosen wire color). For these, don't invent a specific answer — put them in `unresolved_or_missing`. Anything derived through normal engineering reasoning goes in `assumptions_and_gaps`.
+   - **Example of `assumptions_and_gaps`:** "Used 10kΩ pull-up on I2C lines per standard practice."
+   - **Example of `unresolved_or_missing`:** "User did not specify which MCU ADC pin connects to the temperature sensor."
 3. **Final decisions only.** If the user changed their mind mid-conversation, use only the most recent/final version. If ambiguous, list the conflict in `unresolved_or_missing`.
 4. **Consistent ID convention.** Prefix every component by type and number sequentially, starting at 1: `MCU`, `SEN`, `ACT`, `DRV`, `PSU`, `MOD`, `PAS`. Never reuse an ID. Passives follow this too — they are components with real pins, so wire them into signal_routing/power_distribution the same as any other part (e.g., `MCU1.D2 -> PAS1.1`, `PAS1.2 -> SEN1.IN`).
 5. **Uniform structure everywhere.** Every connection must use structured key-value pairs — no inline arrow-strings like `"A -> B"` anywhere in the file. For point-to-point signals use `source`/`destination`. For bus lines, use `source`/`destinations` (plural, a list).
 6. **Separate power rails unless proven joined.** Keep "5V" rails from different sources separate (e.g., `5V_USB_net`, `5V_EXT_net`) unless explicitly tied together.
 7. **Self-check before output:** Scan for any MCU pin assigned to more than one purpose. If found, list it in `unresolved_or_missing`.
 8. **No leftover placeholders.** Every example value (`null` or `"e.g., ..."`) must be fully replaced or explicitly nulled.
-9. **Output format:** Respond with ONLY a single fenced YAML code block.
+9. **Output format:** When *emitting the blueprint*, respond with ONLY a single fenced YAML code block. Other conversation messages (e.g. approval requests, task updates) are normal text.
 10. **Strict schema adherence.** Do not change the data type of any section. If it shows a list, output a list. If it shows a dictionary, output a dictionary. Do not invent new keys. Reference pins directly inside `source`/`destination`/`members` fields.
-11. **Pin numbers, not function names.** When routing, the pin identifier must be the physical pin number/label (e.g., `DRV1.7`, `MCU1.D2`), not its internal function name. Put functions in the `purpose` field instead.
+11. **Pad numbers, not function names.** When routing, the pin identifier must be the physical pad number (e.g., `DRV1.7`, `MCU1.15`), not its internal function name. Put functions in the `purpose` field instead. Use the pad numbers from the `FOOTPRINT PADS` section of the extractor output.
 12. **Model shared junctions as nets, not chains.** If 3+ pins are tied together at one electrical junction, do NOT invent a fake sequential chain. List it under `signal_nets` as a single named node with all its members.
-13. **Ground every pin reference in extractor output.** Before referencing any pin in the YAML (e.g., `MCU1.IO0`, `SEN1.VCC`), the agent MUST verify that pin appeared in the `footprint_extractor.py` output for that component. Use the exact pin **name** from the `SYMBOL PINS` section of the report. If a needed pin does not exist in the extractor output, do NOT invent it — add it to `unresolved_or_missing` instead. Extra footprint pads reported by the extractor (e.g., thermal/mounting pads without a symbol pin) should be explicitly connected to GND or left unconnected with a note in `notes_and_constraints`.
+13. **Ground every pin reference in extractor output.** Before referencing any pin in the YAML (e.g., `MCU1.15`, `SEN1.3`), the agent MUST verify that the **pad number** appeared in the `FOOTPRINT PADS` section of the `footprint_extractor.py` output for that component. If a needed pad does not exist in the extractor output, do NOT invent it — add it to `unresolved_or_missing` instead. Extra footprint pads reported by the extractor (e.g., thermal/mounting pads without a symbol pin) should be explicitly connected to GND or left unconnected with a note in `notes_and_constraints`.
+14. **Always request board configuration.** The agent MUST ask the user for board dimensions (width/height in mm) and layer count (2 or 4) if they are not provided, as the board cannot be generated without these parameters.
 
 **The agent must use the exact YAML structure defined below:**
 
@@ -25,9 +28,28 @@ circuit_blueprint:
     main_controller: null
     description: null
 
+  board_config:
+    outline:
+      shape: "rectangle"
+      width_mm: null
+      height_mm: null
+      corner_radius_mm: 0
+    layers: 2
+    design_rules:
+      trace_width_mm: 0.25
+      clearance_mm: 0.2
+      via_drill_mm: 0.3
+      via_diameter_mm: 0.6
+      power_trace_width_mm: 0.5
+
   components:
-    MCU1: { type: "Microcontroller", model: null, lcsc_id: null }
+    MCU1:
+      type: "Microcontroller"
+      model: null
+      lcsc_id: null
+      ref: "U1"        # KiCad reference designator — MANDATORY
     # One entry per discrete part, using the ID convention above
+    # Every component MUST have a `ref:` field with a unique KiCad designator
 
   passive_components:
     # Standalone resistors/capacitors/diodes NOT already inside a module.
@@ -39,14 +61,16 @@ circuit_blueprint:
       value: null
       purpose: null
       lcsc_id: null
+      ref: "R1"        # KiCad reference designator — MANDATORY
 
   power_distribution:
     # Keep rails from different physical sources separate (see Rule 6)
+    # Use PAD NUMBERS (e.g., MCU1.15), not function names (e.g., MCU1.GND)
     GND_net:
-      source: "MCU1.GND"
+      source: "MCU1.15"
       connections: []
     5V_net:
-      source: "MCU1.5V"
+      source: "MCU1.19"
       connections: []
 
   signal_routing:
@@ -79,8 +103,8 @@ circuit_blueprint:
     # Always use "destinations" as a list.
     I2C:
       - bus_id: "I2C1"
-        SDA: { source: "MCU1.A4", destinations: [] }
-        SCL: { source: "MCU1.A5", destinations: [] }
+        SDA: { source: "MCU1.21", destinations: [] }
+        SCL: { source: "MCU1.22", destinations: [] }
     SPI: []
     UART: []
 
@@ -95,4 +119,3 @@ circuit_blueprint:
     # Anything you couldn't determine, or genuine conflicts (Rules 1, 3, 7)
     - null
 ```
-
