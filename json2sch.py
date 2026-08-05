@@ -452,7 +452,7 @@ def try_pack(design, info, paper_w, paper_h):
             return None
         placed_blocks.append({
             **b,
-            "origin": (MARGIN + col_x, MARGIN + y)
+            "origin": (snap(MARGIN + col_x), snap(MARGIN + y))
         })
         y += block_total_h + GROUP_GAP
         col_w = max(col_w, block_total_w)
