@@ -342,18 +342,23 @@ def validate(design, pinmap, project_libs, cfg, report):
 
 # ---------------- schematic construction ----------------
 
-def detect_header(project: Path):
-    files = sorted(project.glob("*.kicad_sch"))
-    preferred = [f for f in files if f.stem == project.name] or files
-    if not preferred:
-        fail(f"no .kicad_sch in {project} -- create the project in KiCad first")
-    path = preferred[0]
-    text = path.read_text(encoding="utf-8", errors="replace")[:4000]
+def detect_project(project: Path):
+    """Identity comes from the .kicad_pro. Never from the folder name."""
+    pros = sorted(project.glob("*.kicad_pro"))
+    if not pros:
+        fail(f"no .kicad_pro in {project} -- create the project in KiCad first")
+    if len(pros) > 1:
+        fail(f"{len(pros)} .kicad_pro files in {project} -- one project per folder")
+    stem = pros[0].stem
+    root_sch = project / f"{stem}.kicad_sch"
+    if not root_sch.is_file():
+        fail(f"{root_sch.name} missing -- open the project in KiCad once so it writes the root sheet")
+    text = root_sch.read_text(encoding="utf-8", errors="replace")[:4000]
     version = re.search(r"\(\s*version\s+([0-9]+)\s*\)", text)
     if not version:
-        fail(f"cannot read the schematic format version from {path.name}")
+        fail(f"cannot read the schematic format version from {root_sch.name}")
     gen = re.search(r'\(\s*generator_version\s+"([^"]+)"', text)
-    return path, int(version.group(1)), (gen.group(1) if gen else None)
+    return stem, pros[0], root_sch, int(version.group(1)), (gen.group(1) if gen else None)
 
 def measure(design, libs):
     """Per part: pin offsets, stub lengths, and the real extent around the origin."""
@@ -400,6 +405,7 @@ def build(design, libs, version, project_name, root_uuid):
     symbols, wires, labels, ncs, shapes = [], [], [], [], []
     embedded, placed = {}, {}
     sheet_bottom = MARGIN
+    sheet_right = MARGIN
 
     for group in design["groups"]:
         members = list(group["parts"])
@@ -432,6 +438,7 @@ def build(design, libs, version, project_name, root_uuid):
                        effects(version, size=2.0, justify=["left", "bottom"]),
                        ["uuid", uid()]])
         sheet_bottom = box_bottom + GROUP_PAD + GROUP_GAP
+        sheet_right = max(sheet_right, box_right + GROUP_PAD)
 
     for key, spec in parts.items():
         data = info[key]
@@ -486,7 +493,7 @@ def build(design, libs, version, project_name, root_uuid):
             elif slot in design["nc_resolved"]:
                 ncs.append(["no_connect", at(px, py), ["uuid", uid()]])
 
-    width = SHEET_W + MARGIN
+    width = sheet_right + MARGIN
     paper = next((p[0] for p in PAPERS if width <= p[1] and sheet_bottom + MARGIN <= p[2]),
                  PAPERS[-1][0])
     return embedded, symbols, wires, labels, ncs, shapes, paper
@@ -514,20 +521,16 @@ def render(design, header, embedded, symbols, wires, labels, ncs, shapes, paper,
     lines.append(")")
     return "\n".join(lines) + "\n"
 
-def apply_netclasses(project: Path, design):
-    files = sorted(project.glob("*.kicad_pro"))
-    if not files:
-        fail(f"no .kicad_pro in {project}")
-    path = files[0]
-    data = json.loads(path.read_text(encoding="utf-8"))
+def apply_netclasses(path: Path, design):
+    original = path.read_text(encoding="utf-8")
+    path.with_name(path.name + ".bak").write_text(original, encoding="utf-8")
+    data = json.loads(original)
     settings = data.setdefault("net_settings", {})
     settings["classes"] = [dict(name=name, **spec)
                            for name, spec in design["netclasses"].items()]
     settings["netclass_patterns"] = [{"netclass": net["class"], "pattern": name}
                                      for name, net in design["nets"].items()
                                      if net["class"] != "Default"]
-    path.with_name(path.name + ".bak").write_text(
-        json.dumps(data, indent=2), encoding="utf-8")
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
     return f"net classes written to {path.name} (backup: {path.name}.bak)"
 
@@ -550,7 +553,7 @@ def main():
         fail(f"design file not found: {design_file}")
 
     design = normalise(json.loads(design_file.read_text(encoding="utf-8")))
-    root_sch, version, gen_version = detect_header(project)
+    project_name, pro_file, root_sch, version, gen_version = detect_project(project)
     cfg = load_paths("kicad_symbol_dir")
     libs = Libraries(cfg, project / "libs")
 
@@ -560,7 +563,7 @@ def main():
 
     root_uuid = str(uuid.uuid4())
     embedded, symbols, wires, labels, ncs, shapes, paper = build(
-        design, libs, version, project.name, root_uuid)
+        design, libs, version, project_name, root_uuid)
     text = render(design, (version, gen_version), embedded, symbols, wires,
                   labels, ncs, shapes, paper, root_uuid)
 
@@ -584,7 +587,7 @@ def main():
     out.write_text(text, encoding="utf-8")
     print(f"\nwrote {out}")
     if a.apply_netclasses:
-        print(apply_netclasses(project, design))
+        print(apply_netclasses(pro_file, design))
 
     print("\nIn KiCad: reopen the project, then Tools > Annotate (keep existing) > "
           "Inspect > ERC, then Tools > Update PCB from Schematic (F8).")

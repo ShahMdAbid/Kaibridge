@@ -171,42 +171,31 @@ def print_plan(groups, ops):
 
 def send_to_kicad(ops):
     """
-    Build a tiny Python script that calls apply_ops() with our ops list,
-    then send it to KiCad through kicad_agent_bridge.py.
-
-    The ops JSON is base64-encoded to avoid any quoting/escaping issues
-    when embedding it inside a Python string.
+    Write ops to ops_macro_placer.json and call bridge with --json-ops.
     """
     autoplacer_dir = os.path.dirname(os.path.abspath(__file__))
     bridge_path    = os.path.join(autoplacer_dir, "kicad_agent_bridge.py")
 
-    ops_b64 = base64.b64encode(json.dumps(ops).encode()).decode()
-
-    # This code string will be exec'd inside KiCad's Python environment
-    # where pcbnew is already available.
-    code = (
-        "import sys, json, base64\n"
-        f"sys.path.insert(0, r'{autoplacer_dir}')\n"
-        "from currentboardfetcher import apply_ops\n"
-        "\n"
-        f"ops = json.loads(base64.b64decode('{ops_b64}').decode())\n"
-        "print(f'Macro Placer: Moving {len(ops)} footprints...')\n"
-        "result = apply_ops(ops, dry_run=False, save=True, refill=False, verify=True)\n"
-        "if result.get('applied'):\n"
-        "    print('\\nSUCCESS: All footprints placed into group clusters!')\n"
-        "else:\n"
-        "    print('\\nFAILED:', result.get('problems', []))\n"
-    )
+    ops_file = os.path.join(autoplacer_dir, "ops_macro_placer.json")
+    with open(ops_file, "w", encoding="utf-8") as f:
+        json.dump(ops, f, indent=2)
 
     print("\nSending to KiCad via bridge...")
     result = subprocess.run(
-        [sys.executable, bridge_path, "--code", code, "--timeout", "30"],
+        [sys.executable, bridge_path, "--json-ops", ops_file, "--timeout", "180"],
         capture_output=True, text=True,
     )
 
     print(result.stdout)
     if result.stderr:
         print(result.stderr, file=sys.stderr)
+
+    # Clean up ops file if successful
+    if result.returncode == 0:
+        try:
+            os.remove(ops_file)
+        except Exception:
+            pass
 
     return result.returncode == 0
 

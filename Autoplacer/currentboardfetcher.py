@@ -839,12 +839,13 @@ def _op_delete(board, idx, op, dry):
     return "delete %s %s" % (label, op["uuid"][:8])
 
 def _op_delete_net_tracks(board, idx, op, dry):
-    _need(op, "net")
-    _resolve_net(idx, op["net"])
+    net_filter = op.get("net")
+    if net_filter:
+        _resolve_net(idx, net_filter)
     layers = op.get("layers")
     victims = []
     for t in list(board.GetTracks()):
-        if _try(lambda: t.GetNetname()) != op["net"]:
+        if net_filter and _try(lambda: t.GetNetname()) != net_filter:
             continue
         if layers and _try(lambda: t.GetLayerName()) not in layers:
             continue
@@ -854,7 +855,7 @@ def _op_delete_net_tracks(board, idx, op, dry):
     if not dry:
         for t in victims:
             board.Remove(t)
-    return "delete %d routed items on net '%s'" % (len(victims), op["net"])
+    return "delete %d routed items%s" % (len(victims), f" on net '{net_filter}'" if net_filter else "")
 
 def _op_zone_refill(board, idx, op, dry):
     if not dry:
@@ -902,38 +903,26 @@ def _op_board_drc(board, idx, op, dry):
     if not dry:
         import subprocess
         import os
-        import json
+        from kicad_pins import load_cli
         
         board_path = board.GetFileName()
         if not board_path or not os.path.exists(board_path):
             return "DRC Failed: Board file is not saved to disk yet."
 
-        # Attempt to find exact path to kicad-cli.exe using kicad_paths.json
-        kicad_cli = "kicad-cli"
-        try:
-            paths_json = os.path.join(os.path.dirname(os.path.dirname(__file__)), "kicad_paths.json")
-            if os.path.exists(paths_json):
-                with open(paths_json, 'r') as f:
-                    pdata = json.load(f)
-                    sym_dir = pdata.get("kicad_symbol_dir", "")
-                    if "share" in sym_dir:
-                        base = sym_dir.split("share")[0]
-                        kicad_cli = os.path.join(base, "bin", "kicad-cli.exe")
-        except Exception:
-            pass
+        kicad_cli = load_cli()
+        if not kicad_cli:
+            return "DRC Failed: kicad-cli not found in paths or PATH."
 
         try:
-            # We must make sure the board is saved before running CLI DRC
             pcbnew.SaveBoard(board_path, board)
-            cmd = [kicad_cli, "pcb", "drc", "--all-track-errors", board_path]
+            cmd = [kicad_cli, "pcb", "drc", "--all-track-errors", "--exit-code-violations", board_path]
             res = subprocess.run(cmd, capture_output=True, text=True)
-            # kicad-cli prints DRC report to stdout
-            out = res.stdout.strip()
-            if not out and res.stderr:
-                out = res.stderr.strip()
-            return f"CLI DRC Check Completed. Output:\n{out}"
+            out = res.stdout.strip() or res.stderr.strip()
+            if res.returncode == 0:
+                return "CLI DRC Check Completed: 0 Violations."
+            return f"CLI DRC Check Completed with Violations (code {res.returncode}):\n{out}"
         except Exception as e:
-            return f"CLI DRC Failed (Is kicad-cli in PATH?): {e}"
+            return f"CLI DRC Failed (execution error): {e}"
 
     return "drc check requested"
 
@@ -1036,37 +1025,32 @@ def apply_ops(ops, board=None, dry_run=True, save=False, refill=True, verify=Tru
         result["diff_summary"] = rep["summary"]
         
     # ---- 5. Tangle Score (Ratsnest MST) ----
-    tangle_score = 0.0
-    for net_code, net_info in board.GetNetInfo().NetsByNetcode().items():
-        if net_code == 0: continue
-        pads = [pad.GetPosition() for pad in board.GetPads() if pad.GetNetCode() == net_code]
-        if len(pads) < 2: continue
-        
-        # simple MST using Prim's algorithm
-        connected = [pads.pop(0)]
-        while pads:
-            best_dist = 1e9
-            best_pad_idx = -1
-            for i, p in enumerate(pads):
-                for c in connected:
-                    dist = math.hypot(to_mm(p.x - c.x), to_mm(p.y - c.y))
-                    if dist < best_dist:
-                        best_dist = dist
-                        best_pad_idx = i
-            tangle_score += best_dist
-            connected.append(pads.pop(best_pad_idx))
-    result["tangle_score"] = round(tangle_score, 2)
-    print(f"--- TANGLE SCORE: {result['tangle_score']} mm ---")
+    if verify and failed is None:
+        tangle_score = 0.0
+        for net_code, net_info in board.GetNetInfo().NetsByNetcode().items():
+            if net_code == 0: continue
+            pads = [pad.GetPosition() for pad in board.GetPads() if pad.GetNetCode() == net_code]
+            if len(pads) < 2: continue
+            
+            # simple MST using Prim's algorithm
+            connected = [pads.pop(0)]
+            while pads:
+                best_dist = 1e9
+                best_pad_idx = -1
+                for i, p in enumerate(pads):
+                    for c in connected:
+                        dist = math.hypot(to_mm(p.x - c.x), to_mm(p.y - c.y))
+                        if dist < best_dist:
+                            best_dist = dist
+                            best_pad_idx = i
+                tangle_score += best_dist
+                connected.append(pads.pop(best_pad_idx))
+        result["tangle_score"] = round(tangle_score, 2)
+        print(f"--- TANGLE SCORE: {result['tangle_score']} mm ---")
     
     return result
 
-# ----------------------------------------------------------------------------
-# 11. DRC SNAPSHOT
-# ----------------------------------------------------------------------------
-def run_drc(board=None, report_path=None):
-    # Disabled for KiCad 10 stability: WriteDRCReport can segfault.
-    print("[pcb_brain] DRC explicitly disabled to prevent KiCad 10 crash.")
-    return None
+
 
 # ----------------------------------------------------------------------------
 # 12. DESIGN INTENT (the part geometry can never tell you)

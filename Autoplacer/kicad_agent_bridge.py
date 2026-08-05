@@ -79,7 +79,7 @@ def run_kicad_code(script_path=None, code_stdin=False, inline_code=None,
               "Editor (Tools > External Plugins > abIDE) and try again.")
         print("AI AGENT: Do NOT search the filesystem or guess a fix - just ask "
               "the user to open abIDE, then retry once.")
-        return
+        return False
 
     # §2.8: Include auth token in payload
     if token:
@@ -93,7 +93,7 @@ def run_kicad_code(script_path=None, code_stdin=False, inline_code=None,
               "KiCad's PCB Editor (Tools > External Plugins > abIDE) and try again.")
         print("AI AGENT: Do NOT search the filesystem or guess a fix - just ask "
               "the user to open abIDE, then retry once.")
-        return
+        return False
 
     try:
         sock.settimeout(timeout + 10)
@@ -102,26 +102,29 @@ def run_kicad_code(script_path=None, code_stdin=False, inline_code=None,
         if not raw:
             print("--- KICAD ERROR ---")
             print("Connection closed by abIDE with no response.")
-            return
+            return False
         try:
             resp = json.loads(raw.decode('utf-8'))
         except json.JSONDecodeError:
             print("--- KICAD ERROR ---")
             print("Zombie Port Detected! Connected to a wrong program.")
             print("Please reopen the abIDE window in KiCad to refresh the port.")
-            return
+            return False
         status = resp.get("status", "unknown")
         output = resp.get("output", "")
         print(f"--- KICAD {status.upper()} ---")
         print(output)
+        return status == "success"
     except socket.timeout:
         print("--- KICAD TIMEOUT ---")
         print(f"No response from abIDE within {timeout}s. The script may still be "
               "running on KiCad's main thread (check the Output Console tab in "
               "abIDE). Increase --timeout if the script is expected to be slow.")
+        return False
     except Exception as e:
         print("--- KICAD ERROR ---")
         print(f"Bridge communication error: {e}")
+        return False
     finally:
         try:
             sock.close()
@@ -135,6 +138,7 @@ if __name__ == "__main__":
     parser.add_argument("--stdin", action="store_true", help="Read code to execute from stdin")
     parser.add_argument("--code", type=str, default=None, help="Inline python code to execute")
     parser.add_argument("--json-ops", type=str, default=None, help="Path to a JSON file containing apply_ops list")
+    parser.add_argument("--state", choices=["summary", "full"], help="Dump current board state JSON directly to stdout")
     parser.add_argument("--oracle", type=str, help="Oracle query to execute (e.g. 'BOARD GetTracks')")
     parser.add_argument("--timeout", type=float, default=30.0, help="Timeout in seconds")
     parser.add_argument("--keep-state", action="store_true",
@@ -163,14 +167,27 @@ if __name__ == "__main__":
             "from currentboardfetcher import apply_ops\n"
             f"ops = json.loads(base64.b64decode('{ops_b64}').decode())\n"
             "result = apply_ops(ops, dry_run=False, save=True, refill=False, verify=True)\n"
-            "if result.get('applied'):\n"
+            "if result.get('applied') and not result.get('failed'):\n"
             "    print('\\nJSON Ops SUCCESS!')\n"
             "else:\n"
             "    print('\\nJSON Ops FAILED:', result.get('problems'))\n"
+            "    raise SystemExit(1)\n"
         )
 
-    if not args.script_path and not args.stdin and not args.code and not args.oracle and not args.reset_state:
-        parser.error("Must provide a script_path, --stdin, --code, --json-ops, an --oracle query, or --reset-state")
+    if args.state:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        args.code = (
+            "import sys, json, importlib\n"
+            f"sys.path.insert(0, r'{script_dir}')\n"
+            "import currentboardfetcher\n"
+            "importlib.reload(currentboardfetcher)\n"
+            f"print(json.dumps(currentboardfetcher.ai_context(mode='{args.state}'), indent=2))\n"
+        )
+        args.timeout = max(args.timeout, 120.0)
+
+    if not args.script_path and not args.stdin and not args.code and not args.oracle and not args.reset_state and not args.state:
+        parser.error("Must provide a script_path, --stdin, --code, --json-ops, --state, an --oracle query, or --reset-state")
         
-    run_kicad_code(args.script_path, args.stdin, args.code, args.oracle,
-                   args.timeout, args.keep_state, args.reset_state)
+    success = run_kicad_code(args.script_path, args.stdin, args.code, args.oracle,
+                             args.timeout, args.keep_state, args.reset_state)
+    sys.exit(0 if success else 1)

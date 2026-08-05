@@ -5,3 +5,11 @@ __pycache__/
 *.log
 *.jar
 *.port
+kicad_paths.json
+Autoplacer/all_functionNameWithDetailedUsecase.py
+pcb_brain/
+ops*.json
+board.dsn
+board.ses
+*_board.svg
+*.bak

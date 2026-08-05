@@ -14,6 +14,8 @@ Also holds the shared kicad_paths.json reader used by kicad_lib_init.py.
 import argparse
 import json
 import sys
+import os
+import shutil
 from pathlib import Path
 
 CONFIG = Path(__file__).with_name("kicad_paths.json")
@@ -77,6 +79,29 @@ def load_paths(*required):
     if missing:
         raise ValueError(f"{CONFIG.name}: fill in {', '.join(missing)}.{HOWTO}")
     return cfg
+
+def load_cli():
+    """Returns the absolute path to kicad-cli, or None if not found."""
+    try:
+        cfg = load_paths()
+        sym_dir = str(cfg.get("kicad_symbol_dir", ""))
+        if "share" in sym_dir:
+            base = sym_dir.split("share")[0]
+            exe = os.path.join(base, "bin", "kicad-cli.exe")
+            if os.path.exists(exe):
+                return exe
+            exe_sh = os.path.join(base, "bin", "kicad-cli")
+            if os.path.exists(exe_sh):
+                return exe_sh
+    except Exception:
+        pass
+    
+    # Fallback to system PATH
+    sys_cli = shutil.which("kicad-cli")
+    if sys_cli:
+        return sys_cli
+        
+    return None
 
 # ---------------- tiny s-expression reader ----------------
 
@@ -228,7 +253,8 @@ def verify(library, symbol_file: Path, cfg):
         fp_library, fp_name = entry["footprint"].split(":", 1)
         pretty = find_pretty(symbol_file, fp_library, cfg)
         if pretty is None:
-            print(f"SKIP  {label}: footprint library '{fp_library}' not reachable -- NOT VERIFIED")
+            print(f"FAIL  {label}: footprint library '{fp_library}' not reachable -- NOT VERIFIED")
+            failures += 1
             continue
 
         mod = pretty / f"{fp_name}.kicad_mod"
@@ -267,7 +293,7 @@ def main():
         if not path.is_file():
             raise ValueError(f"stock library not found: {path}")
     else:
-        cfg = load_paths() if a.verify else {}
+        cfg = load_paths("kicad_footprint_dir") if a.verify else {}
         path = Path(a.symbol_file).expanduser()
         if not path.is_file():
             raise ValueError(f"file not found: {path}")

@@ -4,6 +4,25 @@ import sys
 import subprocess
 import glob
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from kicad_pins import load_cli
+
+def save_live_board():
+    """Forces KiCad to flush the active board to disk using the agent bridge."""
+    bridge = os.path.join(os.path.dirname(__file__), "kicad_agent_bridge.py")
+    cmd = [
+        sys.executable, bridge, 
+        "--code", "pcbnew.SaveBoard(pcbnew.GetBoard().GetFileName(), pcbnew.GetBoard())"
+    ]
+    subprocess.run(cmd, capture_output=True)
+
+def resolve_board(project_dir):
+    pros = glob.glob(os.path.join(project_dir, "*.kicad_pro"))
+    if not pros:
+        return None
+    stem = os.path.splitext(os.path.basename(pros[0]))[0]
+    return os.path.join(project_dir, f"{stem}.kicad_pcb")
+
 def main():
     if len(sys.argv) < 2:
         print("Usage: python pcb_snapshot.py <PROJECT_DIR>")
@@ -14,19 +33,20 @@ def main():
         print(f"Error: Not a directory: {project_dir}")
         sys.exit(1)
         
-    pcb_files = glob.glob(os.path.join(project_dir, "*.kicad_pcb"))
-    if not pcb_files:
-        print(f"Error: No .kicad_pcb file found in {project_dir}")
+    pcb_file = resolve_board(project_dir)
+    if not pcb_file or not os.path.exists(pcb_file):
+        print(f"Error: No matching .kicad_pcb file found for the project in {project_dir}")
         sys.exit(1)
         
-    pcb_file = pcb_files[0]
+    save_live_board()
+        
     base_name = os.path.splitext(os.path.basename(pcb_file))[0]
     out_svg = os.path.join(project_dir, f"{base_name}_board.svg")
     
-    kicad_cli = "kicad-cli"
-    alt_cli = r"C:\Program Files\KiCad\10.0\bin\kicad-cli.exe"
-    if os.path.exists(alt_cli):
-        kicad_cli = alt_cli
+    kicad_cli = load_cli()
+    if not kicad_cli:
+        print("Error: kicad-cli not found.")
+        sys.exit(1)
         
     cmd = [
         kicad_cli, "pcb", "export", "svg",

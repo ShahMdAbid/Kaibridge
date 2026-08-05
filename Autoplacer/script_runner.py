@@ -16,6 +16,10 @@ import time
 PORT_FILE = os.path.join(os.path.dirname(__file__), "kicad_agent_bridge.port")
 DEBUG_LOG = os.path.join(os.path.dirname(__file__), "kicad_agent_bridge_debug.log")
 
+class AbideTimeout(BaseException):
+    """BaseException on purpose: `except Exception` in user code must NOT swallow it."""
+
+
 
 class ScriptRunnerFrame(wx.Frame):
     def __init__(self, parent):
@@ -350,11 +354,13 @@ class ScriptRunnerFrame(wx.Frame):
 
         def trace_calls(frame, event, arg):
             instruction_count[0] += 1
-            if instruction_count[0] > 1000:
+            if instruction_count[0] >= 200:
                 instruction_count[0] = 0
                 if time.time() - start_time > timeout_seconds:
-                    raise Exception(f"Execution timed out ({timeout_seconds}s limit exceeded). Killed by abIDE Watchdog to prevent KiCad freeze.")
-            return trace_calls
+                    raise AbideTimeout(
+                        f"Timed out after {timeout_seconds}s -- killed by the abIDE watchdog. "
+                        "The board may be partially modified; a backup is in pcb_brain/backups/.")
+            return None      # <-- call-level tracing only. Do not trace every line.
 
         old_trace = sys.gettrace()
         sys.settrace(trace_calls)
@@ -374,7 +380,9 @@ class ScriptRunnerFrame(wx.Frame):
                 code_obj = compile(code_str, '<Code Snippet>', 'exec')
                 exec(code_obj, globals_dict)
             success = True
-        except Exception:
+        except AbideTimeout as e:
+            error_tb = f"AbideTimeout: {e}\n"
+        except BaseException:
             error_tb = traceback.format_exc()
         finally:
             sys.settrace(old_trace)

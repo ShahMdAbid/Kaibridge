@@ -2,6 +2,37 @@ import sys
 import re
 import os
 
+def suggest(file_content, method_name, limit=8):
+    frag = method_name[:6].lower()
+    if not frag:
+        return ""
+    names = sorted({m.group(1) for m in re.finditer(r"\n[ \t]*def (\w+)", file_content)
+                    if frag in m.group(1).lower()})
+    if names:
+        return "\n  did you mean: " + ", ".join(names[:limit])
+    return "\n  no similar name -- grep all_functionName.md for the real spelling"
+
+def find_pcbnew_source():
+    """The live pcbnew.py is the only source of truth. Never a pasted copy."""
+    try:
+        import pcbnew
+        p = pcbnew.__file__
+        if p.endswith((".pyc", ".pyo")):
+            p = p[:-1]
+        if os.path.isfile(p):
+            return p
+    except Exception:
+        pass
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from kicad_pins import load_paths
+        d = load_paths().get("kicad_python_dir")
+        if d and (d / "pcbnew.py").is_file():
+            return str(d / "pcbnew.py")
+    except Exception:
+        pass
+    return None
+
 def extract_docstring(method_body):
     # Match the def line and docstring if it exists
     doc_match = re.search(r'^[ \t]*def[^\n]+:\s*r?(?:"""|\'\'\')[\s\S]*?(?:"""|\'\'\')', method_body, re.MULTILINE)
@@ -23,7 +54,7 @@ def get_kicad_signature(file_content, class_name, method_name):
         method_regex = re.compile(rf'(?:^|\n)[ \t]*def {method_name}\b[\s\S]*?(?=(?:\n[ \t]*def |\n[ \t]*class |$))')
         match = method_regex.search(file_content)
         if not match:
-            return f"[GLOBAL.{method_name}] -> GLOBAL FUNCTION NOT FOUND.\n"
+            return f"[GLOBAL.{method_name}] -> GLOBAL FUNCTION NOT FOUND.{suggest(file_content, method_name)}\n"
         
         final_output = extract_docstring(match.group(0).strip())
         return f"[GLOBAL.{method_name}] EXACT SWIG OUTPUT:\n{final_output.strip()}\n"
@@ -72,7 +103,7 @@ def get_kicad_signature(file_content, class_name, method_name):
             parents = [p.strip() for p in class_match.group(1).split(',')]
             queue.extend(parents)
 
-    return f"[{class_name}.{method_name}] -> METHOD NOT FOUND.\n"
+    return f"[{class_name}.{method_name}] -> METHOD NOT FOUND.{suggest(file_content, method_name)}\n"
 
 if __name__ == "__main__":
     import argparse
@@ -88,10 +119,12 @@ if __name__ == "__main__":
         print("   Or: python oracle.py --batch (and pass lines via stdin)")
         sys.exit(1)
         
-    file_path = os.path.join(os.path.dirname(__file__), "all_functionNameWithDetailedUsecase.py")
-    if not os.path.exists(file_path):
-        print(f"Error: Could not find {file_path}")
-        sys.exit(1)
+    file_path = find_pcbnew_source()
+    if not file_path:
+        sys.exit('Live pcbnew.py not reachable from this interpreter.\n'
+                 'Use the bridge instead (it runs inside KiCad, always resolves):\n'
+                 '  python "<PLUGIN_DIR>/Autoplacer/kicad_agent_bridge.py" --oracle "BOARD GetTracks"\n'
+                 'Or add "kicad_python_dir" to kicad_paths.json.')
         
     with open(file_path, 'r', encoding='utf-8') as f:
         file_content = f.read()
