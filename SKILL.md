@@ -145,19 +145,18 @@ Then:
 
 ### 🔮 RULE 7 — Custom `pcbnew` scripting
 
-1. Never guess an API method.
-2. Cheap existence check first — grep `Autoplacer/all_functionName.md` for the class and method.
-3. Exact signature second, from the **running** KiCad:
+1. **Never guess an API method.**
+2. **Cheap existence check first** — Look at `<PLUGIN_DIR>\kicad10_api_map.md` (or `Autoplacer/all_functionName.md`) to see if the method exists on the target class (e.g., `BOARD`, `FOOTPRINT`).
+3. **Exact signature second** — Always verify the exact signature from the **running** KiCad using the Oracle:
 
 ```powershell
 python "<PLUGIN_DIR>\Autoplacer\kicad_agent_bridge.py" --oracle "BOARD GetTracks"
 ```
+*(You can also use `--oracle "GLOBAL ImportSpecctraSES"` for module-level functions)*
 
-(`oracle.py` standalone works only where `pcbnew` is importable; the bridge always works.)
-
-1. If the Oracle says NOT FOUND, it prints `did you mean:` candidates. Pick one of those. **Do not invent a third spelling.**
-2. Use only methods the Oracle confirmed. Run via `kicad_agent_bridge.py <script.py>`.
-3. The watchdog cannot interrupt a long C/SWIG call. Pass `--timeout` generously for zone fills and imports rather than writing your own retry loop.
+4. If the Oracle says NOT FOUND, it prints `did you mean:` candidates. Pick one of those. **Do not invent a third spelling.**
+5. Use only methods the Oracle confirmed. Run via `kicad_agent_bridge.py <script.py>`.
+6. The watchdog cannot interrupt a long C/SWIG call. Pass `--timeout` generously for zone fills and imports rather than writing your own retry loop.
 
 ### 🔄 RULE 8 — Autoroute + DRC loop
 

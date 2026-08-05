@@ -32,11 +32,11 @@ PART_GAP_X = 12.7
 PART_GAP_Y = 15.24
 GROUP_PAD = 10.16
 GROUP_GAP = 15.24
-MARGIN = 50.8
-SHEET_W = 380.0
+MARGIN = 12.7
+PAPERS = [("A4", 297.0, 210.0), ("A3", 420.0, 297.0), ("A2", 594.0, 420.0),
+          ("A1", 841.0, 594.0),  ("A0", 1189.0, 841.0)]
 FONT = 1.27
 CHAR_W = 0.85 * FONT
-PAPERS = [("A4", 297.0, 210.0), ("A3", 420.0, 297.0), ("A2", 594.0, 420.0)]
 JUSTIFY = {(1, 0): ["left", "bottom"], (-1, 0): ["right", "bottom"],
            (0, -1): ["left", "bottom"], (0, 1): ["right", "bottom"]}
 LABEL_ANGLE = {(1, 0): 0, (-1, 0): 180, (0, -1): 90, (0, 1): 270}
@@ -74,8 +74,9 @@ def effects(version, hide=False, size=FONT, justify=None):
 def prop(version, name, value, x, y, hide=False):
     return ["property", q(name), q(value), at(x, y, 0), effects(version, hide=hide)]
 
-def text_width(text):
-    return CHAR_W * len(str(text)) + 2.54
+def text_width(text, style="label"):
+    w = CHAR_W * len(str(text))
+    return w + 2.54 if style == "global" else w
 
 def fail(message):
     raise ValueError(message)
@@ -388,7 +389,7 @@ def measure(design, libs):
         for number, ((ox, oy), away) in rel.items():
             reach = stub.get(number, 0.0)
             ex, ey = ox + away[0] * reach, oy + away[1] * reach
-            width = text_width(netof[(key, number)][0]) if (key, number) in netof else 0.0
+            width = text_width(netof[(key, number)][0], netof[(key, number)][1]) if (key, number) in netof else 0.0
             left = max(left, -ox + 2.54, -ex + (width if away[0] < 0 else 0))
             right = max(right, ox + 2.54, ex + (width if away[0] > 0 else 0))
             top = max(top, -oy + 7.62, -ey + (width if away[1] < 0 else 0))
@@ -399,46 +400,96 @@ def measure(design, libs):
                      "ext": {"left": left, "right": right, "top": top, "bottom": bottom}}
     return info, netof
 
+def layout_group(group, info, target_w):
+    members = list(group["parts"])
+    offsets = {}
+    x = 0.0
+    row_top = 0.0
+    row_height = 0.0
+    box_right = 0.0
+    for key in members:
+        ext = info[key]["ext"]
+        if row_height and x + ext["left"] + ext["right"] > target_w:
+            x = 0.0
+            row_top += row_height + PART_GAP_Y
+            row_height = 0.0
+        px, py = snap(x + ext["left"]), snap(row_top + ext["top"])
+        offsets[key] = (px, py)
+        x = px + ext["right"] + PART_GAP_X
+        box_right = max(box_right, px + ext["right"])
+        row_height = max(row_height, ext["top"] + ext["bottom"])
+    box_bottom = row_top + row_height
+    return {
+        "w": box_right,
+        "h": box_bottom,
+        "offsets": offsets,
+        "title": group.get("title", group["id"]),
+        "members": members
+    }
+
+def try_pack(design, info, paper_w, paper_h):
+    usable_w, usable_h = paper_w - 2 * MARGIN, paper_h - 2 * MARGIN
+    blocks = []
+    for group in design["groups"]:
+        if not group["parts"]:
+            continue
+        area = sum((info[k]["ext"]["left"] + info[k]["ext"]["right"]) *
+                   (info[k]["ext"]["top"] + info[k]["ext"]["bottom"])
+                   for k in group["parts"])
+        target_w = min(usable_w, max(60.0, (area * 1.6) ** 0.5))
+        blocks.append(layout_group(group, info, target_w))
+
+    col_x = col_w = y = 0.0
+    placed_blocks = []
+    for b in blocks:
+        # block bounding box includes pads and title space
+        block_total_w = b["w"] + 2 * GROUP_PAD
+        block_total_h = b["h"] + 2 * GROUP_PAD + 7.62
+        if y > 0 and y + block_total_h > usable_h:
+            col_x += col_w + GROUP_GAP
+            col_w = y = 0.0
+        if col_x + block_total_w > usable_w or block_total_h > usable_h:
+            return None
+        placed_blocks.append({
+            **b,
+            "origin": (MARGIN + col_x, MARGIN + y)
+        })
+        y += block_total_h + GROUP_GAP
+        col_w = max(col_w, block_total_w)
+    return placed_blocks
+
+def pack(design, info):
+    for name, w, h in PAPERS:
+        packed = try_pack(design, info, w, h)
+        if packed:
+            return name, packed
+    packed = try_pack(design, info, 2000.0, 2000.0)
+    return "User", packed
+
 def build(design, libs, version, project_name, root_uuid):
     parts = design["parts"]
     info, netof = measure(design, libs)
     symbols, wires, labels, ncs, shapes = [], [], [], [], []
     embedded, placed = {}, {}
-    sheet_bottom = MARGIN
-    sheet_right = MARGIN
 
-    for group in design["groups"]:
-        members = list(group["parts"])
-        if not members:
-            continue
-        title_y = sheet_bottom + GROUP_PAD
-        x = MARGIN + GROUP_PAD
-        row_top = title_y + 7.62
-        row_height = 0.0
-        box_right = x
-        for key in members:
-            ext = info[key]["ext"]
-            if row_height and x + ext["left"] + ext["right"] > SHEET_W:
-                x = MARGIN + GROUP_PAD
-                row_top += row_height + PART_GAP_Y
-                row_height = 0.0
-            px, py = snap(x + ext["left"]), snap(row_top + ext["top"])
-            placed[key] = (px, py)
-            x = px + ext["right"] + PART_GAP_X
-            box_right = max(box_right, px + ext["right"])
-            row_height = max(row_height, ext["top"] + ext["bottom"])
-        box_bottom = row_top + row_height
+    paper, packed_blocks = pack(design, info)
+
+    for b in packed_blocks:
+        ox, oy = b["origin"]
+        title_y = oy + GROUP_PAD
+        
         shapes.append(["rectangle",
-                       ["start", fmt(MARGIN), fmt(title_y - 2.54)],
-                       ["end", fmt(box_right + GROUP_PAD), fmt(box_bottom + GROUP_PAD)],
+                       ["start", fmt(ox), fmt(title_y - 2.54)],
+                       ["end", fmt(ox + b["w"] + 2 * GROUP_PAD), fmt(oy + b["h"] + 2 * GROUP_PAD + 7.62)],
                        ["stroke", ["width", "0.15"], ["type", "dash"]],
                        ["fill", ["type", "none"]], ["uuid", uid()]])
-        shapes.append(["text", q(group.get("title", group["id"])),
-                       at(MARGIN + 1.27, title_y - 4.06, 0),
+        shapes.append(["text", q(b["title"]),
+                       at(ox + 1.27, title_y - 4.06, 0),
                        effects(version, size=2.0, justify=["left", "bottom"]),
                        ["uuid", uid()]])
-        sheet_bottom = box_bottom + GROUP_PAD + GROUP_GAP
-        sheet_right = max(sheet_right, box_right + GROUP_PAD)
+                       
+        for key, (px, py) in b["offsets"].items():
+            placed[key] = (ox + GROUP_PAD + px, title_y + 7.62 + py)
 
     for key, spec in parts.items():
         data = info[key]
@@ -493,9 +544,8 @@ def build(design, libs, version, project_name, root_uuid):
             elif slot in design["nc_resolved"]:
                 ncs.append(["no_connect", at(px, py), ["uuid", uid()]])
 
-    width = sheet_right + MARGIN
-    paper = next((p[0] for p in PAPERS if width <= p[1] and sheet_bottom + MARGIN <= p[2]),
-                 PAPERS[-1][0])
+    if paper == "User":
+        paper = "User 2000.0000 2000.0000"
     return embedded, symbols, wires, labels, ncs, shapes, paper
 
 def render(design, header, embedded, symbols, wires, labels, ncs, shapes, paper, root_uuid):

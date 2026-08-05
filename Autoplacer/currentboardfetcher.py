@@ -16,6 +16,28 @@ import traceback
 
 import pcbnew
 
+def _ensure_board(b):
+    if b is None:
+        raise RuntimeError("No board. Open a PCB in the PCB Editor.")
+    if hasattr(b, "GetFootprints"):
+        return b
+    cast = getattr(pcbnew, "Cast_to_BOARD", None)
+    if cast is not None:
+        b2 = _try(lambda: cast(b))
+        if b2 is not None and hasattr(b2, "GetFootprints"):
+            _warn_once("cast", "BOARD arrived unwrapped; Cast_to_BOARD recovered it.")
+            return b2
+    raise RuntimeError(
+        "BOARD proxy is corrupt (SwigPyObject). Close and reopen the abIDE window. "
+        "Do not importlib.reload modules that import pcbnew.")
+
+def resolve_board(board=None, pcb_path=None):
+    if board is not None:
+        return _ensure_board(board)
+    if pcb_path:
+        return pcbnew.LoadBoard(pcb_path)
+    return _ensure_board(pcbnew.GetBoard())
+
 def safe_json_default(obj):
     s = str(obj)
     if "<Swig Object" in s or "<class" in s:
@@ -296,7 +318,7 @@ def _extract_zone(board, z):
             "tracks": bool(z.GetDoNotAllowTracks()),
             "vias": bool(z.GetDoNotAllowVias()),
             "pads": bool(z.GetDoNotAllowPads()),
-            "copper_pour": bool(z.GetDoNotAllowCopperPour()),
+            "copper_pour": bool(_call_any(z, ["GetDoNotAllowZoneFills", "GetDoNotAllowCopperPour"], False)),
             "footprints": bool(z.GetDoNotAllowFootprints()),
         }),
         "clearance_mm": _try(lambda: to_mm(z.GetLocalClearance())),
@@ -424,7 +446,7 @@ def get_full_board_state(board=None,
     net_filter: optional list/set of net names. If given, tracks/vias/zones are
                 limited to those nets (useful for huge boards).
     """
-    board = board or pcbnew.GetBoard()
+    board = resolve_board(board)
     if board is None:
         raise RuntimeError("No board. Open a PCB or pass board=pcbnew.LoadBoard(path).")
 
@@ -561,7 +583,7 @@ def _store_dir(board):
     return d
 
 def snapshot(board=None, tag="", write=True, **kw):
-    board = board or pcbnew.GetBoard()
+    board = resolve_board(board)
     st = get_full_board_state(board, **kw)
     if write:
         d = _store_dir(board)
@@ -673,7 +695,7 @@ def print_diff(report):
 # ----------------------------------------------------------------------------
 
 def build_index(board=None):
-    board = board or pcbnew.GetBoard()
+    board = resolve_board(board)
     idx = {"by_uuid": {}, "by_ref": {}, "pads": {}, "nets": {}, "layers": {}}
 
     for fp in board.GetFootprints():
@@ -863,6 +885,66 @@ def _op_zone_refill(board, idx, op, dry):
         filler.Fill(board.Zones())
     return "refill all zones"
 
+def _op_zone_add(board, idx, op, dry):
+    _need(op, "net", "layer", "outline")
+    net = _resolve_net(idx, op["net"])
+    layer = _resolve_layer(idx, op["layer"])
+    if len(op["outline"]) < 3:
+        raise OpError("zone outline needs at least 3 points")
+    if not dry:
+        z = pcbnew.ZONE(board)
+        z.SetLayer(layer)
+        z.SetNet(net)
+        z.SetAssignedPriority(int(op.get("priority", 0)))
+        z.SetLocalClearance(from_mm(op.get("clearance", 0.3)))
+        z.SetMinThickness(from_mm(op.get("min_thickness", 0.25)))
+        z.SetZoneName(op.get("name", f"{op['net']}_plane"))
+        z.SetPadConnection(pcbnew.ZONE_CONNECTION_THERMAL)
+
+        chain = pcbnew.SHAPE_LINE_CHAIN()
+        for p in op["outline"]:
+            chain.Append(mk_point(p["x"], p["y"]))
+        chain.SetClosed(True)
+        poly = pcbnew.SHAPE_POLY_SET()
+        poly.AddOutline(chain)
+        z.SetOutline(poly)
+
+        board.Add(z)
+        z.SetNeedRefill(True)
+        op["_new_uuid"] = uuid_of(z)
+    return f"add zone {op['net']} on {op['layer']} ({len(op['outline'])} pts)"
+
+def _op_prep_for_route(board, idx, op, dry):
+    problems, killed = [], 0
+
+    if not dry:
+        for t in list(board.GetTracks()):
+            board.Remove(t)
+            killed += 1
+        board.DeleteMARKERs()
+
+    poly = pcbnew.SHAPE_POLY_SET()
+    ok = _try(lambda: board.GetBoardPolygonOutlines(poly), False)
+    if not ok or poly.OutlineCount() == 0:
+        problems.append("Edge.Cuts does not form a single closed outline. "
+                        "Run board.set_size or fix the outline before routing.")
+
+    if ok and poly.OutlineCount():
+        for fp in board.GetFootprints():
+            b = fp.GetBoundingBox()
+            for c in ((b.GetLeft(), b.GetTop()), (b.GetRight(), b.GetBottom())):
+                if not poly.Contains(pcbnew.VECTOR2I(c[0], c[1])):
+                    problems.append(f"{fp.GetReference()} extends outside Edge.Cuts")
+                    break
+
+    for t in list(board.GetTracks()):
+        if _try(lambda: t.GetStart() == t.GetEnd(), False):
+            problems.append("zero-length track survived the wipe")
+
+    if problems:
+        raise OpError("not route-ready:\n  - " + "\n  - ".join(problems))
+    return f"route prep OK ({killed} routed items removed)"
+
 def _op_board_set_size(board, idx, op, dry):
     _need(op, "width", "height")
     w = op["width"]
@@ -871,12 +953,9 @@ def _op_board_set_size(board, idx, op, dry):
     oy = op.get("origin_y", 0.0)
     
     if not dry:
-        # Find Edge.Cuts layer ID
-        edge_cuts = None
-        for i in range(pcbnew.PCB_LAYER_ID_COUNT):
-            if board.GetLayerName(i) == "Edge.Cuts":
-                edge_cuts = i
-                break
+        edge_cuts = board.GetLayerID("Edge.Cuts")
+        if edge_cuts == -1:
+            raise OpError("Could not resolve Edge.Cuts layer ID")
         
         if edge_cuts is not None:
             # Delete old Edge.Cuts lines
@@ -937,7 +1016,9 @@ OPS = {
     "item.delete": _op_delete,
     "net.delete_routing": _op_delete_net_tracks,
     "zone.refill": _op_zone_refill,
+    "zone.add": _op_zone_add,
     "board.set_size": _op_board_set_size,
+    "board.prep_for_route": _op_prep_for_route,
     "board.drc_check": _op_board_drc,
 }
 
@@ -946,7 +1027,7 @@ OPS = {
 # ----------------------------------------------------------------------------
 
 def apply_ops(ops, board=None, dry_run=True, save=False, refill=True, verify=True):
-    board = board or pcbnew.GetBoard()
+    board = resolve_board(board)
     idx = build_index(board)
 
     # ---- 1. validate ----
@@ -1073,7 +1154,7 @@ INTENT_TEMPLATE = {
 }
 
 def ensure_intent(board=None):
-    board = board or pcbnew.GetBoard()
+    board = resolve_board(board)
     p = os.path.join(_store_dir(board), "intent.json")
     if not os.path.exists(p):
         with open(p, "w", encoding="utf-8") as f:
@@ -1094,7 +1175,7 @@ def ai_context(board=None, mode="summary", net_filter=None):
     mode = "summary" -> compact (no track geometry). Give this first.
     mode = "full"    -> everything. Can be huge.
     """
-    board = board or pcbnew.GetBoard()
+    board = resolve_board(board)
     st = get_full_board_state(
         board,
         include_tracks=(mode == "full"),
@@ -1138,7 +1219,7 @@ def ai_context(board=None, mode="summary", net_filter=None):
 # ----------------------------------------------------------------------------
 
 def quick_diff(board=None, against=None):
-    board = board or pcbnew.GetBoard()
+    board = resolve_board(board)
     d = _store_dir(board)
     old_path = against or os.path.join(d, "state_latest.json")
     if not os.path.exists(old_path):
@@ -1150,6 +1231,6 @@ def quick_diff(board=None, against=None):
     return new
 
 if __name__ == "__main__":
-    _b = pcbnew.GetBoard()
+    _b = resolve_board()
     print(json.dumps(get_full_board_state(_b), indent=2, default=safe_json_default))
 
