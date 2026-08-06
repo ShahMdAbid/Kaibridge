@@ -69,11 +69,14 @@ Required top-level keys. Omitting any of these is a validation failure:
 
 | Key | Required | Note |
 | --- | --- | --- |
-| `schema` | yes | must be exactly `2` |
-| `parts` | yes | `lib_id`, `value`, `footprint` per ref |
-| `nets` | yes | ≥2 pins each |
+| `schema` | yes | `2` (single sheet) or `3` (multi-sheet hierarchy) |
+| `meta` | yes | `design_id` seeds every UUID — **never change it for a board that is already laid out** |
+| `parts` | yes | `lib_id`, `value`, `footprint` per ref; optional `near` for satellite placement |
+| `nets` | yes | ≥2 pins each; `style` is auto-derived (see below) |
 | `netclasses` | if any net sets `class` | a net referencing an undefined class fails |
-| `groups` | optional | ungrouped parts land in `Unsorted` |
+| `groups` | optional | ungrouped parts land in `Ungrouped` |
+| `sheets` | optional | ordered list of hierarchical sheets; omit for single-sheet output |
+| `decoupling` | optional | auto-generates bypass caps per IC power pin |
 | `power_flags` | recommended | auto-adds `#FLGn` PWR_FLAG parts for ERC |
 | `no_connect` | optional | `"U2.38"` or `"J1.SHIELD"` |
 | `checks` | yes | set `"require_footprints": true` |
@@ -82,26 +85,33 @@ Rules:
 
 1. Pin references are `"<REF>.<PIN_NUMBER>"` and come **only** from `kicad_pins.py --json`. Never guess a pin number.
 2. Name every junction (`LED_A`, `EN`, `IO0`). Never `Net-(D1_Pad1)` — the compiler rejects it.
-3. Power nets (`GND`, `+3V3`, `+5V`, `VIN`) get `"style": "global"`. Signals omit `style`.
+3. Label style is derived, not declared. Rails (`GND`, `+3V3`, `VBUS`, `VIN`, anything in `power_flags`) become global labels automatically. A net that touches two sheets becomes a hierarchical label plus a sheet pin automatically. Only set `nets[].style` when you need to override that, which is almost never.
 4. Every unconnected `power_in` pin is a hard error. Wire it or list it in `no_connect`.
+5. If the design has more than ~40 parts, declare `sheets`. One sheet per functional block. Never split a group across sheets.
 
 Save to `<PROJECT_DIR>\design.json`. Schema reference: `design_template.json`.
 
 **The first command after writing `design.json` is always the dry run.** Writing the schematic before exit code 0 is forbidden:
 
 ```powershell
-python "<PLUGIN_DIR>\json2sch.py" "<PROJECT_DIR>" "<PROJECT_DIR>\design.json" --dry-run
+python "<PLUGIN_DIR>\json2sch.py" "<PROJECT_DIR>" --dry-run
 ```
 
-*(পিন রেফারেন্স অবশ্যই `kicad_pins.py --json`-এর নম্বর/নাম থেকে আসবে; `design.json` লেখার পর প্রথম কমান্ড সর্বদা `--dry-run`, exit code 0 না হলে schematic লেখা নিষিদ্ধ।)*
+Always read the dry-run report: it lists every sheet with its part count, net count and paper size, plus every warning.
 
 Then, with **KiCad closed** (it will overwrite both files on exit otherwise):
 
 ```powershell
-python "<PLUGIN_DIR>\json2sch.py" "<PROJECT_DIR>" "<PROJECT_DIR>\design.json" --apply-netclasses
+python "<PLUGIN_DIR>\json2sch.py" "<PROJECT_DIR>" --apply-netclasses
 ```
 
-Generated files target KiCad 7 and newer.
+Generated outputs:
+- `<project>.kicad_sch` — root schematic
+- One `<sheet_id>.kicad_sch` per declared sheet (multi-sheet only)
+- `abide_build.json` — resolved sidecar for `macro_placer.py`
+- Timestamped `.bak` files for anything replaced
+
+Generated files target KiCad 7 and newer (default KiCad 9; use `--kicad-version` flag to override).
 
 ### 🔧 RULE 5 — Schematic → PCB
 

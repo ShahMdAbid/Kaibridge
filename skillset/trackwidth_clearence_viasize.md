@@ -9,7 +9,7 @@ At the root level of your `design.json` file, create a `"netclasses"` object. In
 You can specify the following parameters (in millimeters):
 - `clearance`: The minimum distance between this net and other copper items.
 - `track_width`: The thickness of the traces.
-- `via_dia`: The total diameter of the via pad.
+- `via_diameter`: The total diameter of the via pad.
 - `via_drill`: The size of the drilled hole in the via.
 
 Next, assign these classes to specific nets within the `"nets"` object using the `"class"` attribute.
@@ -21,13 +21,13 @@ Next, assign these classes to specific nets within the `"nets"` object using the
     "Default": {
       "clearance": 0.2,
       "track_width": 0.25,
-      "via_dia": 0.8,
+      "via_diameter": 0.8,
       "via_drill": 0.4
     },
     "Power": {
       "clearance": 0.3,
       "track_width": 0.8,
-      "via_dia": 1.0,
+      "via_diameter": 1.0,
       "via_drill": 0.6
     }
   },
@@ -66,3 +66,5 @@ The `--apply-netclasses` flag writes these rules directly into the `.kicad_pro` 
 Once successfully applied:
 1. When you open KiCad and press **F8** (Update PCB from Schematic), KiCad will automatically associate `+5V` and `GND` with the 0.8mm track width rules, and `OUT1` with the 0.25mm rule.
 2. When you run **FreeRouting** headless, the autorouter natively reads these netclass constraints from the exported `.dsn` file and draws traces matching your exact size specifications.
+
+Valid netclass keys: `clearance`, `track_width`, `via_diameter`, `via_drill`, `uvia_diameter`, `uvia_drill`, `diff_pair_width`, `diff_pair_gap`, `wire_width`, `bus_width`, `line_style`, `schematic_color`, `pcb_color`, `priority`, `description`. Anything else is ignored with a warning by `--apply-netclasses`.

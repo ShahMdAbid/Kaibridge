@@ -26,19 +26,20 @@ import base64
 # ---------------------------------------------------------------------------
 
 def load_design(project_dir):
-    """Load and validate design.json from the project directory."""
-    path = os.path.join(project_dir, "design.json")
+    """Prefer the compiler's resolved sidecar; fall back to raw design.json."""
+    sidecar = os.path.join(project_dir, "abide_build.json")
+    path = sidecar if os.path.exists(sidecar) else os.path.join(project_dir, "design.json")
     if not os.path.exists(path):
-        print(f"Error: design.json not found in {project_dir}")
+        print(f"Error: neither abide_build.json nor design.json found in {project_dir}")
         sys.exit(1)
     with open(path, "r", encoding="utf-8") as f:
         design = json.load(f)
-
-    # Validate minimum structure
     if "parts" not in design:
-        print("Error: design.json has no 'parts' section.")
+        print(f"Error: {os.path.basename(path)} has no 'parts' section.")
         sys.exit(1)
-
+    if path == sidecar:
+        print(f"  using abide_build.json ({len(design['parts'])} parts, "
+              f"{len(design.get('groups', []))} groups)")
     return design
 
 
@@ -64,6 +65,7 @@ def build_groups(design):
                 "id":    g.get("id", "unknown"),
                 "title": g.get("title", g.get("id", "Group")),
                 "refs":  refs,
+                "sheet": g.get("sheet", "root"),
             })
 
         # Catch any parts NOT listed in any group
@@ -104,34 +106,36 @@ def build_groups(design):
 # ---------------------------------------------------------------------------
 
 def compute_placement(groups, start_x=50.0, start_y=50.0,
-                      part_gap=15.0, group_gap=35.0):
+                      part_gap=15.0, group_gap=35.0, sheet_gap=25.0):
     """
     Lay out groups left-to-right.  Within each group, arrange parts in a
-    roughly-square grid.  Returns a list of apply_ops-compatible dicts.
-
-    Coordinates are in mm.  KiCad Y-axis points DOWN.
+    roughly-square grid.  Coordinates are in mm.  KiCad Y-axis points DOWN.
+    Per-sheet banding: when the sheet changes, start a new band below.
     """
     ops = []
-    cursor_x = start_x      # left edge of current group zone
+    cursor_x, band_y = start_x, start_y
+    current_sheet = None
 
     for group in groups:
         refs = group["refs"]
         if not refs:
             continue
 
+        sheet = group.get("sheet") or "root"
+        if current_sheet is not None and sheet != current_sheet:
+            band_y += 4 * part_gap + sheet_gap
+            cursor_x = start_x
+        current_sheet = sheet
+
         # Compute grid dimensions (aim for roughly square)
-        n = len(refs)
-        cols = max(1, round(n ** 0.5))
-        rows = (n + cols - 1) // cols       # ceiling division
+        cols = max(1, round(len(refs) ** 0.5))
 
         for i, ref in enumerate(refs):
-            row = i // cols
-            col = i % cols
             ops.append({
                 "op":  "footprint.move",
                 "ref": ref,
-                "x":   round(cursor_x + col * part_gap, 2),
-                "y":   round(start_y  + row * part_gap, 2),
+                "x":   round(cursor_x + (i % cols) * part_gap, 2),
+                "y":   round(band_y  + (i // cols) * part_gap, 2),
             })
 
         # Advance cursor past this group + gap

@@ -13,149 +13,28 @@ Also holds the shared kicad_paths.json reader used by kicad_lib_init.py.
 
 import argparse
 import json
-import sys
 import os
-import shutil
+import sys
 from pathlib import Path
 
-CONFIG = Path(__file__).with_name("kicad_paths.json")
+# abide/ lives next to this file. Guarantee it is importable no matter who
+# imported us -- KiCad's plugin loader, the bridge, or a bare shell.
+_ROOT = os.path.dirname(os.path.abspath(__file__))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
 
-class Quoted(str):
-    """A string atom that was quoted in the source and must stay quoted on output."""
+# Backwards-compatible re-exports. Everything that used to live here still
+# resolves through this module: from kicad_pins import parse, dumps, Quoted...
+from abide.sexpr import Quoted, SexprError, dumps, find, head, parse, parse_all, quote
+from abide.paths import CONFIG, HOWTO, load_cli, load_paths
 
-    __slots__ = ()
+# Keep 'atom' as an alias for 'quote' for any scripts that used the old name
+atom = quote
 
-_NEEDS_QUOTE = set(' \t\r\n()"')
-
-def atom(value):
-    text = str(value)
-    if isinstance(value, Quoted) or text == "" or any(c in _NEEDS_QUOTE for c in text):
-        return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
-    return text
-
-def dumps(node):
-    """Serialize a parsed tree back into KiCad s-expression text."""
-    if isinstance(node, list):
-        return "(" + " ".join(dumps(child) for child in node) + ")"
-    return atom(node)
-
-HOWTO = f"""
-Fix {CONFIG.name} (same folder as this script). It must contain:
-
-{{
-  "kicad_config_dir":    "<folder holding your global sym-lib-table>",
-  "kicad_symbol_dir":    "<KiCad stock symbols folder>",
-  "kicad_footprint_dir": "<KiCad stock footprints folder>"
-}}
-
-Where to find them (copy the values, do not type them):
-  symbol / footprint dir : KiCad -> Preferences -> Configure Paths...
-                           (rows ending in _SYMBOL_DIR and _FOOTPRINT_DIR)
-  config dir             : PCB editor -> Tools -> Scripting Console, then run
-                           import pcbnew; print(pcbnew.SETTINGS_MANAGER.GetUserSettingsPath())
-
-Use forward slashes.
-"""
-
-def load_paths(*required):
-    """Read kicad_paths.json and return {key: Path} for the non-empty entries."""
-    if not CONFIG.exists():
-        raise ValueError(f"{CONFIG} not found.{HOWTO}")
-    try:
-        raw = json.loads(CONFIG.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as e:
-        raise ValueError(f"{CONFIG.name} is not valid JSON ({e}).{HOWTO}")
-
-    cfg = {}
-    for key, value in raw.items():
-        if not str(value).strip():
-            continue
-        path = Path(value).expanduser()
-        if not path.is_dir():
-            raise ValueError(f"{CONFIG.name}: '{key}' is not an existing folder -> {path}{HOWTO}")
-        cfg[key] = path
-
-    missing = [key for key in required if key not in cfg]
-    if missing:
-        raise ValueError(f"{CONFIG.name}: fill in {', '.join(missing)}.{HOWTO}")
-    return cfg
-
-def load_cli():
-    """Returns the absolute path to kicad-cli, or None if not found."""
-    try:
-        cfg = load_paths()
-        sym_dir = str(cfg.get("kicad_symbol_dir", ""))
-        if "share" in sym_dir:
-            base = sym_dir.split("share")[0]
-            exe = os.path.join(base, "bin", "kicad-cli.exe")
-            if os.path.exists(exe):
-                return exe
-            exe_sh = os.path.join(base, "bin", "kicad-cli")
-            if os.path.exists(exe_sh):
-                return exe_sh
-    except Exception:
-        pass
-    
-    # Fallback to system PATH
-    sys_cli = shutil.which("kicad-cli")
-    if sys_cli:
-        return sys_cli
-        
-    return None
-
-# ---------------- tiny s-expression reader ----------------
-
-def tokens(text):
-    i, n = 0, len(text)
-    while i < n:
-        c = text[i]
-        if c in "()":
-            yield c
-            i += 1
-        elif c.isspace():
-            i += 1
-        elif c == '"':
-            i, buf = i + 1, []
-            while i < n and text[i] != '"':
-                if text[i] == "\\" and i + 1 < n:
-                    buf.append(text[i + 1])
-                    i += 2
-                else:
-                    buf.append(text[i])
-                    i += 1
-            i += 1
-            yield Quoted("".join(buf))
-        else:
-            j = i
-            while j < n and not text[j].isspace() and text[j] not in '()"':
-                j += 1
-            yield text[i:j]
-            i = j
-
-def parse(text):
-    """Return the first top-level list. Raises ValueError on malformed input."""
-    stack = []
-    for token in tokens(text):
-        if token == "(":
-            stack.append([])
-        elif token == ")":
-            if not stack:
-                raise ValueError("unexpected closing parenthesis")
-            done = stack.pop()
-            if not stack:
-                return done
-            stack[-1].append(done)
-        else:
-            if not stack:
-                raise ValueError("atom outside any list")
-            stack[-1].append(token)
-    raise ValueError("unbalanced parentheses")
-
-def head(node, tag):
-    return isinstance(node, list) and node and node[0] == tag
-
-def find(node, tag):
-    return [child for child in node if head(child, tag)]
+__all__ = ["Quoted", "SexprError", "dumps", "find", "head", "parse", "parse_all",
+           "atom", "quote", "CONFIG", "HOWTO", "load_cli", "load_paths",
+           "collect_pins", "read_library", "sort_pins", "count_pads",
+           "find_pretty", "verify"]
 
 # ---------------- symbols ----------------
 
