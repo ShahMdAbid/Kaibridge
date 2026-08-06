@@ -138,6 +138,7 @@ if __name__ == "__main__":
     parser.add_argument("--stdin", action="store_true", help="Read code to execute from stdin")
     parser.add_argument("--code", type=str, default=None, help="Inline python code to execute")
     parser.add_argument("--json-ops", type=str, default=None, help="Path to a JSON file containing apply_ops list")
+    parser.add_argument("--commit", action="store_true", help="Apply operations for real (default is dry run)")
     parser.add_argument("--state", choices=["summary", "full"], help="Dump current board state JSON directly to stdout")
     parser.add_argument("--oracle", type=str, help="Oracle query to execute (e.g. 'BOARD GetTracks')")
     parser.add_argument("--timeout", type=float, default=30.0, help="Timeout in seconds")
@@ -169,11 +170,10 @@ if __name__ == "__main__":
             f"{reload_stmt}"
             "from currentboardfetcher import apply_ops\n"
             f"ops = json.loads(base64.b64decode('{ops_b64}').decode())\n"
-            "result = apply_ops(ops, dry_run=False, save=True, refill=True, verify=True)\n"
-            "if result.get('applied') and not result.get('failed'):\n"
-            "    print('\\nJSON Ops SUCCESS!')\n"
-            "else:\n"
-            "    print('\\nJSON Ops FAILED:', result.get('problems'))\n"
+            f"result = apply_ops(ops, dry_run={not getattr(args, 'commit', False)}, save={getattr(args, 'commit', False)}, refill=False, verify=False)\n"
+            "print('\\nABIDE_RESULT ' + json.dumps(result))\n"
+            "ok = not result.get('problems') and not result.get('failed')\n"
+            "if not ok:\n"
             "    raise SystemExit(1)\n"
         )
 
@@ -185,7 +185,7 @@ if __name__ == "__main__":
             f"sys.path.insert(0, r'{script_dir}')\n"
             "import currentboardfetcher\n"
             f"{reload_stmt}"
-            f"print(json.dumps(currentboardfetcher.ai_context(mode='{args.state}'), indent=2))\n"
+            f"currentboardfetcher.ai_context(mode='{args.state}')\n"
         )
         args.timeout = max(args.timeout, 120.0)
 

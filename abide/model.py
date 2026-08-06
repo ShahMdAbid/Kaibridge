@@ -550,8 +550,9 @@ def sidecar(design):
             for s in design.sheets
         ],
         "groups": [
-            {"id": g.id, "title": g.title, "sheet": g.sheet, "parts": list(g.refs)}
-            for g in design.groups if g.refs
+            {"id": g.id, "title": g.title, "sheet": g.sheet,
+             "parts": [r for r in g.refs if r in design.parts and design.parts[r].on_board and not design.parts[r].hidden]}
+            for g in design.groups if any(design.parts[r].on_board and not design.parts[r].hidden for r in g.refs)
         ],
         "parts": {
             ref: {"lib_id": p.lib_id, "value": p.value, "footprint": p.footprint,

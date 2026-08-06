@@ -7,6 +7,9 @@ _try() or _call_any() so a missing API degrades to None instead of crashing.
 import os
 import re
 import json
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from abide.geometry import Box, find_overlaps, outside, separate
 import math
 import time
 import shutil
@@ -98,6 +101,15 @@ def to_mm(v):
 def from_mm(v):
     return pcbnew.FromMM(float(v))
 
+def deg(a):
+    """EDA_ANGLE (KiCad 7+) or plain number -> float degrees."""
+    if a is None:
+        return None
+    v = _try(lambda: a.AsDegrees())
+    if v is None:
+        v = _try(lambda: float(a))
+    return round(float(v), 4) if v is not None else None
+
 def mk_point(x_mm: float, y_mm: float) -> 'pcbnew.VECTOR2I':
     xi, yi = from_mm(x_mm), from_mm(y_mm)
     return pcbnew.VECTOR2I(xi, yi)
@@ -117,6 +129,14 @@ def _bbox(o):
         return None
     return {"x": round(to_mm(b.GetX()), 4), "y": round(to_mm(b.GetY()), 4),
             "w": round(to_mm(b.GetWidth()), 4), "h": round(to_mm(b.GetHeight()), 4)}
+
+def _box_json(b):
+    return {"x0": round(b.x0, 3), "y0": round(b.y0, 3),
+            "x1": round(b.x1, 3), "y1": round(b.y1, 3),
+            "w": round(b.w, 3), "h": round(b.h, 3),
+            "centre": {"x": round(b.cx, 3), "y": round(b.cy, 3)},
+            "anchor_offset": list(b.anchor_offset),
+            "source": b.source}
 
 def _layers_of(board, item):
     seq = _try(lambda: list(item.GetLayerSet().Seq()))
@@ -184,6 +204,65 @@ def _fp_fields(fp):
 # 3. EXTRACTORS (one per entity kind)
 # ----------------------------------------------------------------------------
 
+
+def box_of(fp, pad_margin_mm=0.25):
+    pos = fp.GetPosition()
+    ox, oy = to_mm(pos.x), to_mm(pos.y)
+    rot = _try(lambda: fp.GetOrientationDegrees(), 0.0)
+    locked = _try(lambda: bool(fp.IsLocked()), False)
+
+    for layer in (pcbnew.F_CrtYd, pcbnew.B_CrtYd):
+        poly = _try(lambda: fp.GetCourtyard(layer))
+        if poly is not None and _try(lambda: poly.OutlineCount(), 0):
+            bb = poly.BBox()
+            return Box(fp.GetReference(),
+                       to_mm(bb.GetLeft()), to_mm(bb.GetTop()),
+                       to_mm(bb.GetRight()), to_mm(bb.GetBottom()),
+                       ox, oy, rot, locked, "courtyard")
+
+    xs, ys = [], []
+    for pad in fp.Pads():
+        b = pad.GetBoundingBox()
+        xs += [to_mm(b.GetLeft()), to_mm(b.GetRight())]
+        ys += [to_mm(b.GetTop()), to_mm(b.GetBottom())]
+    if xs:
+        m = pad_margin_mm
+        return Box(fp.GetReference(), min(xs) - m, min(ys) - m, max(xs) + m, max(ys) + m,
+                   ox, oy, rot, locked, "pad_hull")
+
+    b = fp.GetBoundingBox()
+    return Box(fp.GetReference(),
+               to_mm(b.GetLeft()), to_mm(b.GetTop()),
+               to_mm(b.GetRight()), to_mm(b.GetBottom()),
+               ox, oy, rot, locked, "bbox_with_text")
+
+def board_bounds(board):
+    poly = pcbnew.SHAPE_POLY_SET()
+    if not _try(lambda: board.GetBoardPolygonOutlines(poly), False):
+        return None
+    if not poly.OutlineCount():
+        return None
+    bb = poly.BBox()
+    return (to_mm(bb.GetLeft()), to_mm(bb.GetTop()),
+            to_mm(bb.GetRight()), to_mm(bb.GetBottom()))
+
+def placement_report(board, clearance=0.25, edge_margin=0.5):
+    boxes = [box_of(fp) for fp in board.GetFootprints()]
+    bounds = board_bounds(board)
+    no_courtyard = sorted(b.ref for b in boxes if b.source != "courtyard")
+    zero_width = [name for name, nc in (_extract_design_rules(board).get("netclasses") or {}).items()
+                  if not nc.get("track_width_mm")]
+    return {
+        "outline_closed": bounds is not None,
+        "board_bounds_mm": bounds,
+        "clearance_used_mm": clearance,
+        "overlaps": find_overlaps(boxes, clearance),
+        "outside_outline": outside(boxes, bounds, edge_margin) if bounds else [],
+        "netclasses_without_track_width": zero_width,
+        "footprints_without_courtyard": no_courtyard,
+        "route_ready": bool(bounds) and not find_overlaps(boxes, clearance) and not zero_width,
+    }
+
 def _extract_pad(board, pad):
     sz = _try(lambda: pad.GetSize())
     dr = _try(lambda: pad.GetDrillSize())
@@ -232,8 +311,7 @@ def _extract_footprint(board, fp, include_fp_graphics=True):
         "attributes": _fp_attributes(fp),
         "fields": _fp_fields(fp),
         "bbox_mm": _bbox(fp),
-        "courtyard_area_mm2": _try(
-            lambda: round(to_mm(to_mm(fp.GetCourtyard(fp.GetLayer()).Area())), 4)),
+        "courtyard_mm": _try(lambda: _box_json(box_of(fp))),
         "models_3d": _try(lambda: [m.m_Filename for m in fp.Models()], []),
         "pads": [_extract_pad(board, p) for p in fp.Pads()],
         "graphics": [],
@@ -259,7 +337,7 @@ def _extract_drawing(board, d, shallow=False):
             "end_mm": pt(_try(lambda: d.GetEnd())),
             "center_mm": pt(_try(lambda: d.GetCenter())),
             "radius_mm": _try(lambda: round(to_mm(d.GetRadius()), 5)),
-            "arc_angle_deg": _try(lambda: d.GetArcAngleStart()),
+            "arc_angle_deg": deg(_try(lambda: d.GetArcAngleStart())),
             "stroke_width_mm": _try(lambda: round(to_mm(
                 _try(lambda: d.GetWidth(), 0)), 5)),
             "filled": _try(lambda: bool(d.IsFilled())),
@@ -362,7 +440,7 @@ def _extract_track(board, t):
             "mid_mm": pt(_try(lambda: t.GetMid())),
             "end_mm": pt(_try(lambda: t.GetEnd())),
             "radius_mm": _try(lambda: round(to_mm(t.GetRadius()), 5)),
-            "angle_deg": _try(lambda: t.GetAngle()),
+            "angle_deg": deg(_try(lambda: t.GetAngle())),
         })
     else:
         base.update({
@@ -421,8 +499,12 @@ def _extract_design_rules(board):
 def _extract_stackup(board):
     def go():
         su = board.GetDesignSettings().GetStackupDescriptor()
+        try:
+            items = su.GetList()
+        except AttributeError:
+            return []
         layers = []
-        for it in su.GetList():
+        for it in items:
             layers.append({
                 "type": _try(lambda: int(it.GetType())),
                 "layer_name": _try(lambda: board.GetLayerName(it.GetBrdLayerId())),
@@ -765,6 +847,37 @@ def _resolve_net(idx, name):
 
 # --- individual op handlers: fn(board, idx, op, dry) -> description string ---
 
+
+def _op_fp_place(board, idx, op, dry):
+    fp = _resolve_fp(idx, op)
+    anchor = op.get("anchor", "centre")
+    if dry:
+        return "place %s anchor=%s -> (%s, %s) rot=%s" % (
+            fp.GetReference(), anchor, op.get("x"), op.get("y"), op.get("rotation"))
+    if fp.IsLocked() and not op.get("force"):
+        raise OpError("%s is locked (pass force:true)" % fp.GetReference())
+
+    if op.get("rotation") is not None:
+        fp.SetOrientationDegrees(float(op["rotation"]))
+        _try(lambda: fp.BuildCourtyardCaches())
+
+    box = box_of(fp)
+    tx = float(op["x"]) if op.get("x") is not None else box.cx
+    ty = float(op["y"]) if op.get("y") is not None else box.cy
+    if anchor == "origin":
+        nx, ny = tx, ty
+    elif anchor == "centre":
+        nx, ny = box.origin_for_centre(tx, ty)
+    else:
+        pad = fp.FindPadByNumber(str(anchor))
+        if pad is None:
+            raise OpError("%s has no pad '%s'" % (fp.GetReference(), anchor))
+        px, py = to_mm(pad.GetPosition().x), to_mm(pad.GetPosition().y)
+        nx = to_mm(fp.GetPosition().x) + (tx - px)
+        ny = to_mm(fp.GetPosition().y) + (ty - py)
+    fp.SetPosition(mk_point(nx, ny))
+    return "place %s %s -> centre (%.3f, %.3f)" % (fp.GetReference(), anchor, tx, ty)
+
 def _op_fp_move(board, idx, op, dry):
     fp = _resolve_fp(idx, op)
     _need(op, "x", "y")
@@ -923,23 +1036,16 @@ def _op_prep_for_route(board, idx, op, dry):
             killed += 1
         board.DeleteMARKERs()
 
-    poly = pcbnew.SHAPE_POLY_SET()
-    ok = _try(lambda: board.GetBoardPolygonOutlines(poly), False)
-    if not ok or poly.OutlineCount() == 0:
-        problems.append("Edge.Cuts does not form a single closed outline. "
-                        "Run board.set_size or fix the outline before routing.")
-
-    if ok and poly.OutlineCount():
-        for fp in board.GetFootprints():
-            b = fp.GetBoundingBox()
-            for c in ((b.GetLeft(), b.GetTop()), (b.GetRight(), b.GetBottom())):
-                if not poly.Contains(pcbnew.VECTOR2I(c[0], c[1])):
-                    problems.append(f"{fp.GetReference()} extends outside Edge.Cuts")
-                    break
-
-    for t in list(board.GetTracks()):
-        if _try(lambda: t.GetStart() == t.GetEnd(), False):
-            problems.append("zero-length track survived the wipe")
+    rep = placement_report(board)
+    if not rep["route_ready"]:
+        if not rep["outline_closed"]:
+            problems.append("Edge.Cuts does not form a single closed outline.")
+        for o in rep["outside_outline"]:
+            problems.append(f"{o['ref']} extends outside Edge.Cuts")
+        for p in rep["overlaps"]:
+            problems.append(f"{p['a']} and {p['b']} overlap")
+        for n in rep["netclasses_without_track_width"]:
+            problems.append(f"Netclass {n} has no track width")
 
     if problems:
         raise OpError("not route-ready:\n  - " + "\n  - ".join(problems))
@@ -947,36 +1053,31 @@ def _op_prep_for_route(board, idx, op, dry):
 
 def _op_board_set_size(board, idx, op, dry):
     _need(op, "width", "height")
-    w = op["width"]
-    h = op["height"]
-    ox = op.get("origin_x", 0.0)
-    oy = op.get("origin_y", 0.0)
-    
-    if not dry:
-        edge_cuts = board.GetLayerID("Edge.Cuts")
-        if edge_cuts == -1:
-            raise OpError("Could not resolve Edge.Cuts layer ID")
-        
-        if edge_cuts is not None:
-            # Delete old Edge.Cuts lines
-            for drw in list(board.GetDrawings()):
-                if drw.GetLayer() == edge_cuts:
-                    board.Remove(drw)
-                    
-            # Draw 4 segments
-            pts = [(ox, oy), (ox+w, oy), (ox+w, oy+h), (ox, oy+h)]
-            for i in range(4):
-                p1 = pts[i]
-                p2 = pts[(i+1)%4]
-                seg = pcbnew.PCB_SHAPE(board)
-                seg.SetShape(pcbnew.SHAPE_T_SEGMENT)
-                seg.SetLayer(edge_cuts)
-                seg.SetStart(mk_point(p1[0], p1[1]))
-                seg.SetEnd(mk_point(p2[0], p2[1]))
-                seg.SetWidth(from_mm(0.5))
-                board.Add(seg)
-                
-    return f"set board size to {w}x{h} at ({ox},{oy})"
+    w, h = float(op["width"]), float(op["height"])
+    ox, oy = float(op.get("origin_x", 0.0)), float(op.get("origin_y", 0.0))
+    if dry:
+        return "outline %gx%g at (%g,%g) -- DELETES every Edge.Cuts item" % (w, h, ox, oy)
+    edge = board.GetLayerID("Edge.Cuts")
+    if edge == -1:
+        raise OpError("Could not resolve the Edge.Cuts layer ID")
+    for drw in list(board.GetDrawings()):
+        if drw.GetLayer() == edge:
+            board.Remove(drw)
+    r = pcbnew.PCB_SHAPE(board)
+    r.SetShape(pcbnew.SHAPE_T_RECT)
+    r.SetLayer(edge)
+    r.SetStart(mk_point(ox, oy))
+    r.SetEnd(mk_point(ox + w, oy + h))
+    r.SetWidth(from_mm(0.1))
+    _try(lambda: r.SetFilled(False))
+    board.Add(r)
+    _try(lambda: board.SetOutlinesChainingEpsilon(from_mm(0.01)))
+    poly = pcbnew.SHAPE_POLY_SET()
+    if not _try(lambda: board.GetBoardPolygonOutlines(poly), False) or not poly.OutlineCount():
+        raise OpError("Edge.Cuts written but KiCad still will not close it. "
+                      "Usual cause: a stray Edge.Cuts graphic inside a footprint. "
+                      "Open the Edge.Cuts layer in the PCB editor and look.")
+    return "outline %gx%g at (%g,%g) -- closed and verified" % (w, h, ox, oy)
 
 def _op_board_drc(board, idx, op, dry):
     if not dry:
@@ -1005,7 +1106,24 @@ def _op_board_drc(board, idx, op, dry):
 
     return "drc check requested"
 
+def _op_board_fit_outline(board, idx, op, dry):
+    margin = float(op.get("margin", 5.0))
+    if dry:
+        return "fit board outline to components with margin %.2f mm" % margin
+    boxes = [box_of(fp) for fp in board.GetFootprints()]
+    if not boxes:
+        raise OpError("No footprints to fit outline to")
+    x0 = min(b.x0 for b in boxes) - margin
+    y0 = min(b.y0 for b in boxes) - margin
+    x1 = max(b.x1 for b in boxes) + margin
+    y1 = max(b.y1 for b in boxes) + margin
+    w = x1 - x0
+    h = y1 - y0
+    return _op_board_set_size(board, idx, {"width": w, "height": h, "origin_x": x0, "origin_y": y0}, dry)
+
+
 OPS = {
+    "footprint.place": _op_fp_place,
     "footprint.move": _op_fp_move,
     "footprint.rotate": _op_fp_rotate,
     "footprint.lock": _op_fp_lock,
@@ -1018,6 +1136,7 @@ OPS = {
     "zone.refill": _op_zone_refill,
     "zone.add": _op_zone_add,
     "board.set_size": _op_board_set_size,
+    "board.fit_outline": _op_board_fit_outline,
     "board.prep_for_route": _op_prep_for_route,
     "board.drc_check": _op_board_drc,
 }
@@ -1025,6 +1144,25 @@ OPS = {
 # ----------------------------------------------------------------------------
 # 10. APPLY (validate-all -> backup -> execute -> verify)
 # ----------------------------------------------------------------------------
+
+
+def _geometry_gate(board, clearance, edge_margin, autoresolve):
+    rep = placement_report(board, clearance, edge_margin)
+    if not rep["overlaps"] and not rep["outside_outline"]:
+        return rep, []
+    if not autoresolve:
+        return rep, ["placement rejected: %d overlap(s), %d part(s) outside the outline"
+                     % (len(rep["overlaps"]), len(rep["outside_outline"]))]
+    boxes = [box_of(fp) for fp in board.GetFootprints()]
+    moved, left = separate(boxes, clearance, rep["board_bounds_mm"], edge_margin)
+    for ref, (ox, oy) in moved.items():
+        fp = board.FindFootprintByReference(ref)
+        if fp is not None and not fp.IsLocked():
+            fp.SetPosition(mk_point(ox, oy))
+    rep = placement_report(board, clearance, edge_margin)
+    rep["auto_separated"] = moved
+    return rep, ([] if not left else
+                 ["could not separate %d pair(s) automatically" % len(left)])
 
 def apply_ops(ops, board=None, dry_run=True, save=False, refill=True, verify=True):
     board = resolve_board(board)
@@ -1087,6 +1225,18 @@ def apply_ops(ops, board=None, dry_run=True, save=False, refill=True, verify=Tru
                   "Restore backup if needed: %s" % backup)
             break
 
+    # ---- geometry gate ----
+    gate_report = None
+    if failed is None:
+        gate_report, gate_problems = _geometry_gate(
+            board, clearance=0.25, edge_margin=0.5, autoresolve=True)
+        if gate_problems:
+            failed = {"index": -1, "op": "geometry_gate",
+                      "error": "; ".join(gate_problems)}
+            print("  [gate] %s" % failed["error"])
+            print("  >>> NOT SAVED. Board is dirty in memory only -- "
+                  "press Ctrl+Z in KiCad or File > Revert to Saved.")
+
     if refill and failed is None:
         _try(lambda: pcbnew.ZONE_FILLER(board).Fill(board.Zones()), key="refill")
 
@@ -1096,7 +1246,8 @@ def apply_ops(ops, board=None, dry_run=True, save=False, refill=True, verify=Tru
         pcbnew.SaveBoard(path, board)
         print("[pcb_brain] saved -> %s" % path)
 
-    result = {"applied": True, "done": done, "failed": failed, "backup": backup}
+    result = {"applied": failed is None, "done": done, "failed": failed,
+              "backup": backup, "placement_report": gate_report}
 
     # ---- 4. verify ----
     if verify:
@@ -1183,23 +1334,25 @@ def ai_context(board=None, mode="summary", net_filter=None):
         include_fp_graphics=(mode == "full"),
         net_filter=net_filter)
     bundle = {
+        "placement_report": _try(lambda: placement_report(board), {}),
         "state": st,
         "intent": _try(lambda: load_intent(board), {}),
         "op_schema": {
             "available_ops": sorted(OPS),
             "example": [
-                {"op": "footprint.move", "ref": "U1", "x": 50.0, "y": 40.0, "rotation": 90},
-                {"op": "net.delete_routing", "net": "GND", "layers": ["F.Cu"]},
-                {"op": "track.add", "net": "VBUS", "layer": "F.Cu", "width": 0.6,
-                 "start": {"x": 10, "y": 10}, "end": {"x": 20, "y": 10}},
-                {"op": "via.add", "net": "GND", "x": 15, "y": 12,
-                 "width": 0.6, "drill": 0.3},
+                {"op": "board.fit_outline", "margin": 5.0},
+                {"op": "footprint.place", "anchor": "centre",
+                 "ref": "U1", "x": 50.0, "y": 40.0, "rotation": 90},
                 {"op": "zone.refill"},
             ],
             "rules": [
-                "Always target items by 'uuid' from state; 'ref' only for footprints.",
-                "All coordinates in mm, KiCad Y axis points DOWN.",
-                "Never invent net names or layer names; use only those in state.",
+                "position_mm is the footprint ORIGIN (pin 1 on most connectors), NOT the centre. Never place using position_mm.",
+                "Use footprint.place with anchor='centre' and let the code do the arithmetic.",
+                "courtyard_mm is the real physical extent. bbox_mm includes silkscreen text and is too big -- ignore it for clearance.",
+                "Overlap truth comes from placement_report.overlaps. The SVG is aesthetics only.",
+                "If a batch is rejected, apply the returned move_b_by vectors verbatim. Do not recompute them.",
+                "Always target items by 'uuid'; 'ref' only for footprints.",
+                "Never invent net or layer names; use only those in state.",
                 "Respect intent.do_not_modify_uuids and is_locked=true items.",
             ],
         },

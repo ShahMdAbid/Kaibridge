@@ -132,7 +132,8 @@ def compute_placement(groups, start_x=50.0, start_y=50.0,
 
         for i, ref in enumerate(refs):
             ops.append({
-                "op":  "footprint.move",
+                "op":  "footprint.place",
+                "anchor": "centre",
                 "ref": ref,
                 "x":   round(cursor_x + (i % cols) * part_gap, 2),
                 "y":   round(band_y  + (i // cols) * part_gap, 2),
@@ -173,35 +174,29 @@ def print_plan(groups, ops):
 # 5. Send to KiCad via bridge
 # ---------------------------------------------------------------------------
 
-def send_to_kicad(ops):
-    """
-    Write ops to ops_macro_placer.json and call bridge with --json-ops.
-    """
+def send_to_kicad(ops, project_dir):
+    """Dry run first (RULE 6), then commit."""
     autoplacer_dir = os.path.dirname(os.path.abspath(__file__))
     bridge_path    = os.path.join(autoplacer_dir, "kicad_agent_bridge.py")
 
-    ops_file = os.path.join(autoplacer_dir, "ops_macro_placer.json")
+    ops_file = os.path.join(project_dir, "ops_macro_placer.json")
     with open(ops_file, "w", encoding="utf-8") as f:
         json.dump(ops, f, indent=2)
+    print(f"\n  ops written to {ops_file}")
 
-    print("\nSending to KiCad via bridge...")
-    result = subprocess.run(
-        [sys.executable, bridge_path, "--json-ops", ops_file, "--timeout", "180"],
-        capture_output=True, text=True,
-    )
-
-    print(result.stdout)
-    if result.stderr:
-        print(result.stderr, file=sys.stderr)
-
-    # Clean up ops file if successful
-    if result.returncode == 0:
-        try:
-            os.remove(ops_file)
-        except Exception:
-            pass
-
-    return result.returncode == 0
+    for stage in ("dry run", "commit"):
+        cmd = [sys.executable, bridge_path, "--json-ops", ops_file, "--timeout", "180"]
+        if stage == "commit":
+            cmd.append("--commit")
+        print(f"\n--- {stage} ---")
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        print(r.stdout)
+        if r.stderr:
+            print(r.stderr, file=sys.stderr)
+        if r.returncode != 0:
+            print(f"\nStopped at the {stage}. The ops file is kept at {ops_file}")
+            return False
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -258,7 +253,7 @@ def main():
         print("  Remove --plan-only to send these moves to KiCad.")
         sys.exit(0)
 
-    success = send_to_kicad(ops)
+    success = send_to_kicad(ops, project_dir)
     if not success:
         print("\nBridge execution failed. Is KiCad open with abIDE plugin?")
         sys.exit(1)

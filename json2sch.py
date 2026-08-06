@@ -55,11 +55,10 @@ def detect_project(project_dir):
     stem = folder.name
     return stem, folder / f"{stem}.kicad_pro", folder / f"{stem}.kicad_sch"
 
-def apply_netclasses(pro_path, netclasses, backup=True):
+def apply_netclasses(pro_path, design, backup=True):
     """Write netclasses into the .kicad_pro, loudly rejecting unknown keys."""
     notes = []
-    if not netclasses:
-        return notes
+    netclasses = design.netclasses or {}
     if not pro_path.exists():
         return [f"netclasses skipped: {pro_path.name} does not exist yet"]
     try:
@@ -89,7 +88,22 @@ def apply_netclasses(pro_path, netclasses, backup=True):
         keep = existing.get("Default") or {"name": "Default"}
         classes.insert(0, keep)
         notes.append("kept the project's existing Default netclass")
+    DEFAULTS = {"track_width": 0.25, "clearance": 0.2, "via_diameter": 0.6, "via_drill": 0.3}
+    for entry in classes:
+        if entry["name"] == "Default":
+            for key, val in DEFAULTS.items():
+                if not entry.get(key):
+                    entry[key] = val
+                    notes.append("Default netclass had no %s, wrote %s mm" % (key, val))
+
     settings["classes"] = classes
+    settings["netclass_patterns"] = [
+        {"netclass": net.netclass, "pattern": name}
+        for name, net in design.nets.items()
+        if getattr(net, 'netclass', None) and net.netclass != "Default"
+    ]
+    notes.append("wrote %d netclass pattern(s)" % len(settings["netclass_patterns"]))
+    
     data["net_settings"] = settings
     if backup:
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -179,7 +193,7 @@ def main(argv=None):
     build_path.write_text(json.dumps(sidecar(design), indent=2), encoding="utf-8")
     notes.append(f"sidecar: {build_path.name}")
     if args.apply_netclasses:
-        notes += apply_netclasses(pro_path, design.netclasses,
+        notes += apply_netclasses(pro_path, design,
                                   backup=not args.no_backup)
     report(design, files, results, orphans, notes)
     print("  next: open the project in KiCad, then Tools -> Update PCB from "

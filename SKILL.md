@@ -131,27 +131,24 @@ Do **not** infer coordinates from the SVG. Pull the real numbers:
 python "<PLUGIN_DIR>\Autoplacer\kicad_agent_bridge.py" --state summary
 ```
 
-This writes `<PROJECT_DIR>\pcb_brain\ai_context_summary.json` and prints its path — exact positions, rotations, bounding boxes, courtyards, pad coordinates, nets and the op schema. Read that file. Use `_board.svg` only as a visual sanity check.
+This writes `<PROJECT_DIR>\pcb_brain\ai_context_summary.json` and prints its path. Read that file. The SVG is for aesthetics only.
 
-Then:
+1. **Read `placement_report` first.** Look at `overlaps`, `outside_outline`, and `route_ready`. Pay attention to `footprints_without_courtyard`.
+2. **Intent-based placement.** Do not use `position_mm` to place components, as it is the arbitrary origin (often pin 1). Use `{"op": "footprint.place", "anchor": "centre"}` and let the code do the math.
+3. **Handle rejections verbatim.** If an op batch is rejected due to overlaps, the bridge will return `move_b_by` escape vectors in `placement_report.overlaps`. Apply them verbatim. Do not recompute them.
 
-1. **Function** — connectors and USB at the board edge; decoupling caps hard against their IC power pin.
-2. **Connectivity** — trace `nets` in `design.json`; cross-check pad coordinates from the state file.
-3. **Optimize** — rotate to 0/90/180/270 so connecting pads face each other.
-4. **Emit ops** to `<PROJECT_DIR>\ops.json`:
+Example ops:
 
 ```json
 [
-  {"op": "board.set_size", "width": 100, "height": 50},
-  {"op": "footprint.move", "ref": "U1", "x": 55.0, "y": 25.0, "rotation": 0},
-  {"op": "footprint.move", "ref": "C1", "x": 58.5, "y": 22.0, "rotation": 270}
+  {"op": "board.fit_outline", "margin": 5.0},
+  {"op": "footprint.place", "anchor": "centre", "ref": "U1", "x": 55.0, "y": 25.0, "rotation": 0},
+  {"op": "footprint.place", "anchor": "centre", "ref": "C1", "x": 58.5, "y": 22.0, "rotation": 270}
 ]
 ```
 
-1. **Apply**: `python "<PLUGIN_DIR>\Autoplacer\kicad_agent_bridge.py" --json-ops "<PROJECT_DIR>\ops.json" --timeout 180`
-    - Exit code 0 = applied. Non-zero = **nothing to interpret, read the printed dry-run failures**.
-    - `board.set_size` **deletes all existing Edge.Cuts**. Confirm with the user before the first one.
-2. **Verify**: rerun `--state summary` (numbers) and `pcb_snapshot.py` (picture).
+1. **Apply**: `python "<PLUGIN_DIR>\abide_pcb.py" "<PROJECT_DIR>" --step place --commit`
+2. **Verify**: rerun `--state summary` and read the `placement_report`.
 
 ### 🔮 RULE 7 — Custom `pcbnew` scripting
 
@@ -170,26 +167,20 @@ python "<PLUGIN_DIR>\Autoplacer\kicad_agent_bridge.py" --oracle "BOARD GetTracks
 
 ### 🔄 RULE 8 — Autoroute + DRC loop
 
-1. Set the outline: `board.set_size` op.
+1. Set the outline: `{"op": "board.fit_outline", "margin": 5.0}` inside your `ops.json`.
 2. Place everything inside it (RULE 6).
-3. Route:
+3. Use the new orchestrator to automate placement, routing, and checking.
 
 ```powershell
-python "<PLUGIN_DIR>\Autoplacer\freerouting_runner.py" "<PROJECT_DIR>"
+python "<PLUGIN_DIR>\abide_pcb.py" "<PROJECT_DIR>" --step auto
 ```
 
-(`freerouting.jar` is expected in `<PLUGIN_DIR>\Autoplacer\`; override with `--jar`.)
+(`abide_pcb.py --step auto` manages the placement gate, invokes `freerouting_runner.py`, checks DRC, and enforces a budget on iterations).
 
-1. DRC: `{"op": "board.drc_check"}`. Read the printed `DRC exit=N`. `0` = clean.
-2. If not clean:
-    - `{"op": "net.delete_routing"}` with **no** `net` key wipes all routing. With a `net` key it wipes one.
-    - Read the violations, move the offending footprints apart, go to 3.
-3. **Exit conditions — obey all three:**
-    - `DRC exit=0`, **or**
-    - three full loops with no improvement in violation count, **or**
-    - the tangle score stops decreasing.
-    
-    On 2 or 3: stop and report to the user. Do not loop a fourth time.
+- If the orchestrator exits with a structured JSON error, parse it.
+- If it's a placement rejection (`OVERLAP` / `OUTSIDE_OUTLINE`), apply the `fix` vector provided.
+- If it's a `NETCLASS_ZERO_WIDTH` error, rerun `json2sch.py --apply-netclasses` with KiCad closed, hit F8, and try again.
+- If it's `ROUTER_OOM` or `ROUTER_TIMEOUT`, pass higher flags to `--heap` or `--timeout` through the script or simplify placement.
 
 ### 🚨 RULE 9 — Error recovery (non-negotiable)
 
