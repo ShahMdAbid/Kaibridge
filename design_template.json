@@ -93,7 +93,7 @@
   ],
 
   "nets": {
-    "GND":     { "class": "Power", "connections": ["J1.GND", "D1.1", "C1.2", "U1.1", "U2.1", "R2.2", "SW1.2"] },
+    "GND":     { "class": "Power", "connections": ["J1.GND", "C1.2", "U1.1", "U2.1", "R2.2", "SW1.2"] },
     "VBUS":    { "class": "Power", "connections": ["J1.VBUS", "D1.2"] },
     "VIN":     { "class": "Power", "connections": ["D1.1", "C1.1", "U1.3"] },
     "+3V3":    { "class": "Power", "connections": ["U1.2", "U1.4", "C2.1", "U2.2", "R1.1"] },

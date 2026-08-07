@@ -1063,14 +1063,17 @@ def _op_board_set_size(board, idx, op, dry):
     for drw in list(board.GetDrawings()):
         if drw.GetLayer() == edge:
             board.Remove(drw)
-    r = pcbnew.PCB_SHAPE(board)
-    r.SetShape(pcbnew.SHAPE_T_RECT)
-    r.SetLayer(edge)
-    r.SetStart(mk_point(ox, oy))
-    r.SetEnd(mk_point(ox + w, oy + h))
-    r.SetWidth(from_mm(0.1))
-    _try(lambda: r.SetFilled(False))
-    board.Add(r)
+    width_iu = from_mm(0.1)
+    pts = [(ox, oy), (ox + w, oy), (ox + w, oy + h), (ox, oy + h)]
+    for i in range(4):
+        p1, p2 = pts[i], pts[(i + 1) % 4]
+        seg = pcbnew.PCB_SHAPE(board)
+        seg.SetShape(pcbnew.SHAPE_T_SEGMENT)
+        seg.SetLayer(edge)
+        seg.SetStart(mk_point(p1[0], p1[1]))
+        seg.SetEnd(mk_point(p2[0], p2[1]))
+        seg.SetWidth(width_iu)
+        board.Add(seg)
     _try(lambda: board.SetOutlinesChainingEpsilon(from_mm(0.01)))
     poly = pcbnew.SHAPE_POLY_SET()
     if not _try(lambda: board.GetBoardPolygonOutlines(poly), False) or not poly.OutlineCount():

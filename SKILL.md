@@ -65,21 +65,8 @@ The JSON contains a `footprint` field. **Copy it verbatim** into `design.json`. 
 
 ### 📐 RULE 4 — `design.json`
 
-Required top-level keys. Omitting any of these is a validation failure:
-
-| Key | Required | Note |
-| --- | --- | --- |
-| `schema` | yes | `2` (single sheet) or `3` (multi-sheet hierarchy) |
-| `meta` | yes | `design_id` seeds every UUID — **never change it for a board that is already laid out** |
-| `parts` | yes | `lib_id`, `value`, `footprint` per ref; optional `near` for satellite placement |
-| `nets` | yes | ≥2 pins each; `style` is auto-derived (see below) |
-| `netclasses` | if any net sets `class` | a net referencing an undefined class fails |
-| `groups` | optional | ungrouped parts land in `Ungrouped` |
-| `sheets` | optional | ordered list of hierarchical sheets; omit for single-sheet output |
-| `decoupling` | optional | auto-generates bypass caps per IC power pin |
-| `power_flags` | recommended | auto-adds `#FLGn` PWR_FLAG parts for ERC |
-| `no_connect` | optional | `"U2.38"` or `"J1.SHIELD"` |
-| `checks` | yes | set `"require_footprints": true` |
+Always build `design.json` by strictly following the schema, keys, and structure defined in `<PLUGIN_DIR>\design_template.json`. 
+Do not guess the structure or make up your own keys. Read the `design_template.json` file first if you are unsure how to structure the output.
 
 Rules:
 
@@ -207,4 +194,18 @@ python "<PLUGIN_DIR>\abide_pcb.py" "<PROJECT_DIR>" --step auto
 | 3 | **F8** — Update PCB from Schematic | No CLI and no Python API exposes it |
 | 4 | **Ctrl+S** after F8 | `pcb_snapshot` and `kicad-cli` read from disk |
 | 5 | Open **abIDE** | The bridge socket only exists while the window is open |
-| 6 | Close KiCad before `--apply-netclasses` | KiCad rewrites `.kicad_pro` on exit |
+| 6 | Open KiCad after automated close | Windows Session 0 isolation hides agent-spawned GUI apps |
+
+> [!TIP]
+> **Semi-Automation Rule:** To save the user from the hassle of constantly closing KiCad manually, the agent is authorized and encouraged to automatically force-close KiCad using `taskkill /IM kicad.exe /F` whenever it needs to be closed (e.g., before running `--apply-netclasses` or to clear footprint caches). 
+> The agent must simply inform the user: *"I have closed KiCad. Please open it manually and press F8."*
+
+### 🚀 RULE 11 — The V2 Holy Grail Architecture (Vision-Guided Algorithmic Placer)
+
+When developing or executing V2 of the `abIDE` pipeline, you **MUST** strictly adhere to the Hybrid Architecture approach for PCB placement. Do not attempt to rely on pure AI hallucination of coordinates.
+
+1. **The Problem:** LLMs (even Vision models) cannot reliably do 2D floating-point math or sub-millimeter bounding-box collision detection. If the AI is forced to guess explicit `X, Y` coordinates in `ops.json` for 50+ components, the result will be a overlapping "joga khicuri" (mess) that violates basic physics.
+2. **The Architect (AI Agent + Vision):** The AI should act purely as the semantic architect. It looks at the SVG snapshot to understand the global flow and writes *rules/constraints* (e.g., "J1 must be on TOP_EDGE", "C1 must be within 2mm of U1.VCC") or proposes an *approximate* intent.
+3. **The Mason (Python Engine):** The Python codebase (the `macro_placer.py` or equivalent V2 engine) MUST act as the deterministic spatial solver. It reads the AI's constraints, queries KiCad for the exact footprint bounding boxes (courtyards), and runs a mathematical packing/repulsion algorithm (like grid-shifting or force-directed layout) to snap the components into perfectly legal, zero-overlap positions.
+
+**Core V2 Directive:** The AI provides the *Engineering Intent*. Python does the *Geometry Math*. Never mix the two.
