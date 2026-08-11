@@ -1,81 +1,115 @@
 # abIDE Command Line Interface (CLI) Guide
 
-এই প্রজেক্টে মূলত ৩টি মেইন স্ক্রিপ্ট আছে যেগুলো কমান্ড লাইন (CLI) থেকে বিভিন্ন ফ্ল্যাগ (Arguments) দিয়ে রান করানো যায়। এছাড়া আরও কিছু সাপোর্টিং স্ক্রিপ্ট আছে যেগুলো শুধু প্রজেক্ট ডিরেক্টরি ইনপুট হিসেবে নেয়। নিচে প্রতিটির কাজ এবং ব্যবহারের নিয়ম বিস্তারিত দেওয়া হলো:
+This project includes several important scripts that can be run from the command line (CLI) with various flags (options). The entire system can be divided into 4 main categories: Root Scripts, PCB Orchestrator, Live PCB Bridge (HTTP REST Bridge), and Supporting Scripts. The purpose and usage of each are detailed below:
 
 ---
 
-## ১. `json2sch.py` (JSON to Schematic Generator)
-এই স্ক্রিপ্টটি আপনার দেওয়া `design.json` ফাইলটিকে রিড করে KiCad-এর স্কিম্যাটিক (`.kicad_sch`) ফাইল তৈরি করে। Multi-sheet হায়ারার্কি সাপোর্ট করে — একটি রুট শিট এবং প্রতিটি সাব-শিটের জন্য আলাদা `.kicad_sch` ফাইল তৈরি করে। এছাড়া `abide_build.json` সাইডকার ফাইল তৈরি করে `macro_placer.py`-এর জন্য।
+## 1. Root Scripts
 
-**বেসিক ব্যবহার:**
+### `json2sch.py` (JSON to Schematic Generator)
+This script reads your `design.json` file and generates KiCad schematic (`.kicad_sch`) files. It supports multi-sheet hierarchies and creates an `abide_build.json` sidecar file for `macro_placer.py`.
+
+**Usage:**
 ```bash
 python json2sch.py <project_dir> [design.json] [options]
 ```
 
-**ফ্ল্যাগসমূহ (Options):**
-- `-h, --help` : এই কমান্ডের সাহায্যে আপনি এই স্ক্রিপ্টটির সব অপশন দেখতে পারবেন।
-- `-o, --out PATH` : রুট স্কিম্যাটিক পাথ (ডিফল্ট: `<project>.kicad_sch`); সাব-শিটগুলো পাশে `<sheet_id>.kicad_sch` নামে সেভ হয়।
-- `--dry-run` : কম্পাইল, ভ্যালিডেট এবং রিপোর্ট করে; কিছুই লেখে না। **সবসময় প্রথমে `--dry-run` করুন।**
-- `--apply-netclasses` : এটি ব্যবহার করলে JSON ফাইলে থাকা আপনার track width, clearance ইত্যাদি রুলসগুলো KiCad-এর `.kicad_pro` ফাইলে সেভ হয়ে যাবে। *(এটি রান করার সময় অবশ্যই KiCad পুরোপুরি ক্লোজ রাখতে হবে!)*
-- `--no-backup` : টাইমস্ট্যাম্পড `.bak` কপি তৈরি করবে না।
-- `--kicad-version N` : ফরম্যাট স্ট্যাম্প; `20250114` = KiCad 9 (ডিফল্ট), `20231120` = KiCad 8, `20230121` = KiCad 7।
+**Flags (Options):**
+- `-h, --help` : Show the help menu.
+- `-o, --out PATH` : Root schematic path (default: `<project>.kicad_sch`).
+- `--dry-run` : Only compile, validate, and report; do not save any files. **Always run `--dry-run` first.**
+- `--apply-netclasses` : Using this saves the track width, clearance, and other rules defined in your JSON file directly into the KiCad `.kicad_pro` file. *(KiCad MUST be completely closed when running this!)*
+- `--no-backup` : Do not create timestamped `.bak` copies.
+- `--kicad-version N` : Format stamp; `20250114` = KiCad 9 (default), `20231120` = KiCad 8.
 
----
+### `kicad_lib_init.py` (Project Library Initializer)
+This script sets up the necessary `sym-lib-table` and `fp-lib-table` in your project directory so that KiCad can correctly identify the libraries.
 
-## ২. `kicad_agent_bridge.py` (Live KiCad API Bridge)
-এটি হলো আমাদের সবচেয়ে গুরুত্বপূর্ণ স্ক্রিপ্ট! KiCad 10-এর লাইভ মেমোরিতে (যেখানে আপনার PCB Editor ওপেন থাকে) কোড রান করার জন্য এই ব্রিজটি ব্যবহার করা হয়। (এটিকে আপনি `json2pcb` এর রিপ্লেসমেন্ট হিসেবেও ভাবতে পারেন, কারণ এটি সরাসরি JSON রিড করে PCB-তে কাজ করে)।
-
-**বেসিক ব্যবহার:**
+**Usage:**
 ```bash
-python Autoplacer/kicad_agent_bridge.py [script_path]
+python kicad_lib_init.py <project_dir> -n abide
 ```
 
-**ফ্ল্যাগসমূহ (Options):**
-- `-h, --help` : অপশনগুলোর লিস্ট দেখতে।
-- `--stdin` : টার্মিনাল থেকে লাইভ পাইথন কোড টাইপ করে KiCad-এ পাঠাতে।
-- `--code CODE` : ইনলাইন কোড রান করার জন্য। যেমন: `--code "import pcbnew; print(pcbnew.GetBoard())"`
-- `--json-ops JSON_OPS` : **(সবচেয়ে বেশি ব্যবহৃত)** `ops.json` ফাইলে থাকা প্লেসমেন্ট রুলসগুলো লাইভ PCB-তে প্রয়োগ করার জন্য এটি ব্যবহৃত হয়। (যেমন: `python Autoplacer/kicad_agent_bridge.py --json-ops ops.json`)। 
-- `--state {summary,full}` : এটি KiCad-এর বর্তমান পিসিবিতে কী কী কম্পোনেন্ট আছে, কার পজিশন কোথায়, কার নেট কী—তার পুরো লিস্ট JSON ফরম্যাটে টার্মিনালে প্রিন্ট করে।
-- `--oracle ORACLE` : লাইভ KiCad API-এর ভেতরে কোনো মেথডের অস্তিত্ব চেক করার জন্য। যেমন: `--oracle "BOARD GetTracks"` দিলে সে জানিয়ে দেবে BOARD ক্লাসের ভেতরে GetTracks আছে কি না।
-- `--timeout TIMEOUT` : স্ক্রিপ্টটি সর্বোচ্চ কতক্ষণ ওয়েট করবে তা ঠিক করে দেয়।
-- `--keep-state` : এটি দিলে স্ক্রিপ্টের ভেরিয়েবলগুলো মেমোরিতে সেভ থাকবে। (যেমন REPL বা Jupyter Notebook-এর মতো, আগের ভেরিয়েবল পরেরবার রান করলে পাওয়া যাবে)।
-- `--reset-state` : এটি দিলে লাইভ মেমোরি একদম ক্লিন হয়ে যাবে। (অনেক সময় KiCad ক্র্যাশ করলে আমরা এটি ব্যবহার করতে পারি)।
-- `--reload` : এটি ডেভেলপমেন্টের জন্য। (সতর্কতা: KiCad 10-এ এটি ব্যবহার করলে `SwigPyObject` এরর আসে, তাই এটি না ব্যবহার করাই ভালো!)।
+### `kicad_pins.py` (Pin Extractor & Verifier)
+This script extracts pin data from `.kicad_sym` files and helps verify footprints.
+
+**Usage:**
+```bash
+python kicad_pins.py <symbol_file> [options]
+```
+**Flags:**
+- `--verify` : Verifies if the footprint and pad-counts are correct.
+- `--json` : Prints the data in JSON format.
+- `-s, --symbol SYMBOL` : View data for a specific symbol only.
 
 ---
 
-## ৩. `freerouting_runner.py` (Headless Auto-Router)
-এই স্ক্রিপ্টটি KiCad থেকে DSN ফাইল এক্সপোর্ট করে, FreeRouting (Java) ব্যবহার করে ব্যাকগ্রাউন্ডে পুরো বোর্ড রাউট করে, এবং আবার SES ফাইলটি KiCad-এ ইমপোর্ট করে।
+## 2. PCB Orchestrator
 
-**বেসিক ব্যবহার:**
+### `abide_pcb.py` (Automated Pipeline)
+This is the most powerful command in the new architecture. It automates the entire Place → Route → Check loop.
+
+**Usage:**
+```bash
+python abide_pcb.py <project_dir> --step {place,route,check,auto} [--commit]
+```
+
+**Options:**
+- `--step auto` : Automates placement, routing (using `freerouting_runner.py`), and DRC checks in one go (default budget: 4 iterations).
+- `--commit` : Applies and saves the changes (otherwise it just runs a dry-run).
+
+---
+
+## 3. Live PCB Bridge (The HTTP REST Bridge)
+
+### `Autoplacer/kicad_agent_bridge.py` 
+This is our live KiCad API Bridge. **It is now a complete HTTP REST API Server**, not a socket architecture! This bridge is used to run code in KiCad 10's live memory (where your PCB Editor is open), read the board state, and send JSON commands.
+
+**Usage:**
+```bash
+python Autoplacer/kicad_agent_bridge.py [script_path] [options]
+```
+
+**Flags (Options):**
+- `-h, --help` : Show the help menu.
+- `--state {summary,full}` : **(Most frequently used)** Prints the entire list of components currently on the KiCad PCB, their positions, and nets in JSON format. (`--state summary` is typically used).
+- `--json-ops JSON_OPS` : **(Most frequently used)** Applies placement rules or other operations (e.g., `footprint.place`, `board.fit_outline`) from an `ops.json` file directly to the live PCB.
+- `--commit` : When used with `--json-ops`, applies the changes to the live board; otherwise, it acts as a dry-run.
+- `--oracle ORACLE` : Checks for the existence of a method inside the live KiCad API. For example, `--oracle "BOARD GetTracks"` will tell you if the `GetTracks` method exists inside the `BOARD` class.
+- `--stdin` : Type live Python code in the terminal and send it to KiCad.
+- `--code CODE` : Run inline code. Example: `--code "import pcbnew; print(pcbnew.GetBoard())"`
+- `--timeout TIMEOUT` : Sets the maximum wait time for the script (default: 30.0s).
+- `--keep-state` : Keeps the script's variables saved in memory (like a REPL).
+- `--reset-state` : Completely cleans the live memory.
+
+---
+
+## 4. Supporting Scripts
+
+### `Autoplacer/macro_placer.py` (Component Untangler)
+After pressing F8, all components from the schematic are tangled at the (0,0) position. This script reads `design.json`, untangles them, and organizes the components into separate groups.
+
+**Usage:**
+```bash
+python Autoplacer/macro_placer.py <project_dir>
+```
+
+### `Autoplacer/freerouting_runner.py` (Headless Auto-Router)
+This script exports the DSN file from KiCad, routes the entire board in the background using FreeRouting (Java), and imports the SES file back into KiCad.
+
+**Usage:**
 ```bash
 python Autoplacer/freerouting_runner.py <project_dir>
 ```
+**Flag:** `--jar JAR` (if the `freerouting.jar` file is located in a different directory).
 
-**ফ্ল্যাগসমূহ (Options):**
-- `-h, --help` : হেল্প মেনু দেখতে।
-- `--jar JAR` : যদি `freerouting.jar` ফাইলটি অন্য কোনো ফোল্ডারে থাকে, তবে এর লোকেশন দেখিয়ে দেওয়ার জন্য। (যেমন: `--jar C:\Users\HP\...`)
+### `Autoplacer/pcb_snapshot.py` (Visual SVG Snapshot)
+This takes the project directory as input, forces live KiCad to save the PCB to disk, and then generates a vector image (SVG picture) of the PCB using `kicad-cli`. This allows AI or humans to visually review the aesthetics of the placement.
 
----
-
-## ৪. `pcb_snapshot.py` (Visual SVG Snapshot)
-এই স্ক্রিপ্টটিতে কোনো ফ্ল্যাগ নেই। এটি মূলত প্রজেক্ট ডিরেক্টরি ইনপুট নিয়ে লাইভ KiCad-কে ফোর্স করে পিসিবিটি ডিস্কে সেভ করতে, এবং তারপর `kicad-cli` ব্যবহার করে পিসিবির একটি ভেক্টর ইমেজ (SVG ছবি) তৈরি করে।
-
-**ব্যবহার:**
+**Usage:**
 ```bash
 python Autoplacer/pcb_snapshot.py <project_dir>
 ```
 
 ---
-
-## ৫. `macro_placer.py` (Component Placement Logic)
-এটিও ফ্ল্যাগ-বিহীন একটি স্ক্রিপ্ট। মূলত স্কিম্যাটিকের ডেটা থেকে কম্পোনেন্টের পজিশন ক্যালকুলেট করার লজিক এখানে থাকে। এটি সরাসরি রান করার চেয়ে অন্য স্ক্রিপ্ট দ্বারা বেশি কল করা হয়।
-
-**ব্যবহার:**
-```bash
-python Autoplacer/macro_placer.py <project_dir>
-```
-
----
-
-*(বি.দ্র: `json2pcb.py` নামে আমাদের ডিরেক্টরিতে আলাদা কোনো স্ক্রিপ্ট নেই, পিসিবির কাজগুলো মূলত `kicad_agent_bridge.py --json-ops` এবং `macro_placer.py` মিলেই করে থাকে!)*
+*(Note: There is a highly critical engine file named `currentboardfetcher.py` that serves as the backend for `--state` and `--json-ops`. However, it does not need to be called directly from the terminal; it is automatically invoked by the bridge file.)*

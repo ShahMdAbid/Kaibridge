@@ -4,6 +4,8 @@ import os
 import json
 import socket
 import argparse
+import urllib.request
+import urllib.error
 
 sys.stdout.reconfigure(encoding='utf-8')
 
@@ -28,20 +30,7 @@ def get_port_and_token():
     return None, None
 
 
-def _recv_line(sock, max_bytes=10_000_000):
-    chunks = []
-    total = 0
-    while True:
-        chunk = sock.recv(65536)
-        if not chunk:
-            break
-        chunks.append(chunk)
-        total += len(chunk)
-        if b"\n" in chunk:
-            break
-        if total > max_bytes:
-            break
-    return b"".join(chunks)
+
 
 
 def run_kicad_code(script_path=None, code_stdin=False, inline_code=None,
@@ -86,35 +75,47 @@ def run_kicad_code(script_path=None, code_stdin=False, inline_code=None,
         payload["token"] = token
 
     try:
-        sock = socket.create_connection(("127.0.0.1", port), timeout=3)
-    except (ConnectionRefusedError, OSError):
-        print("--- KICAD NOT CONNECTED ---")
-        print("FATAL ERROR: abIDE is not listening. Open the abIDE window in "
-              "KiCad's PCB Editor (Tools > External Plugins > abIDE) and try again.")
-        print("AI AGENT: Do NOT search the filesystem or guess a fix - just ask "
-              "the user to open abIDE, then retry once.")
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/execute",
+            data=json.dumps(payload).encode('utf-8'),
+            headers={'Content-Type': 'application/json'},
+            method='POST'
+        )
+        with urllib.request.urlopen(req, timeout=timeout + 10) as response:
+            raw = response.read()
+            if not raw:
+                print("--- KICAD ERROR ---")
+                print("Connection closed by abIDE with no response.")
+                return False
+            try:
+                resp = json.loads(raw.decode('utf-8'))
+            except json.JSONDecodeError:
+                print("--- KICAD ERROR ---")
+                print("Zombie Port Detected! Connected to a wrong program.")
+                print("Please reopen the abIDE window in KiCad to refresh the port.")
+                return False
+            status = resp.get("status", "unknown")
+            output = resp.get("output", "")
+            print(f"--- KICAD {status.upper()} ---")
+            print(output)
+            return status == "success"
+    except urllib.error.URLError as e:
+        if isinstance(e.reason, ConnectionRefusedError) or isinstance(e.reason, OSError):
+            print("--- KICAD NOT CONNECTED ---")
+            print("FATAL ERROR: abIDE is not listening. Open the abIDE window in "
+                  "KiCad's PCB Editor (Tools > External Plugins > abIDE) and try again.")
+            print("AI AGENT: Do NOT search the filesystem or guess a fix - just ask "
+                  "the user to open abIDE, then retry once.")
+            return False
+        if isinstance(e.reason, socket.timeout):
+            print("--- KICAD TIMEOUT ---")
+            print(f"No response from abIDE within {timeout}s. The script may still be "
+                  "running on KiCad's main thread (check the Output Console tab in "
+                  "abIDE). Increase --timeout if the script is expected to be slow.")
+            return False
+        print("--- KICAD ERROR ---")
+        print(f"Bridge communication error: {e}")
         return False
-
-    try:
-        sock.settimeout(timeout + 10)
-        sock.sendall((json.dumps(payload) + "\n").encode('utf-8'))
-        raw = _recv_line(sock)
-        if not raw:
-            print("--- KICAD ERROR ---")
-            print("Connection closed by abIDE with no response.")
-            return False
-        try:
-            resp = json.loads(raw.decode('utf-8'))
-        except json.JSONDecodeError:
-            print("--- KICAD ERROR ---")
-            print("Zombie Port Detected! Connected to a wrong program.")
-            print("Please reopen the abIDE window in KiCad to refresh the port.")
-            return False
-        status = resp.get("status", "unknown")
-        output = resp.get("output", "")
-        print(f"--- KICAD {status.upper()} ---")
-        print(output)
-        return status == "success"
     except socket.timeout:
         print("--- KICAD TIMEOUT ---")
         print(f"No response from abIDE within {timeout}s. The script may still be "
@@ -125,11 +126,6 @@ def run_kicad_code(script_path=None, code_stdin=False, inline_code=None,
         print("--- KICAD ERROR ---")
         print(f"Bridge communication error: {e}")
         return False
-    finally:
-        try:
-            sock.close()
-        except Exception:
-            pass
 
 
 if __name__ == "__main__":

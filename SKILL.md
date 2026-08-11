@@ -3,7 +3,7 @@ name: KiCad abIDE Plugin Usage
 description: Guidelines and instructions for using the abIDE plugin for KiCad 10.
 ---
 
-### Agent Protocol: Autonomous KiCad Flow (v2.1)
+### Agent Protocol: Autonomous KiCad Flow 
 
 STRICT instructions. Zero hallucination. If a rule and your instinct disagree, the rule wins.
 
@@ -15,6 +15,63 @@ STRICT instructions. Zero hallucination. If a rule and your instinct disagree, t
 2. **Never search the filesystem for either.** If a path is wrong, ask again — do not probe.
 3. `<LIB_NAME>` is `abide` everywhere. `kicad_lib_init.py -n abide` and `easyeda2kicad --output "$PWD/libs/abide"` must use the same name or the library tables will not resolve.
 4. Confirm `kicad_paths.json` exists next to `json2sch.py` and is filled in. If a script errors about it, paste the error to the user verbatim — the error already contains the instructions. Do not write path-finding code.
+
+### 📂 RULE 0.5 — File Map (read before writing ANY pcbnew code)
+
+Before writing ANY custom `pcbnew` Python script, check if the functionality already exists in these files. **Never reinvent what is already built.**
+
+#### Root Scripts (run from command line)
+
+| File | Purpose | Invocation |
+|---|---|---|
+| `json2sch.py` | `design.json` → `.kicad_sch` schematic files | `python json2sch.py <DIR> --dry-run` |
+| `kicad_lib_init.py` | Initialize project library tables (`sym-lib-table`, `fp-lib-table`) | `python kicad_lib_init.py <DIR> -n abide` |
+| `kicad_pins.py` | Pin extraction, footprint verification, shared `kicad_paths.json` reader | `python kicad_pins.py <SYM> --verify` |
+| `abide_pcb.py` | Orchestrator (place → route → check loop with budget) | `python abide_pcb.py <DIR> --step auto` |
+
+#### `Autoplacer/` Scripts (run via bridge or command line)
+
+| File | Purpose | Invocation |
+|---|---|---|
+| `kicad_agent_bridge.py` | CLI ↔ KiCad HTTP bridge. All agent-to-KiCad communication goes through this. | `python bridge.py <script.py>` or `--state summary` or `--oracle "CLASS METHOD"` or `--json-ops <file>` |
+| `currentboardfetcher.py` | **THE board state engine (1400 lines).** State extraction, 16 built-in ops, snapshots, diffs, overlap detection, geometry gate, backup/restore. Called internally by bridge `--state` and `--json-ops`. | Never run directly. Used via `--state summary` or `--json-ops`. |
+| `freerouting_runner.py` | DSN export → Freerouting autorouter → SES import back into `.kicad_pcb`. Includes `audit_dsn()` to catch zero-width netclass rules before routing. | `python freerouting_runner.py <DIR>` |
+| `macro_placer.py` | Untangle footprints from the (0,0) pile into grouped clusters using `design.json` groups. | `python macro_placer.py <DIR>` |
+| `oracle.py` | Live SWIG signature lookup engine. Searches `pcbnew.py` source for exact method definitions. | Called via `bridge.py --oracle "CLASS METHOD"` |
+| `pcb_snapshot.py` | Force-save the live board to disk + SVG export via `kicad-cli`. | `python pcb_snapshot.py <DIR>` |
+
+#### `abide/` Package (imported by other scripts, never run directly)
+
+| File | Purpose |
+|---|---|
+| `model.py` | Validates `design.json` → `Design` object. All schema validation, net resolution, sheet assignment lives here. |
+| `render.py` | `Design` + `Layout` → `.kicad_sch` text files. UUID-stable regeneration (re-run produces identical UUIDs). |
+| `place.py` | Schematic symbol placement / layout engine. Grid-based shelf packing with stub wiring. |
+| `klib.py` | KiCad symbol library reader. Extracts bounding boxes, pins, footprint fields from `.kicad_sym`. |
+| `sexpr.py` | S-expression parser/serializer for all KiCad file formats. |
+| `geometry.py` | **Single source of truth for overlap detection.** `Box`, `mtv()`, `find_overlaps()`, `separate()`. |
+| `paths.py` | Reads `kicad_paths.json`, finds `kicad-cli` path. |
+
+#### `currentboardfetcher.py` Built-in Ops (use via `--json-ops`)
+
+These 16 operations handle backup, validation, geometry gating, and verification automatically. **Always prefer these over raw `pcbnew` scripts:**
+
+```
+footprint.place    footprint.move     footprint.rotate   footprint.lock
+footprint.set_field track.add         track.set_width    via.add
+item.delete        net.delete_routing zone.refill        zone.add
+board.set_size     board.fit_outline  board.prep_for_route board.drc_check
+```
+
+#### ⚠️ Anti-Reinvention Rules (MANDATORY)
+
+1. **Need board state?** → `--state summary`, NOT a custom `pcbnew` script.
+2. **Need to move/place/rotate footprints?** → `--json-ops` with `footprint.place`, NOT raw `SetPosition()`.
+3. **Need to clear tracks?** → `board.prep_for_route` op, NOT a custom `board.Remove(t)` loop.
+4. **Need board outline?** → `board.fit_outline` op, NOT drawing `PCB_SHAPE` manually.
+5. **Need overlap check?** → Read `placement_report.overlaps` from `--state summary`, NOT custom math.
+6. **Need to add a zone?** → `zone.add` op, NOT raw `pcbnew.ZONE()` construction.
+7. **Need to run DRC?** → `board.drc_check` op, NOT a custom `kicad-cli` subprocess.
 
 ### 🛑 RULE 1 — Environment & initialization
 
@@ -100,32 +157,64 @@ Generated outputs:
 
 Generated files target KiCad 7 and newer (default KiCad 9; use `--kicad-version` flag to override).
 
-### 🔧 RULE 5 — Schematic → PCB
+### 🔧 RULE 5 — Schematic → PCB (Human Handoff)
 
 1. 🧍 **HUMAN**: open the project in KiCad. Tools → Annotate (keep existing) → ERC.
 2. 🧍 **HUMAN**: PCB Editor → **F8** (Update PCB from Schematic) → **Ctrl+S**.
     - There is **no** headless or scripted equivalent of F8. Do not attempt one. Stop and wait.
-3. 🧍 **HUMAN**: Tools → External Plugins → **abIDE** (starts the bridge socket).
-4. Baseline snapshot: `python "<PLUGIN_DIR>\Autoplacer\pcb_snapshot.py" "<PROJECT_DIR>"`
-5. Untangle: `python "<PLUGIN_DIR>\Autoplacer\macro_placer.py" "<PROJECT_DIR>"`
-6. Snapshot again to see the result of step 5.
+3. 🧍 **HUMAN**: Tools → External Plugins → **abIDE** (starts the bridge HTTP REST API server).
+4. Agent confirms bridge is alive: `python "<PLUGIN_DIR>\Autoplacer\kicad_agent_bridge.py" --state summary`
+    - If `--- KICAD NOT CONNECTED ---` → ask user to open abIDE and retry once.
 
-### 🧠 RULE 6 — Placement (state-driven, not guessed)
+### 🧠 RULE 6 — Placement → Routing → DRC (Full Iterative Pipeline)
 
-Do **not** infer coordinates from the SVG. Pull the real numbers:
+This is the complete iterative loop from raw F8 pile to a fully routed, DRC-clean board. Follow this flowchart:
 
+```mermaid
+graph TD
+    A["1. Initial Untangle<br/>macro_placer.py"] --> B["2. Get Board State<br/>--state summary"]
+    B --> C["3. Read placement_report<br/>Check overlaps, outside_outline, route_ready"]
+    C -->|overlaps or outside| D["4a. Fix Placement<br/>Write ops.json with footprint.place ops"]
+    C -->|route_ready = true| E["5. Prep for Route<br/>board.prep_for_route op"]
+    D --> F["4b. Apply Ops<br/>--json-ops ops.json --commit"]
+    F -->|Geometry Gate PASS<br/>auto-separation resolved overlaps| G["4c. Verify<br/>--state summary again"]
+    F -->|Geometry Gate FAIL<br/>unsolvable overlap| D
+    G --> C
+    E --> H["6. Route<br/>freerouting_runner.py"]
+    H -->|Routing Success| I["7. DRC Check<br/>board.drc_check op"]
+    H -->|Routing Failure| J{"Diagnose"}
+    J -->|Zero-width netclass| K["Re-run json2sch --apply-netclasses<br/>User: F8 again"]
+    J -->|No board outline| L["Add board.fit_outline op<br/>Go back to step 4a"]
+    I -->|DRC Clean (0 violations)| M["8. Snapshot & Review<br/>pcb_snapshot.py"]
+    I -->|DRC Violations| N["Fix violations<br/>Go back to step 4a"]
+    M --> O["✅ DONE"]
+```
+
+#### Step-by-Step Commands
+
+**Step 1 — Initial Untangle** (only needed once, right after F8):
+```powershell
+python "<PLUGIN_DIR>\Autoplacer\macro_placer.py" "<PROJECT_DIR>"
+```
+This reads `design.json` groups and spreads the footprints from the (0,0) pile into organized clusters.
+
+**Step 2 — Get Board State** (run this EVERY time before making placement decisions):
 ```powershell
 python "<PLUGIN_DIR>\Autoplacer\kicad_agent_bridge.py" --state summary
 ```
+This writes `<PROJECT_DIR>\pcb_brain\ai_context_summary.json`. Read that file. The SVG is for aesthetics only.
 
-This writes `<PROJECT_DIR>\pcb_brain\ai_context_summary.json` and prints its path. Read that file. The SVG is for aesthetics only.
+**Step 3 — Read `placement_report`:**
+- `overlaps` — list of overlapping footprint pairs with `move_b_by` escape vectors
+- `outside_outline` — footprints that extend past `Edge.Cuts`
+- `route_ready` — `true` only when overlaps=0, outline_closed=true, all inside, netclasses have width
+- `footprints_without_courtyard` — these need manual attention
 
-1. **Read `placement_report` first.** Look at `overlaps`, `outside_outline`, and `route_ready`. Pay attention to `footprints_without_courtyard`.
-2. **Intent-based placement.** Do not use `position_mm` to place components, as it is the arbitrary origin (often pin 1). Use `{"op": "footprint.place", "anchor": "centre"}` and let the code do the math.
-3. **Handle rejections verbatim.** If an op batch is rejected due to overlaps, the bridge will return `move_b_by` escape vectors in `placement_report.overlaps`. Apply them verbatim. Do not recompute them.
+**Step 4a — Write Placement Ops:**
+- Use `{\"op\": \"footprint.place\", \"anchor\": \"centre\"}` — NEVER raw `position_mm` (that's pin 1, not centre).
+- Include `{\"op\": \"board.fit_outline\", \"margin\": 5.0}` to auto-generate the board outline.
 
-Example ops:
-
+Example `ops.json`:
 ```json
 [
   {"op": "board.fit_outline", "margin": 5.0},
@@ -134,40 +223,98 @@ Example ops:
 ]
 ```
 
-1. **Apply**: `python "<PLUGIN_DIR>\abide_pcb.py" "<PROJECT_DIR>" --step place --commit`
-2. **Verify**: rerun `--state summary` and read the `placement_report`.
-
-### 🔮 RULE 7 — Custom `pcbnew` scripting
-
-1. **Never guess an API method.**
-2. **Cheap existence check first** — Look at `<PLUGIN_DIR>\kicad10_api_map.md` (or `Autoplacer/all_functionName.md`) to see if the method exists on the target class (e.g., `BOARD`, `FOOTPRINT`).
-3. **Exact signature second** — Always verify the exact signature from the **running** KiCad using the Oracle:
-
+**Step 4b — Apply Ops (with built-in auto-separation):**
 ```powershell
-python "<PLUGIN_DIR>\Autoplacer\kicad_agent_bridge.py" --oracle "BOARD GetTracks"
+python "<PLUGIN_DIR>\Autoplacer\kicad_agent_bridge.py" --json-ops ops.json --commit
 ```
-*(You can also use `--oracle "GLOBAL ImportSpecctraSES"` for module-level functions)*
 
-4. If the Oracle says NOT FOUND, it prints `did you mean:` candidates. Pick one of those. **Do not invent a third spelling.**
-5. Use only methods the Oracle confirmed. Run via `kicad_agent_bridge.py <script.py>`.
-6. The watchdog cannot interrupt a long C/SWIG call. Pass `--timeout` generously for zone fills and imports rather than writing your own retry loop.
+> [!IMPORTANT]
+> **Auto-Separation is built in!** When `apply_ops` runs with `--commit`, it automatically executes a **Geometry Gate** after applying your ops:
+> 1. It runs `placement_report()` to detect any remaining overlaps.
+> 2. If overlaps exist, it calls `geometry.separate()` — a relaxation algorithm that nudges unlocked parts apart along the shortest escape vector (like magnets repelling) for up to 80 passes.
+> 3. Parts are clamped inside the board outline boundaries.
+> 4. The result includes `auto_separated: {ref: [new_x, new_y]}` showing what was nudged.
+> 5. Only if `separate()` STILL can't resolve overlaps (e.g., locked parts blocking) does it reject the batch.
+>
+> **You do NOT need to write custom overlap detection or separation code. The engine handles it.**
 
-### 🔄 RULE 8 — Autoroute + DRC loop
+**Step 4c — Verify:**
+Rerun `--state summary` and check `placement_report.route_ready`. If `false`, fix the reported issues and loop back to Step 4a.
 
-1. Set the outline: `{"op": "board.fit_outline", "margin": 5.0}` inside your `ops.json`.
-2. Place everything inside it (RULE 6).
-3. Use the new orchestrator to automate placement, routing, and checking.
+**Step 5 — Prep for Route** (clears old tracks + validates readiness):
+Write an ops.json with:
+```json
+[{"op": "board.prep_for_route"}]
+```
+This removes ALL existing tracks/vias, runs `placement_report()`, and raises an error if the board is not route-ready (missing outline, overlaps, zero-width netclasses).
+
+**Step 6 — Route:**
+```powershell
+python "<PLUGIN_DIR>\Autoplacer\freerouting_runner.py" "<PROJECT_DIR>"
+```
+After routing, tell user: **File → Revert to Saved** (Freerouting writes directly to the `.kicad_pcb` file on disk).
+
+**Step 7 — DRC Check:**
+```json
+[{"op": "board.drc_check"}]
+```
+This saves the board, runs `kicad-cli pcb drc`, and returns violation count.
+
+**Step 8 — Snapshot & Visual Review:**
+```powershell
+python "<PLUGIN_DIR>\Autoplacer\pcb_snapshot.py" "<PROJECT_DIR>"
+```
+This exports an SVG for visual/aesthetic review. If the design looks wrong, adjust ops and loop back.
+
+### 🔮 RULE 7 — Custom `pcbnew` scripting & API Grounding Protocol
+
+**STRICT MANDATE:** Zero-hallucination policy for KiCad `pcbnew` Python scripting. Never write a single line of `pcbnew` code based on memory or assumptions.
+
+#### 📊 Universal Decision Tree for `pcbnew` API Methods
+
+```mermaid
+graph TD
+    A["Need to use a pcbnew method on Class C (e.g. BOARD, FOOTPRINT)"] --> B["Step 1: Cheap Existence Check<br/>Search all_functionName.md or kicad10_api_map.md"]
+    B -->|Candidate method M found| C["Step 2: Live Oracle Query<br/>Run --oracle 'C M'"]
+    B -->|Not found in map| D["Search map for keywords to find candidate M"] --> C
+    C -->|Oracle Output: EXACT SWIG OUTPUT| E["Step 3: Code Generation<br/>Use EXACT method signature returned by Oracle"]
+    C -->|Oracle Output: NOT FOUND + 'did you mean'| F["Pick candidate M' from 'did you mean:' list"] --> C
+    E --> G["Step 4: Execute via Bridge<br/>python kicad_agent_bridge.py script.py"]
+```
+
+#### 📜 Step-by-Step Protocol
+
+1. **Step 1 — Existence & Candidate Lookup (What to ask):**
+   - Search `<PLUGIN_DIR>\Autoplacer\all_functionName.md` or `<PLUGIN_DIR>\kicad10_api_map.md` using `grep_search`.
+   - Identify the target class (`BOARD`, `FOOTPRINT`, `PAD`, `PCB_SHAPE`, etc.) and candidate method name `M`.
+2. **Step 2 — Live Oracle Grounding (Asking Oracle):**
+   - Query the Oracle against the running KiCad instance:
+     ```powershell
+     python "<PLUGIN_DIR>\Autoplacer\kicad_agent_bridge.py" --oracle "<CLASS> <METHOD>"
+     ```
+     *(Example: `python Autoplacer\kicad_agent_bridge.py --oracle "BOARD GetTracks"`, or `--oracle "GLOBAL ImportSpecctraSES"`)*
+3. **Step 3 — Handle Oracle Response:**
+   - **If EXACT SWIG OUTPUT returned:** Use the verified method signature verbatim in your Python code.
+   - **If NOT FOUND returned:** Read the `did you mean: [...]` candidates printed by Oracle. Pick a candidate from that list and re-run Step 2. **NEVER invent or guess a third spelling.**
+4. **Step 4 — Code Generation & Execution:**
+   - Write the script using ONLY Oracle-confirmed methods.
+   - Save to scratch and execute via `python "<PLUGIN_DIR>\Autoplacer\kicad_agent_bridge.py" <script.py>`.
+   - Pass `--timeout` generously for heavy operations (zone fills, imports).
+
+### 🔄 RULE 8 — Automated Full Pipeline (shortcut)
+
+If you want to skip the manual loop above, use the orchestrator:
 
 ```powershell
 python "<PLUGIN_DIR>\abide_pcb.py" "<PROJECT_DIR>" --step auto
 ```
 
-(`abide_pcb.py --step auto` manages the placement gate, invokes `freerouting_runner.py`, checks DRC, and enforces a budget on iterations).
+This runs the entire Place → Route → Check loop automatically with a budget of 4 iterations.
 
-- If the orchestrator exits with a structured JSON error, parse it.
-- If it's a placement rejection (`OVERLAP` / `OUTSIDE_OUTLINE`), apply the `fix` vector provided.
-- If it's a `NETCLASS_ZERO_WIDTH` error, rerun `json2sch.py --apply-netclasses` with KiCad closed, hit F8, and try again.
-- If it's `ROUTER_OOM` or `ROUTER_TIMEOUT`, pass higher flags to `--heap` or `--timeout` through the script or simplify placement.
+Error handling for `abide_pcb.py`:
+- `OVERLAP` / `OUTSIDE_OUTLINE` → apply the `fix` vector provided in the response.
+- `NETCLASS_ZERO_WIDTH` → rerun `json2sch.py --apply-netclasses` with KiCad closed, then F8.
+- `ROUTER_OOM` / `ROUTER_TIMEOUT` → pass `--heap` or `--timeout` flags, or simplify placement.
 
 ### 🚨 RULE 9 — Error recovery (non-negotiable)
 
@@ -177,6 +324,8 @@ python "<PLUGIN_DIR>\abide_pcb.py" "<PROJECT_DIR>" --step auto
 4. Never "fix" an error by widening scope — no substitute components, no invented pin numbers, no guessed footprints, no synthesized paths.
 5. A non-zero exit code from any script means **nothing downstream may run**.
 6. After any aborted `apply_ops`, treat the board as undefined: rerun `--state summary` before deciding anything. Backups are in `<PROJECT_DIR>\pcb_brain\backups\`.
+7. `SwigPyObject` corruption: If KiCad throws `AttributeError: 'SwigPyObject' object has no attribute...` during a bridge call, it means the user reloaded the PCB (e.g., "Revert to Saved") and broke the internal C++ Python pointer. **Automate the fix:** Use `taskkill /IM kicad.exe /F` to forcefully kill the entire KiCad application and flush the ghost pointer, then politely ask the user to reopen KiCad and the abIDE plugin.
+8. Missing Board Outline: Freerouting strictly requires a closed `Edge.Cuts` polygon to exist. If it is missing, Freerouting will refuse to route outer components, and KiCad will throw a "Board outline is malformed" warning. Never delete the board outline without immediately redrawing it (e.g., a 5mm bounding box) before running Freerouting.
 
 ### 👁️ RULE 10 — Visual/Aesthetic Feedback Loop
 
@@ -193,7 +342,7 @@ python "<PLUGIN_DIR>\abide_pcb.py" "<PROJECT_DIR>" --step auto
 | 2 | Reopen the project after `json2sch` writes | KiCad caches the schematic in memory |
 | 3 | **F8** — Update PCB from Schematic | No CLI and no Python API exposes it |
 | 4 | **Ctrl+S** after F8 | `pcb_snapshot` and `kicad-cli` read from disk |
-| 5 | Open **abIDE** | The bridge socket only exists while the window is open |
+| 5 | Open **abIDE** | The bridge HTTP REST API server only exists while the window is open |
 | 6 | Open KiCad after automated close | Windows Session 0 isolation hides agent-spawned GUI apps |
 
 > [!TIP]

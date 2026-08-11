@@ -4,6 +4,7 @@ import json
 import socket
 import threading
 import secrets
+import http.server
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -111,7 +112,7 @@ class ScriptRunnerFrame(wx.Frame):
         self.shared_globals = globals().copy()
         self.shared_globals['__name__'] = '__main__'
 
-        self._server_socket = None
+        self._http_server = None
         self._server_thread = None
         self._server_running = False
         self._server_port = None          # Track our port for safe cleanup (§2.12)
@@ -128,32 +129,108 @@ class ScriptRunnerFrame(wx.Frame):
             pass
 
     def start_agent_server(self):
-        """Start a loopback-only TCP server used by kicad_agent_bridge.py.
+        """Start a loopback-only HTTP server used by kicad_agent_bridge.py.
         Binding to port 0 lets the OS pick a free port; that port is
         published to a small discovery file so the client can find it.
-        Every launch overwrites the port file with a fresh port, so a
-        stale file from a crashed previous session just causes the next
-        client connection attempt to fail cleanly (handled on the CLI
-        side) rather than silently doing the wrong thing.
-        The accept loop handles one connection fully before accepting the
-        next, so requests are naturally serialized on the OS's own TCP
-        backlog - no locks, no shared mutable files, no clobbering.
         """
         try:
-            srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            srv.bind(("127.0.0.1", 0))
-            srv.listen(5)
-            srv.settimeout(0.5)
-            self._server_socket = srv
-            port = srv.getsockname()[1]
+            class AgentHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
+                def do_POST(self):
+                    script_runner = self.server.script_runner
+                    
+                    content_length = int(self.headers.get('Content-Length', 0))
+                    post_data = self.rfile.read(content_length)
+                    
+                    try:
+                        req = json.loads(post_data.decode("utf-8"))
+                    except Exception as e:
+                        self._send_json({"status": "error", "output": f"Bad request JSON: {e}"})
+                        return
+
+                    # §2.8: Verify auth token
+                    if script_runner._auth_token and req.get("token") != script_runner._auth_token:
+                        self._send_json({"status": "error", "output": "Authentication failed: invalid or missing token."})
+                        return
+
+                    # §2.7: Reject if another execution is in flight
+                    if script_runner._execution_busy:
+                        self._send_json({"status": "error", "output": "Server busy: another execution is in progress. Retry later."})
+                        return
+
+                    mode = req.get("mode", "execute")
+                    timeout = float(req.get("timeout", 30.0))
+                    keep_state = bool(req.get("keep_state", False))
+                    reset_state = bool(req.get("reset_state", False))
+                    done = threading.Event()
+                    result = {"status": "error", "output": "Internal error: no result produced."}
+
+                    script_runner._execution_busy = True
+                    script_runner._cancel_pending = False
+
+                    def run_on_main():
+                        try:
+                            # §2.7: Check cancellation flag before executing
+                            if script_runner._cancel_pending:
+                                result["status"] = "error"
+                                result["output"] = "Execution cancelled: timeout expired before main thread started."
+                                return
+                            if reset_state:
+                                script_runner.shared_globals = globals().copy()
+                                script_runner.shared_globals['__name__'] = '__main__'
+                            if mode == "reset":
+                                result["status"] = "success"
+                                result["output"] = "Shared persistent state cleared."
+                            elif mode == "oracle":
+                                out = script_runner._run_oracle_for_agent(req.get("oracle_query", ""))
+                                result["status"] = "success"
+                                result["output"] = out
+                            else:
+                                out, ok = script_runner._run_code_for_agent(req.get("code", ""), keep_state, timeout)
+                                result["status"] = "success" if ok else "error"
+                                result["output"] = out
+                        except Exception as e:
+                            err = f"Internal error while executing on main thread: {e}\n{traceback.format_exc()}"
+                            result["status"] = "error"
+                            result["output"] = err
+                            script_runner.log_debug(err)
+                        finally:
+                            script_runner._execution_busy = False
+                            done.set()
+
+                    wx.CallAfter(run_on_main)
+                    finished = done.wait(timeout=timeout + 5)
+                    if not finished:
+                        # §2.7: Set cancellation flag so run_on_main bails out if it hasn't started
+                        script_runner._cancel_pending = True
+                        self._send_json({
+                            "status": "error",
+                            "output": ("Execution did not finish within the timeout. KiCad's main "
+                                       "thread may still be busy running it - check the Output "
+                                       "Console tab in abIDE. Avoid infinite loops / long sleeps.")
+                        })
+                        return
+                    self._send_json(result)
+
+                def _send_json(self, obj):
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write((json.dumps(obj) + "\n").encode("utf-8"))
+
+                def log_message(self, format, *args):
+                    pass
+
+            srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), AgentHTTPRequestHandler)
+            srv.script_runner = self
+            self._http_server = srv
+            port = srv.server_address[1]
             self._server_port = port
             # §2.8: Generate auth token and write port:token to discovery file
             self._auth_token = secrets.token_hex(32)
             with open(PORT_FILE, "w", encoding="utf-8") as f:
                 f.write(f"{port}:{self._auth_token}")
             self._server_running = True
-            self._server_thread = threading.Thread(target=self._serve_forever, daemon=True)
+            self._server_thread = threading.Thread(target=self._http_server.serve_forever, daemon=True)
             self._server_thread.start()
         except Exception as e:
             msg = f"abIDE: could not start agent bridge server: {e}"
@@ -163,8 +240,9 @@ class ScriptRunnerFrame(wx.Frame):
     def stop_agent_server(self):
         self._server_running = False
         try:
-            if self._server_socket:
-                self._server_socket.close()
+            if self._http_server:
+                self._http_server.shutdown()
+                self._http_server.server_close()
         except Exception:
             pass
         # §2.12: Only delete PORT_FILE if it contains our port
@@ -176,121 +254,6 @@ class ScriptRunnerFrame(wx.Frame):
                     os.remove(PORT_FILE)
         except Exception:
             pass
-
-    def _serve_forever(self):
-        while self._server_running:
-            try:
-                conn, _addr = self._server_socket.accept()
-            except socket.timeout:
-                continue
-            except OSError:
-                break
-            try:
-                self._handle_agent_connection(conn)
-            except Exception as e:
-                self.log_debug(f"Unhandled error in agent connection: {e}\n{traceback.format_exc()}")
-
-    @staticmethod
-    def _recv_line(sock, max_bytes=10_000_000):
-        chunks = []
-        total = 0
-        while True:
-            chunk = sock.recv(65536)
-            if not chunk:
-                break
-            chunks.append(chunk)
-            total += len(chunk)
-            if b"\n" in chunk:
-                break
-            if total > max_bytes:
-                break
-        return b"".join(chunks)
-
-    @staticmethod
-    def _send_json(sock, obj):
-        try:
-            sock.sendall((json.dumps(obj) + "\n").encode("utf-8"))
-        except Exception:
-            pass
-
-    def _handle_agent_connection(self, conn):
-        with conn:
-            conn.settimeout(10)
-            try:
-                raw = self._recv_line(conn)
-            except socket.timeout:
-                return
-            if not raw:
-                return
-            try:
-                req = json.loads(raw.decode("utf-8"))
-            except Exception as e:
-                self._send_json(conn, {"status": "error", "output": f"Bad request JSON: {e}"})
-                return
-
-            # §2.8: Verify auth token
-            if self._auth_token and req.get("token") != self._auth_token:
-                self._send_json(conn, {"status": "error", "output": "Authentication failed: invalid or missing token."})
-                return
-
-            # §2.7: Reject if another execution is in flight
-            if self._execution_busy:
-                self._send_json(conn, {"status": "error", "output": "Server busy: another execution is in progress. Retry later."})
-                return
-
-            mode = req.get("mode", "execute")
-            timeout = float(req.get("timeout", 30.0))
-            keep_state = bool(req.get("keep_state", False))
-            reset_state = bool(req.get("reset_state", False))
-            done = threading.Event()
-            result = {"status": "error", "output": "Internal error: no result produced."}
-
-            self._execution_busy = True
-            self._cancel_pending = False
-
-            def run_on_main():
-                try:
-                    # §2.7: Check cancellation flag before executing
-                    if self._cancel_pending:
-                        result["status"] = "error"
-                        result["output"] = "Execution cancelled: timeout expired before main thread started."
-                        return
-                    if reset_state:
-                        self.shared_globals = globals().copy()
-                        self.shared_globals['__name__'] = '__main__'
-                    if mode == "reset":
-                        result["status"] = "success"
-                        result["output"] = "Shared persistent state cleared."
-                    elif mode == "oracle":
-                        out = self._run_oracle_for_agent(req.get("oracle_query", ""))
-                        result["status"] = "success"
-                        result["output"] = out
-                    else:
-                        out, ok = self._run_code_for_agent(req.get("code", ""), keep_state, timeout)
-                        result["status"] = "success" if ok else "error"
-                        result["output"] = out
-                except Exception as e:
-                    err = f"Internal error while executing on main thread: {e}\n{traceback.format_exc()}"
-                    result["status"] = "error"
-                    result["output"] = err
-                    self.log_debug(err)
-                finally:
-                    self._execution_busy = False
-                    done.set()
-
-            wx.CallAfter(run_on_main)
-            finished = done.wait(timeout=timeout + 5)
-            if not finished:
-                # §2.7: Set cancellation flag so run_on_main bails out if it hasn't started
-                self._cancel_pending = True
-                self._send_json(conn, {
-                    "status": "error",
-                    "output": ("Execution did not finish within the timeout. KiCad's main "
-                               "thread may still be busy running it - check the Output "
-                               "Console tab in abIDE. Avoid infinite loops / long sleeps.")
-                })
-                return
-            self._send_json(conn, result)
 
     def _run_code_for_agent(self, code_str, keep_state, timeout_seconds=15.0):
         """Runs agent-submitted code on the main thread and updates the GUI.
