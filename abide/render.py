@@ -6,7 +6,7 @@ The two rules:
   1. Every UUID is uuid5(design_id, kind, key). Regenerating a design that
      did not change produces byte-identical files, so 'Update PCB from
      Schematic' re-links footprints instead of deleting and re-adding them.
-     This is what protects your macro_placer and FreeRouting work.
+     This is what protects your placement and FreeRouting work.
   2. Every version-specific token is gated. One generator, KiCad 6 to 10.
 """
 from __future__ import annotations

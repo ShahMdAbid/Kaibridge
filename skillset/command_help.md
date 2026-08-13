@@ -7,7 +7,7 @@ This project includes several important scripts that can be run from the command
 ## 1. Root Scripts
 
 ### `json2sch.py` (JSON to Schematic Generator)
-This script reads your `design.json` file and generates KiCad schematic (`.kicad_sch`) files. It supports multi-sheet hierarchies and creates an `abide_build.json` sidecar file for `macro_placer.py`.
+This script reads your `design.json` file and generates KiCad schematic (`.kicad_sch`) files. It supports multi-sheet hierarchies and creates an `abide_build.json` sidecar file.
 
 **Usage:**
 ```bash
@@ -86,13 +86,8 @@ python Autoplacer/kicad_agent_bridge.py [script_path] [options]
 
 ## 4. Supporting Scripts
 
-### `Autoplacer/macro_placer.py` (Component Untangler)
-After pressing F8, all components from the schematic are tangled at the (0,0) position. This script reads `design.json`, untangles them, and organizes the components into separate groups.
-
-**Usage:**
-```bash
-python Autoplacer/macro_placer.py <project_dir>
-```
+### Semantic Placement Protocol (REST API & Geometry Gate)
+Direct component placement is handled by combining AI hardware layout semantics with the Live PCB REST API Bridge (`kicad_agent_bridge.py --json-ops ops.json --commit`). abIDE's built-in Geometry Gate automatically resolves any micro-overlaps via physics relaxation.
 
 ### `Autoplacer/freerouting_runner.py` (Headless Auto-Router)
 This script exports the DSN file from KiCad, routes the entire board in the background using FreeRouting (Java), and imports the SES file back into KiCad.

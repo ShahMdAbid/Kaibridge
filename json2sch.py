@@ -6,8 +6,7 @@ json2sch.py -- design.json -> KiCad hierarchical schematics.
                      [--dry-run] [--apply-netclasses] [--no-backup]
 
 Sub-sheets are written next to the root file as <sheet_id>.kicad_sch.
-A sidecar <PROJECT_DIR>/abide_build.json records the resolved design for
-Autoplacer/macro_placer.py.
+A sidecar <PROJECT_DIR>/abide_build.json records the resolved design metadata.
 """
 from __future__ import annotations
 

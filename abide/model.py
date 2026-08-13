@@ -430,9 +430,21 @@ def _styles(design, declared):
             design.warnings.append(
                 f"net '{net.name}' touches {len(seen)} sheets: promoted to a "
                 f"global label so the netlist stays correct")
+        if net.style == "hierarchical" and design.root.id in seen:
+            net.style = "global"
+            design.warnings.append(
+                f"net '{net.name}' also lives on the root sheet: promoted to "
+                f"a global label (a hierarchical label only works inside a "
+                f"sub-sheet)")
 
 def _validate(design, lib):
     checks = design.checks
+    known = set(design.netclasses) | {"Default"}
+    for net in design.nets.values():
+        if net.netclass not in known:
+            raise DesignError(
+                f"net '{net.name}' uses netclass '{net.netclass}', which is "
+                f"not declared in 'netclasses' ({', '.join(sorted(known))})")
     owner = {}
     for net in design.nets.values():
         if len(net.conns) < 2 and not _flag(checks, "allow_single_pin_nets", False):
@@ -475,7 +487,7 @@ def _validate(design, lib):
             part = design.parts[ref]
             if part.hidden or not part.on_board:
                 continue
-            problem = lib.footprint_problem(part.footprint, ref)
+            problem = lib.footprint_problem(part.footprint, ref, part.symbol)
             if problem:
                 problems.append(problem)
         if problems:
@@ -540,7 +552,7 @@ def load(raw, lib):
     return design
 
 def sidecar(design):
-    """abide_build.json -- the resolved design macro_placer.py should read."""
+    """abide_build.json -- the resolved design metadata sidecar."""
     return {
         "schema": 3,
         "generated_by": "abide",

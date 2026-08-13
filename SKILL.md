@@ -36,7 +36,6 @@ Before writing ANY custom `pcbnew` Python script, check if the functionality alr
 | `kicad_agent_bridge.py` | CLI ↔ KiCad HTTP bridge. All agent-to-KiCad communication goes through this. | `python bridge.py <script.py>` or `--state summary` or `--oracle "CLASS METHOD"` or `--json-ops <file>` |
 | `currentboardfetcher.py` | **THE board state engine (1400 lines).** State extraction, 16 built-in ops, snapshots, diffs, overlap detection, geometry gate, backup/restore. Called internally by bridge `--state` and `--json-ops`. | Never run directly. Used via `--state summary` or `--json-ops`. |
 | `freerouting_runner.py` | DSN export → Freerouting autorouter → SES import back into `.kicad_pcb`. Includes `audit_dsn()` to catch zero-width netclass rules before routing. | `python freerouting_runner.py <DIR>` |
-| `macro_placer.py` | Untangle footprints from the (0,0) pile into grouped clusters using `design.json` groups. | `python macro_placer.py <DIR>` |
 | `oracle.py` | Live SWIG signature lookup engine. Searches `pcbnew.py` source for exact method definitions. | Called via `bridge.py --oracle "CLASS METHOD"` |
 | `pcb_snapshot.py` | Force-save the live board to disk + SVG export via `kicad-cli`. | `python pcb_snapshot.py <DIR>` |
 
@@ -152,7 +151,7 @@ python "<PLUGIN_DIR>\json2sch.py" "<PROJECT_DIR>" --apply-netclasses
 Generated outputs:
 - `<project>.kicad_sch` — root schematic
 - One `<sheet_id>.kicad_sch` per declared sheet (multi-sheet only)
-- `abide_build.json` — resolved sidecar for `macro_placer.py`
+- `abide_build.json` — resolved design sidecar
 - Timestamped `.bak` files for anything replaced
 
 Generated files target KiCad 7 and newer (default KiCad 9; use `--kicad-version` flag to override).
@@ -166,87 +165,89 @@ Generated files target KiCad 7 and newer (default KiCad 9; use `--kicad-version`
 4. Agent confirms bridge is alive: `python "<PLUGIN_DIR>\Autoplacer\kicad_agent_bridge.py" --state summary`
     - If `--- KICAD NOT CONNECTED ---` → ask user to open abIDE and retry once.
 
-### 🧠 RULE 6 — Placement → Routing → DRC (Full Iterative Pipeline)
+### 🧠 RULE 6 — Placement → Routing → DRC (Canonical Semantic Architecture Pipeline)
 
-This is the complete iterative loop from raw F8 pile to a fully routed, DRC-clean board. Follow this flowchart:
+This is the complete iterative loop from raw F8 import to a beautifully placed, fully routed, DRC-clean board. Follow this flowchart:
 
 ```mermaid
 graph TD
-    A["1. Initial Untangle<br/>macro_placer.py"] --> B["2. Get Board State<br/>--state summary"]
-    B --> C["3. Read placement_report<br/>Check overlaps, outside_outline, route_ready"]
-    C -->|overlaps or outside| D["4a. Fix Placement<br/>Write ops.json with footprint.place ops"]
-    C -->|route_ready = true| E["5. Prep for Route<br/>board.prep_for_route op"]
-    D --> F["4b. Apply Ops<br/>--json-ops ops.json --commit"]
-    F -->|Geometry Gate PASS<br/>auto-separation resolved overlaps| G["4c. Verify<br/>--state summary again"]
-    F -->|Geometry Gate FAIL<br/>unsolvable overlap| D
-    G --> C
-    E --> H["6. Route<br/>freerouting_runner.py"]
-    H -->|Routing Success| I["7. DRC Check<br/>board.drc_check op"]
-    H -->|Routing Failure| J{"Diagnose"}
-    J -->|Zero-width netclass| K["Re-run json2sch --apply-netclasses<br/>User: F8 again"]
-    J -->|No board outline| L["Add board.fit_outline op<br/>Go back to step 4a"]
-    I -->|DRC Clean (0 violations)| M["8. Snapshot & Review<br/>pcb_snapshot.py"]
-    I -->|DRC Violations| N["Fix violations<br/>Go back to step 4a"]
-    M --> O["✅ DONE"]
+    A["1. Get Physical State<br/>--state summary"] --> B["2. AI Semantic Placement<br/>Edges, Thermals, Decoupling"]
+    B --> C["3. Generate ops.json<br/>footprint.place with centre anchor"]
+    C --> D["4. Apply via REST API<br/>--json-ops ops.json --commit"]
+    D -->|Geometry Gate PASS<br/>auto-separation resolved overlaps| E["5. Visual Inspection & SVG<br/>pcb_snapshot.py"]
+    D -->|Geometry Gate FAIL<br/>hard overlap collision| B
+    E -->|User / AI adjustments needed| B
+    E -->|Approved & Route-Ready| F["6. Prep for Route<br/>board.prep_for_route op"]
+    F --> G["7. Route<br/>freerouting_runner.py"]
+    G -->|Routing Success| H["8. DRC Check<br/>board.drc_check op"]
+    G -->|Routing Failure| I{"Diagnose"}
+    I -->|Zero-width netclass| J["Re-run json2sch --apply-netclasses<br/>User: F8 again"]
+    I -->|No board outline| K["Draw Edge.Cuts in KiCad & save"]
+    H -->|DRC Clean (0 violations)| L["9. Final Snapshot<br/>pcb_snapshot.py"]
+    H -->|DRC Violations| M["Fix violations<br/>Loop back to placement/routing"]
+    L --> N["✅ DONE"]
 ```
 
 #### Step-by-Step Commands
 
-**Step 1 — Initial Untangle** (only needed once, right after F8):
-```powershell
-python "<PLUGIN_DIR>\Autoplacer\macro_placer.py" "<PROJECT_DIR>"
-```
-This reads `design.json` groups and spreads the footprints from the (0,0) pile into organized clusters.
-
-**Step 2 — Get Board State** (run this EVERY time before making placement decisions):
+**Step 1 — Get Board State & Physical Courtyard Dimensions:**
 ```powershell
 python "<PLUGIN_DIR>\Autoplacer\kicad_agent_bridge.py" --state summary
 ```
-This writes `<PROJECT_DIR>\pcb_brain\ai_context_summary.json`. Read that file. The SVG is for aesthetics only.
+This writes `<PROJECT_DIR>\pcb_brain\ai_context_summary.json`. 
+**Crucial:** Read `state.footprints` to inspect the exact millimeter bounding boxes (`courtyard_mm.w` and `courtyard_mm.h`) of every component before calculating placement coordinates!
 
-**Step 3 — Read `placement_report`:**
-- `overlaps` — list of overlapping footprint pairs with `move_b_by` escape vectors
-- `outside_outline` — footprints that extend past `Edge.Cuts`
-- `route_ready` — `true` only when overlaps=0, outline_closed=true, all inside, netclasses have width
-- `footprints_without_courtyard` — these need manual attention
-
-**Step 4a — Write Placement Ops:**
-- Use `{\"op\": \"footprint.place\", \"anchor\": \"centre\"}` — NEVER raw `position_mm` (that's pin 1, not centre).
-- Include `{\"op\": \"board.fit_outline\", \"margin\": 5.0}` to auto-generate the board outline.
+**Step 2 — Semantic Layout Architecture (The "Hallmark" Flow):**
+The AI acts as the **Lead Hardware Architect**:
+1. **Define Board Bounding Box:** Decide target dimensions (e.g. Width × Height, centered around board coordinates).
+2. **Boundary Constraints (Connectors):** Place user-facing connectors along outer edges:
+   - Top/Bottom edge: Pin headers, terminal blocks (`Conn_01x03`, `Screw_Terminal`).
+   - Left/Right edge: DC Barrel Jack (`J6`), USB ports (orient opening facing outward, e.g. `rotation: 180`).
+3. **Thermal & Mechanical Placement:** 
+   - Linear regulators / power ICs (`LM7805`, `LM317` TO-220): Place along perimeter with heatsink tab facing outward (`rotation: 270`) for airflow/clearance.
+4. **Functional Clustering & Decoupling:**
+   - Place filter/decoupling capacitors (`C1`, `C2`) directly adjacent to IC power/GND pins.
+   - Place feedback/adjust resistors (`R1`, `R3`) directly next to regulator pins.
+   - Place switches (`SW1`) and indicators (`LED + Resistor`) in clear accessible zones.
+5. **Generate `ops.json` in `<PROJECT_DIR>`:**
+   Use `{"op": "footprint.place", "anchor": "centre", "ref": "...", "x": ..., "y": ..., "rotation": ...}`.
 
 Example `ops.json`:
 ```json
 [
-  {"op": "board.fit_outline", "margin": 5.0},
-  {"op": "footprint.place", "anchor": "centre", "ref": "U1", "x": 55.0, "y": 25.0, "rotation": 0},
-  {"op": "footprint.place", "anchor": "centre", "ref": "C1", "x": 58.5, "y": 22.0, "rotation": 270}
+  {"op": "footprint.place", "anchor": "centre", "ref": "J3", "x": 142.0, "y": 64.0, "rotation": 90},
+  {"op": "footprint.place", "anchor": "centre", "ref": "U2", "x": 141.0, "y": 78.0, "rotation": 270},
+  {"op": "footprint.place", "anchor": "centre", "ref": "C1", "x": 152.0, "y": 83.0, "rotation": 0}
 ]
 ```
 
-**Step 4b — Apply Ops (with built-in auto-separation):**
+**Step 3 — Apply Ops (with built-in auto-separation):**
 ```powershell
 python "<PLUGIN_DIR>\Autoplacer\kicad_agent_bridge.py" --json-ops ops.json --commit
 ```
 
 > [!IMPORTANT]
-> **Auto-Separation is built in!** When `apply_ops` runs with `--commit`, it automatically executes a **Geometry Gate** after applying your ops:
-> 1. It runs `placement_report()` to detect any remaining overlaps.
+> **Auto-Separation is built in!** When `apply_ops` runs with `--commit`, it automatically executes the abIDE **Geometry Gate** after applying your ops:
+> 1. It runs `placement_report()` to detect any minor overlaps.
 > 2. If overlaps exist, it calls `geometry.separate()` — a relaxation algorithm that nudges unlocked parts apart along the shortest escape vector (like magnets repelling) for up to 80 passes.
 > 3. Parts are clamped inside the board outline boundaries.
 > 4. The result includes `auto_separated: {ref: [new_x, new_y]}` showing what was nudged.
 > 5. Only if `separate()` STILL can't resolve overlaps (e.g., locked parts blocking) does it reject the batch.
 >
-> **You do NOT need to write custom overlap detection or separation code. The engine handles it.**
+> **You do NOT need to write custom overlap detection or separation scripts. The engine handles it.**
 
-**Step 4c — Verify:**
-Rerun `--state summary` and check `placement_report.route_ready`. If `false`, fix the reported issues and loop back to Step 4a.
+**Step 4 — Visual Snapshot & Review:**
+```powershell
+python "<PLUGIN_DIR>\Autoplacer\pcb_snapshot.py" "<PROJECT_DIR>"
+```
+Inspect the generated SVG vector image (`<project>_board.svg`). If the user requests layout adjustments or spacing changes, iterate on `ops.json` coordinates.
 
 **Step 5 — Prep for Route** (clears old tracks + validates readiness):
 Write an ops.json with:
 ```json
 [{"op": "board.prep_for_route"}]
 ```
-This removes ALL existing tracks/vias, runs `placement_report()`, and raises an error if the board is not route-ready (missing outline, overlaps, zero-width netclasses).
+This removes ALL existing tracks/vias, runs `placement_report()`, and ensures the board is route-ready (outline closed, zero overlaps, valid netclasses).
 
 **Step 6 — Route:**
 ```powershell
@@ -349,12 +350,13 @@ Error handling for `abide_pcb.py`:
 > **Semi-Automation Rule:** To save the user from the hassle of constantly closing KiCad manually, the agent is authorized and encouraged to automatically force-close KiCad using `taskkill /IM kicad.exe /F` whenever it needs to be closed (e.g., before running `--apply-netclasses` or to clear footprint caches). 
 > The agent must simply inform the user: *"I have closed KiCad. Please open it manually and press F8."*
 
-### 🚀 RULE 11 — The V2 Holy Grail Architecture (Vision-Guided Algorithmic Placer)
+### 🚀 RULE 11 — The V2 Holy Grail Architecture (Vision-Guided Semantic Placer)
 
-When developing or executing V2 of the `abIDE` pipeline, you **MUST** strictly adhere to the Hybrid Architecture approach for PCB placement. Do not attempt to rely on pure AI hallucination of coordinates.
+When placing PCB components in the `abIDE` pipeline, you **MUST** strictly adhere to the Hybrid Architecture approach.
 
-1. **The Problem:** LLMs (even Vision models) cannot reliably do 2D floating-point math or sub-millimeter bounding-box collision detection. If the AI is forced to guess explicit `X, Y` coordinates in `ops.json` for 50+ components, the result will be a overlapping "joga khicuri" (mess) that violates basic physics.
-2. **The Architect (AI Agent + Vision):** The AI should act purely as the semantic architect. It looks at the SVG snapshot to understand the global flow and writes *rules/constraints* (e.g., "J1 must be on TOP_EDGE", "C1 must be within 2mm of U1.VCC") or proposes an *approximate* intent.
-3. **The Mason (Python Engine):** The Python codebase (the `macro_placer.py` or equivalent V2 engine) MUST act as the deterministic spatial solver. It reads the AI's constraints, queries KiCad for the exact footprint bounding boxes (courtyards), and runs a mathematical packing/repulsion algorithm (like grid-shifting or force-directed layout) to snap the components into perfectly legal, zero-overlap positions.
+1. **The Problem:** LLMs alone cannot do sub-millimeter bounding-box collision detection without geometry tools.
+2. **The Architect (AI Agent + Vision):** The AI acts as the Lead Hardware Architect. It reads exact component courtyards from `--state summary`, applies engineering rules (connector edges, heatsink airflow, decoupling proximity), and generates semantic placement operations (`ops.json`).
+3. **The Mason (abIDE Geometry Gate & Solver):** The Python bridge engine (`currentboardfetcher.py` + `geometry.py`) acts as the deterministic spatial solver. During `--commit`, it automatically executes physics relaxation (`geometry.separate()`) across up to 80 passes to nudge components into perfectly legal, zero-overlap positions.
+4. **Visual Inspection:** The AI inspects the generated SVG snapshot (`pcb_snapshot.py`), allowing seamless human/AI visual feedback loops.
 
-**Core V2 Directive:** The AI provides the *Engineering Intent*. Python does the *Geometry Math*. Never mix the two.
+**Core Directive:** The AI provides the *Hardware Architecture & Intent*. The Geometry Gate does the *Micro-Separation Math*.

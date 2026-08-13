@@ -30,6 +30,7 @@ class LibError(ValueError):
 # correct and every downstream coordinate depends on it.
 _BODY = {0: (1, 0), 90: (0, -1), 180: (-1, 0), 270: (0, 1)}
 _ART = ("rectangle", "circle", "arc", "polyline", "bezier", "text")
+_UNIT = re.compile(r"_(\d+)_\d+$")
 _VAR = re.compile(r"\$[{(]([A-Za-z0-9_]+)[})]")
 
 @dataclass
@@ -224,6 +225,19 @@ class LibIndex:
         parent = entries.get(str(parent_name)) if parent_name else None
         if parent_name and parent is None:
             raise LibError(f"'{lib_id}' extends missing symbol '{parent_name}'")
+        body = parent if parent is not None else node
+        units = set()
+        for child in find(body, "symbol"):
+            if len(child) > 1 and isinstance(child[1], str):
+                match = _UNIT.search(str(child[1]))
+                if match and int(match.group(1)):
+                    units.add(int(match.group(1)))
+        if len(units) > 1:
+            raise LibError(
+                f"'{lib_id}' is a {max(units)}-unit symbol. abIDE draws one "
+                f"unit per part, so units 2-{max(units)} would be dropped "
+                f"without a word. Use a single-unit equivalent symbol, or "
+                f"split the part by hand.")
         pins = _collect_pins(node) or _collect_pins(parent)
         if not pins:
             raise LibError(f"'{lib_id}' has no pins -- broken or wrong symbol")
@@ -261,9 +275,20 @@ class LibIndex:
                 return folder
         return None
 
-    def footprint_problem(self, fpid, ref=""):
-        """None if the .kicad_mod exists, else a message. Missing footprints
-        are the silent killer: Update PCB from Schematic just skips them."""
+    def _pad_numbers(self, path):
+        """Every numbered pad in a .kicad_mod. Blank ones are mechanical."""
+        try:
+            root = parse(path.read_text(encoding="utf-8", errors="replace"))
+        except ValueError as e:
+            raise LibError(f"{path} is not a valid footprint file ({e})")
+        out = set()
+        for pad in walk(root, "pad"):
+            if len(pad) > 1 and isinstance(pad[1], str) and pad[1].strip():
+                out.add(pad[1].strip())
+        return out
+    def footprint_problem(self, fpid, ref="", symbol=None):
+        """None if the footprint exists and covers every pin, else a message.
+        A missing pad is the silent killer: Update PCB drops that net."""
         label = f"{ref}: " if ref else ""
         if not fpid:
             return f"{label}Footprint is empty -- Update PCB will skip this part"
@@ -276,8 +301,15 @@ class LibIndex:
             return (f"{label}footprint library '{nick}' is not reachable: no "
                     f"fp-lib-table row, no {nick}.pretty in the stock folder "
                     f"and none in {legacy}")
-        if not (folder / f"{name}.kicad_mod").is_file():
+        mod = folder / f"{name}.kicad_mod"
+        if not mod.is_file():
             return f"{label}{name}.kicad_mod not found in {folder}"
+        if symbol is not None:
+            missing = sorted(set(symbol.pins) - self._pad_numbers(mod))
+            if missing:
+                return (f"{label}{fpid} has no pad for pin(s) "
+                        f"{', '.join(missing)} -- Update PCB would silently "
+                        f"drop those connections")
         return None
 
     def summary(self):

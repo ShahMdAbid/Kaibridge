@@ -1,0 +1,442 @@
+{
+  "schema": 3,
+  "generated_by": "abide",
+  "design_id": "abide",
+  "sheets": [
+    {
+      "id": "root",
+      "title": "Root",
+      "paper": "A2"
+    }
+  ],
+  "groups": [
+    {
+      "id": "mcu",
+      "title": "mcu",
+      "sheet": "root",
+      "parts": [
+        "U1",
+        "Y1",
+        "SW1",
+        "D4",
+        "R1",
+        "R5",
+        "C1",
+        "C2",
+        "C3"
+      ]
+    },
+    {
+      "id": "usb",
+      "title": "usb",
+      "sheet": "root",
+      "parts": [
+        "U2",
+        "J1",
+        "Y2",
+        "D2",
+        "D3",
+        "R3",
+        "R4",
+        "R6",
+        "R7",
+        "C4",
+        "C5",
+        "C6"
+      ]
+    },
+    {
+      "id": "power",
+      "title": "power",
+      "sheet": "root",
+      "parts": [
+        "U3",
+        "TP1",
+        "D1",
+        "D5",
+        "R2",
+        "C7",
+        "C8"
+      ]
+    }
+  ],
+  "parts": {
+    "U1": {
+      "lib_id": "MCU_Microchip_ATmega:ATmega328P-A",
+      "value": "U1",
+      "footprint": "Package_QFP:TQFP-32_7x7mm_P0.8mm",
+      "group": "mcu",
+      "sheet": "root",
+      "dnp": false,
+      "synthetic": false
+    },
+    "U2": {
+      "lib_id": "Interface_USB:CH340G",
+      "value": "U2",
+      "footprint": "Package_SO:SOIC-16_3.9x9.9mm_P1.27mm",
+      "group": "usb",
+      "sheet": "root",
+      "dnp": false,
+      "synthetic": false
+    },
+    "U3": {
+      "lib_id": "Regulator_Linear:AMS1117-5.0",
+      "value": "U3",
+      "footprint": "Package_TO_SOT_SMD:SOT-223-3_TabPin2",
+      "group": "power",
+      "sheet": "root",
+      "dnp": false,
+      "synthetic": false
+    },
+    "J1": {
+      "lib_id": "Connector:USB_C_Receptacle_USB2.0_16P",
+      "value": "J1",
+      "footprint": "Connector_USB:USB_C_Receptacle_HRO_TYPE-C-31-M-12",
+      "group": "usb",
+      "sheet": "root",
+      "dnp": false,
+      "synthetic": false
+    },
+    "Y1": {
+      "lib_id": "Device:Crystal",
+      "value": "16MHz",
+      "footprint": "Crystal:Crystal_SMD_5032-2Pin_5.0x3.2mm",
+      "group": "mcu",
+      "sheet": "root",
+      "dnp": false,
+      "synthetic": false
+    },
+    "Y2": {
+      "lib_id": "Device:Crystal",
+      "value": "12MHz",
+      "footprint": "Crystal:Crystal_SMD_5032-2Pin_5.0x3.2mm",
+      "group": "usb",
+      "sheet": "root",
+      "dnp": false,
+      "synthetic": false
+    },
+    "SW1": {
+      "lib_id": "Switch:SW_Push",
+      "value": "RESET",
+      "footprint": "Button_Switch_SMD:SW_SPST_B3U-1000P",
+      "group": "mcu",
+      "sheet": "root",
+      "dnp": false,
+      "synthetic": false
+    },
+    "TP1": {
+      "lib_id": "Connector:TestPoint",
+      "value": "TP1",
+      "footprint": "TestPoint:TestPoint_Pad_1.0x1.0mm",
+      "group": "power",
+      "sheet": "root",
+      "dnp": false,
+      "synthetic": false
+    },
+    "D1": {
+      "lib_id": "Device:LED",
+      "value": "PWR",
+      "footprint": "LED_SMD:LED_0805_2012Metric",
+      "group": "power",
+      "sheet": "root",
+      "dnp": false,
+      "synthetic": false
+    },
+    "D2": {
+      "lib_id": "Device:LED",
+      "value": "TX",
+      "footprint": "LED_SMD:LED_0805_2012Metric",
+      "group": "usb",
+      "sheet": "root",
+      "dnp": false,
+      "synthetic": false
+    },
+    "D3": {
+      "lib_id": "Device:LED",
+      "value": "RX",
+      "footprint": "LED_SMD:LED_0805_2012Metric",
+      "group": "usb",
+      "sheet": "root",
+      "dnp": false,
+      "synthetic": false
+    },
+    "D4": {
+      "lib_id": "Device:LED",
+      "value": "L (D13)",
+      "footprint": "LED_SMD:LED_0805_2012Metric",
+      "group": "mcu",
+      "sheet": "root",
+      "dnp": false,
+      "synthetic": false
+    },
+    "D5": {
+      "lib_id": "Diode:MBR0520",
+      "value": "VUSB_DIODE",
+      "footprint": "Diode_SMD:D_SOD-123",
+      "group": "power",
+      "sheet": "root",
+      "dnp": false,
+      "synthetic": false
+    },
+    "R1": {
+      "lib_id": "Device:R",
+      "value": "10k",
+      "footprint": "Resistor_SMD:R_0603_1608Metric",
+      "group": "mcu",
+      "sheet": "root",
+      "dnp": false,
+      "synthetic": false
+    },
+    "R2": {
+      "lib_id": "Device:R",
+      "value": "1k",
+      "footprint": "Resistor_SMD:R_0603_1608Metric",
+      "group": "power",
+      "sheet": "root",
+      "dnp": false,
+      "synthetic": false
+    },
+    "R3": {
+      "lib_id": "Device:R",
+      "value": "1k",
+      "footprint": "Resistor_SMD:R_0603_1608Metric",
+      "group": "usb",
+      "sheet": "root",
+      "dnp": false,
+      "synthetic": false
+    },
+    "R4": {
+      "lib_id": "Device:R",
+      "value": "1k",
+      "footprint": "Resistor_SMD:R_0603_1608Metric",
+      "group": "usb",
+      "sheet": "root",
+      "dnp": false,
+      "synthetic": false
+    },
+    "R5": {
+      "lib_id": "Device:R",
+      "value": "1k",
+      "footprint": "Resistor_SMD:R_0603_1608Metric",
+      "group": "mcu",
+      "sheet": "root",
+      "dnp": false,
+      "synthetic": false
+    },
+    "R6": {
+      "lib_id": "Device:R",
+      "value": "5.1k",
+      "footprint": "Resistor_SMD:R_0603_1608Metric",
+      "group": "usb",
+      "sheet": "root",
+      "dnp": false,
+      "synthetic": false
+    },
+    "R7": {
+      "lib_id": "Device:R",
+      "value": "5.1k",
+      "footprint": "Resistor_SMD:R_0603_1608Metric",
+      "group": "usb",
+      "sheet": "root",
+      "dnp": false,
+      "synthetic": false
+    },
+    "C1": {
+      "lib_id": "Device:C",
+      "value": "100nF",
+      "footprint": "Capacitor_SMD:C_0603_1608Metric",
+      "group": "mcu",
+      "sheet": "root",
+      "dnp": false,
+      "synthetic": false
+    },
+    "C2": {
+      "lib_id": "Device:C",
+      "value": "22pF",
+      "footprint": "Capacitor_SMD:C_0603_1608Metric",
+      "group": "mcu",
+      "sheet": "root",
+      "dnp": false,
+      "synthetic": false
+    },
+    "C3": {
+      "lib_id": "Device:C",
+      "value": "22pF",
+      "footprint": "Capacitor_SMD:C_0603_1608Metric",
+      "group": "mcu",
+      "sheet": "root",
+      "dnp": false,
+      "synthetic": false
+    },
+    "C4": {
+      "lib_id": "Device:C",
+      "value": "22pF",
+      "footprint": "Capacitor_SMD:C_0603_1608Metric",
+      "group": "usb",
+      "sheet": "root",
+      "dnp": false,
+      "synthetic": false
+    },
+    "C5": {
+      "lib_id": "Device:C",
+      "value": "22pF",
+      "footprint": "Capacitor_SMD:C_0603_1608Metric",
+      "group": "usb",
+      "sheet": "root",
+      "dnp": false,
+      "synthetic": false
+    },
+    "C6": {
+      "lib_id": "Device:C",
+      "value": "100nF",
+      "footprint": "Capacitor_SMD:C_0603_1608Metric",
+      "group": "usb",
+      "sheet": "root",
+      "dnp": false,
+      "synthetic": false
+    },
+    "C7": {
+      "lib_id": "Device:C",
+      "value": "10uF",
+      "footprint": "Capacitor_SMD:C_0805_2012Metric",
+      "group": "power",
+      "sheet": "root",
+      "dnp": false,
+      "synthetic": false
+    },
+    "C8": {
+      "lib_id": "Device:C",
+      "value": "10uF",
+      "footprint": "Capacitor_SMD:C_0805_2012Metric",
+      "group": "power",
+      "sheet": "root",
+      "dnp": false,
+      "synthetic": false
+    }
+  },
+  "nets": {
+    "GND": [
+      "U1.3",
+      "U1.5",
+      "U1.21",
+      "U2.1",
+      "U3.1",
+      "J1.A1",
+      "J1.A12",
+      "J1.B1",
+      "J1.B12",
+      "J1.SH",
+      "SW1.2",
+      "D1.1",
+      "D4.1",
+      "R6.1",
+      "R7.1",
+      "C2.2",
+      "C3.2",
+      "C4.2",
+      "C5.2",
+      "C6.2",
+      "C7.2",
+      "C8.2"
+    ],
+    "+5V": [
+      "U1.4",
+      "U1.6",
+      "U1.18",
+      "U2.16",
+      "U3.3",
+      "D5.1",
+      "R1.1",
+      "R2.1",
+      "R3.1",
+      "R4.1",
+      "R5.1",
+      "C7.1"
+    ],
+    "VUSB": [
+      "J1.A4",
+      "J1.A9",
+      "J1.B4",
+      "J1.B9",
+      "D5.2",
+      "C8.1"
+    ],
+    "VIN": [
+      "U3.2",
+      "TP1.1"
+    ],
+    "CC1": [
+      "J1.A5",
+      "R6.2"
+    ],
+    "CC2": [
+      "J1.B5",
+      "R7.2"
+    ],
+    "USB_D+": [
+      "J1.A6",
+      "J1.B6",
+      "U2.5"
+    ],
+    "USB_D-": [
+      "J1.A7",
+      "J1.B7",
+      "U2.6"
+    ],
+    "RESET": [
+      "U1.29",
+      "R1.2",
+      "SW1.1",
+      "C1.1"
+    ],
+    "DTR": [
+      "U2.13",
+      "C1.2"
+    ],
+    "XTAL1": [
+      "U1.7",
+      "Y1.1",
+      "C2.1"
+    ],
+    "XTAL2": [
+      "U1.8",
+      "Y1.2",
+      "C3.1"
+    ],
+    "XI": [
+      "U2.7",
+      "Y2.1",
+      "C4.1"
+    ],
+    "XO": [
+      "U2.8",
+      "Y2.2",
+      "C5.1"
+    ],
+    "V33": [
+      "U2.4",
+      "C6.1"
+    ],
+    "TXD": [
+      "U1.31",
+      "U2.3",
+      "D2.2",
+      "R3.2"
+    ],
+    "RXD": [
+      "U1.30",
+      "U2.2",
+      "D3.2",
+      "R4.2"
+    ],
+    "LED_PWR": [
+      "D1.2",
+      "R2.2"
+    ],
+    "LED_L": [
+      "D4.2",
+      "R5.2",
+      "U1.17"
+    ]
+  }
+}
