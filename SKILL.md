@@ -217,20 +217,45 @@ python "<PLUGIN_DIR>\Autoplacer\pcb_snapshot.py" "<PROJECT_DIR>"
 ```
 Generates `<project>_board.svg` vector render of the board.
 
-**Step 5 — Multimodal Visual Self-Critique & Refinement:**
-The Multimodal AI agent inspects `<project>_board.svg` directly and performs a rigorous visual hardware review:
-- **Routing Corridors:** Are channels between ICs and headers open and uncluttered?
-- **Component Proximity:** Are crystal and decoupling caps tightly hugging their target IC pins?
-- **Orientation & Flow:** Are polarities, pin 1s, and signal flows logically and cleanly oriented?
-- **Thermal & Mechanical:** Do power components have adequate copper clearance and heatsink spacing?
+**Step 5 — Multimodal Visual Self-Critique & Prompt-Driven Refinement:**
 
-*If the visual critique identifies congestion or suboptimal passive placement, generate an adjustment `ops.json` to nudge those specific parts and re-commit.*
+The agent views the generated board image/SVG artifact directly and evaluates it against the **Visual Hardware Review Prompt Template**.
+
+##### 📝 Visual Review Prompt & Evaluation Checklist:
+When inspecting the board snapshot, evaluate these 5 visual criteria:
+1. **Routing Corridors (Avenues):** Are there straight, unblocked channels ($\ge 2.5\text{ mm}$ width) between ICs and connectors for bus routing?
+2. **Companion Proximity (Decoupling & Oscillators):** Are decoupling caps ($C_{bypass}$) within $1.5\text{ mm}$ of their target IC power pins? Is the crystal/resonator hugging the oscillator pins with minimal loop area?
+3. **Thermal & Mechanical Spacing:** Are linear regulators, power FETs, or heat sinks spaced at least $3\text{ mm}$ away from heat-sensitive ICs and electrolytic capacitors?
+4. **Connector Ergonomics & Clearance:** Are headers and USB/jack ports facing outward towards board edges with zero physical obstruction?
+5. **Aesthetic Alignment & Symmetry:** Are passive groups (resistor arrays, LED indicators) neatly aligned in rows/columns?
+
+##### 📊 Structured Visual Feedback Format:
+The agent MUST output its visual findings in this structured critique table before generating ops:
+
+| Ref | Current Observation | Design Criteria | Severity | Corrective Action | Target Coordinate / Rotation |
+|---|---|---|---|---|---|
+| `C1` | Placed 5.2mm away from MCU VDD pin 18 | Decoupling Proximity (<1.5mm) | High | Nudge closer to pin 18 | `x: 132.5, y: 84.0, rot: 90` |
+| `Y1` | Long loop trace between crystal & pins | Crystal Loop Area | Medium | Move directly above pins 7-8 | `x: 125.0, y: 78.0, rot: 0` |
+| `R1, R2` | Staggered irregularly | Visual Symmetry & Alignment | Low | Align Y coordinate to 92.0mm | `x: 118.0, y: 92.0, rot: 0` |
+
+##### 🔄 Critique-to-Ops Translation:
+Convert the corrective actions directly into an adjustment `ops.json`:
+```json
+[
+  {"op": "footprint.place", "anchor": "centre", "ref": "C1", "x": 132.5, "y": 84.0, "rotation": 90},
+  {"op": "footprint.place", "anchor": "centre", "ref": "Y1", "x": 125.0, "y": 78.0, "rotation": 0},
+  {"op": "footprint.place", "anchor": "centre", "ref": "R1", "x": 118.0, "y": 92.0, "rotation": 0},
+  {"op": "footprint.place", "anchor": "centre", "ref": "R2", "x": 122.0, "y": 92.0, "rotation": 0}
+]
+```
+Apply the adjustment via `python Autoplacer/kicad_agent_bridge.py --json-ops ops.json --commit` and proceed once the visual critique score passes.
 
 **Step 6 — Prepare for Routing:**
 ```json
 [{"op": "board.prep_for_route"}]
 ```
 Purges existing stray tracks and markers, verifying outline closure and route readiness.
+
 
 **Step 7 — Headless Auto-Routing:**
 ```powershell
