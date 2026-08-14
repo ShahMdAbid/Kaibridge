@@ -19,12 +19,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from abide import __version__
-from abide.klib import LibError, LibIndex
-from abide.model import DesignError, load, sidecar
-from abide.place import plan
-from abide.render import VERSION, build, existing_uuid, uid, write
-from abide.sexpr import SexprError
+from schematic_gen import __version__
+from schematic_gen.klib import LibError, LibIndex
+from schematic_gen.model import DesignError, load, sidecar
+from schematic_gen.place import plan
+from schematic_gen.render import VERSION, build, existing_uuid, uid, write
+from schematic_gen.sexpr import SexprError
 
 # KiCad's own keys. Anything else in a netclass is a typo, and a typo that
 # silently does nothing is worse than an error.

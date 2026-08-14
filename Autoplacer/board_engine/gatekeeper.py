@@ -3,7 +3,7 @@ Autoplacer/board_engine/gatekeeper.py — Geometry Gate, Courtyard bounding boxe
 """
 
 import pcbnew
-from abide.geometry import Box, find_overlaps, outside, separate
+from schematic_gen.geometry import Box, find_overlaps, outside, separate
 from .common import (
     to_mm, from_mm, mk_point, _try, _call_any, uuid_of
 )

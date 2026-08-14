@@ -38,7 +38,7 @@ Before writing ANY custom `pcbnew` Python script, check if the functionality alr
 | `legacyboardengine/oracle.py` | Live SWIG signature lookup engine (Archived Phase 1 tool). Searches `pcbnew.py` source for exact method definitions. | Called via `bridge.py --oracle "CLASS METHOD"` |
 | `pcb_snapshot.py` | Force-save the live board to disk + SVG export via `kicad-cli`. | `python pcb_snapshot.py <DIR>` |
 
-#### `abide/` Package (imported by other scripts, never run directly)
+#### `schematic_gen/` Package (Schematic Compiler & Geometry Solver)
 
 | File | Purpose |
 |---|---|

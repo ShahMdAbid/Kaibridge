@@ -17,7 +17,7 @@ import os
 import sys
 from pathlib import Path
 
-# abide/ lives next to this file. Guarantee it is importable no matter who
+# schematic_gen/ lives next to this file. Guarantee it is importable no matter who
 # imported us -- KiCad's plugin loader, the bridge, or a bare shell.
 _ROOT = os.path.dirname(os.path.abspath(__file__))
 if _ROOT not in sys.path:
@@ -25,8 +25,8 @@ if _ROOT not in sys.path:
 
 # Backwards-compatible re-exports. Everything that used to live here still
 # resolves through this module: from kicad_pins import parse, dumps, Quoted...
-from abide.sexpr import Quoted, SexprError, dumps, find, head, parse, parse_all, quote
-from abide.paths import CONFIG, HOWTO, load_cli, load_paths
+from schematic_gen.sexpr import Quoted, SexprError, dumps, find, head, parse, parse_all, quote
+from schematic_gen.paths import CONFIG, HOWTO, load_cli, load_paths
 
 # Keep 'atom' as an alias for 'quote' for any scripts that used the old name
 atom = quote
