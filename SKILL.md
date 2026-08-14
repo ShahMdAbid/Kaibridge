@@ -197,9 +197,10 @@ This writes `<PROJECT_DIR>\pcb_brain\ai_context_summary.json`.
 **Crucial:** Read `state.footprints` to inspect the exact millimeter bounding boxes (`courtyard_mm.w` and `courtyard_mm.h`) of every component before calculating placement coordinates!
 
 **Step 2 — Semantic Layout Architecture (The "Hallmark" Flow):**
-The AI acts as the **Lead Hardware Architect** (Refer to `<PLUGIN_DIR>\skillset\pcb_placement_rules.md` for comprehensive placement constraints):
-1. **Define Board Bounding Box:** Decide target dimensions (e.g. Width × Height, centered around board coordinates).
-2. **Boundary Constraints (Connectors):** Place user-facing connectors along outer edges:
+1. **Define Board Bounding Box (Fully Automated):** 
+   - Use `board.set_size` (for fixed dimension enclosures, e.g. 70mm x 45mm) or `board.fit_outline` (to automatically shrinkwrap around components with padding).
+   - Both operations automatically draw clean `Edge.Cuts` rectangular geometry and verify polygon closure with KiCad's geometry engine.
+   - *(Note: In rare cases where a 3rd-party footprint has a stray internal line on the Edge.Cuts layer, the engine safely reports an OpError so you can ask the user to manually draw the outline in the UI as a fallback).*
    - Top/Bottom edge: Pin headers, terminal blocks (`Conn_01x03`, `Screw_Terminal`).
    - Left/Right edge: DC Barrel Jack (`J6`), USB ports (orient opening facing outward, e.g. `rotation: 180`).
 3. **Thermal & Mechanical Placement:** 

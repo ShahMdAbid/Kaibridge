@@ -11,11 +11,11 @@ If you ever encounter the error:
 Or `AttributeError: 'SwigPyObject' object has no attribute...`
 **DO NOT** repeatedly try to run the bridge. This means the KiCad internal Python state is permanently corrupted (usually from Reverting to Saved or a bad script crash). The ONLY fix is to forcefully restart the ENTIRE KiCad application (not just the plugin window). Use `taskkill /IM kicad.exe /F` and politely ask the user to reopen KiCad and the abIDE plugin.
 
-### 3. Edge.Cuts / Board Outline Failures
-When running the `board.fit_outline` operation via `ops.json`, if it fails with:
-`OpError: Edge.Cuts written but KiCad still will not close it. Usual cause: a stray Edge.Cuts graphic inside a footprint.`
-This means a component (often a USB-C connector like HRO_TYPE-C-31) has internal Edge.Cuts lines, which confuses KiCad's outline detector.
-**Fix:** Stop trying to automate the outline. Do NOT delete existing outlines without redrawing them. Politely ask the human user to manually draw the `Edge.Cuts` rectangle in KiCad and save, then proceed with the rest of the automated pipeline (like Freerouting).
+### 3. Edge.Cuts & Board Outline: Automated by Default (with Corrupted Footprint Fallback)
+- **Standard Automated Path:** Always automate the board outline using `board.set_size` or `board.fit_outline` in `ops.json`. The engine automatically draws 4 clean `Edge.Cuts` segments and verifies closure with `GetBoardPolygonOutlines()`.
+- **Corrupted Footprint Fallback:** In rare cases, if a 3rd-party footprint (e.g., some imported USB-C sockets) contains an illegal graphic line on the `Edge.Cuts` layer inside the footprint itself, KiCad will fail polygon closure with:
+  `OpError: Edge.Cuts written but KiCad still will not close it. Usual cause: a stray Edge.Cuts graphic inside a footprint.`
+  **Action:** If this specific error occurs, do not loop. Explain to the user that a footprint has an internal `Edge.Cuts` line, draw the outline manually in KiCad PCB Editor once, save, and proceed with the rest of the automated pipeline.
 
 ### 4. NO FILES IN PLUGIN DIRECTORY (STRICT)
 Under NO circumstances should you create, generate, or save ANY files (like custom python scripts, temporary files, `ops.json`, or text files) inside the main plugin folder (`abIDE-main` or any of its subdirectories). All project-related files (like `ops.json` or `design.json`) MUST be created inside the user's specific `<PROJECT_DIR>` (e.g., the `hotdog` folder). Polluting the plugin's source code tree is strictly forbidden.
