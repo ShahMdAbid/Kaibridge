@@ -1,7 +1,8 @@
 [
   {
-    "_intent": "STAGE 1: BOARD ENVELOPE (Define target PCB boundary: 70mm x 45mm)",
-    "_rule": "Set initial rectangular board outline before placing components",
+    "_stage": "STAGE 1: BOARD ENVELOPE (Fixed Mechanical Boundary)",
+    "_intent": "Define target PCB outline: 70mm x 45mm centered at (X=140, Y=100)",
+    "_rule": "Use board.set_size for fixed enclosures. (Use board.fit_outline only if dynamically wrapping placed parts)",
     "op": "board.set_size",
     "width": 70.0,
     "height": 45.0,
@@ -10,8 +11,9 @@
   },
 
   {
-    "_intent": "STAGE 2A: CONNECTORS (User-facing USB Port on outer perimeter)",
-    "_rule": "Connector opening MUST face outwards toward board edge (rotation 180 on left edge)",
+    "_stage": "STAGE 2A: USER-FACING CONNECTORS (Outer Perimeter Placement)",
+    "_intent": "Place USB connector along left perimeter edge",
+    "_rule": "Connector opening MUST face outward toward board edge (rotation: 180 on left edge)",
     "op": "footprint.place",
     "ref": "J1",
     "anchor": "centre",
@@ -20,10 +22,19 @@
     "rotation": 180,
     "force": false
   },
+  {
+    "_stage": "STAGE 2A: LOCK EDGE CONNECTOR",
+    "_intent": "Lock J1 in place to anchor the mechanical boundary",
+    "_rule": "Always lock edge connectors immediately so subsequent auto-separation passes do not nudge them",
+    "op": "footprint.lock",
+    "ref": "J1",
+    "locked": true
+  },
 
   {
-    "_intent": "STAGE 2B: POWER AND THERMAL (Schottky Diode inline with USB 5V rail)",
-    "_rule": "Place reverse-polarity/rectifier diode immediately downstream of connector",
+    "_stage": "STAGE 2B: POWER INPUT & RECTIFICATION",
+    "_intent": "Place D1 Schottky diode inline with USB positive rail",
+    "_rule": "Place reverse-polarity/rectifier diode immediately downstream of connector pin",
     "op": "footprint.place",
     "ref": "D1",
     "anchor": "centre",
@@ -32,8 +43,9 @@
     "rotation": 0
   },
   {
-    "_intent": "STAGE 2C: FILTER CAPACITORS (Bulk Input Capacitor for LDO)",
-    "_rule": "Place within 1-3mm of LDO input pin to suppress voltage spikes",
+    "_stage": "STAGE 2C: BULK INPUT FILTERING",
+    "_intent": "Place C1 10uF bulk input capacitor for LDO",
+    "_rule": "Place within 1-3mm of regulator VIN pin to suppress transient supply ripple",
     "op": "footprint.place",
     "ref": "C1",
     "anchor": "centre",
@@ -42,8 +54,9 @@
     "rotation": 0
   },
   {
-    "_intent": "STAGE 2D: LINEAR REGULATOR (Thermal Heatsink Tab Placement)",
-    "_rule": "TO-220/SOT-223 metal tab MUST face outward toward board edge for thermal dissipation",
+    "_stage": "STAGE 2D: LINEAR REGULATOR & THERMAL DISSIPATION",
+    "_intent": "Place U1 AMS1117-3.3 SOT-223 regulator on top edge",
+    "_rule": "Large heatsink tab (Pin 4) MUST face outward toward board edge (rotation: 270) for thermal dissipation",
     "op": "footprint.place",
     "ref": "U1",
     "anchor": "centre",
@@ -52,19 +65,32 @@
     "rotation": 270
   },
   {
-    "_intent": "STAGE 2E: FILTER CAPACITORS (Bulk Output Capacitor for 3V3 Rail)",
-    "_rule": "Place directly adjacent to LDO VOUT pin for low-impedance transient response",
+    "_stage": "STAGE 2E: REGULATOR HIGH-FREQUENCY DECOUPLING",
+    "_intent": "Place C3 100nF ceramic decoupling capacitor directly adjacent to LDO output",
+    "_rule": "High-frequency 100nF decoupling capacitors MUST sit closer to the IC pin than bulk electrolytic caps",
+    "op": "footprint.place",
+    "ref": "C3",
+    "anchor": "centre",
+    "x": 141.0,
+    "y": 94.0,
+    "rotation": 0
+  },
+  {
+    "_stage": "STAGE 2F: BULK OUTPUT FILTERING",
+    "_intent": "Place C2 10uF bulk output capacitor for +3V3 rail stability",
+    "_rule": "Place directly downstream of regulator VOUT pin for low ESR transient stabilization",
     "op": "footprint.place",
     "ref": "C2",
     "anchor": "centre",
-    "x": 144.0,
+    "x": 146.0,
     "y": 90.0,
     "rotation": 0
   },
 
   {
-    "_intent": "STAGE 2F: MICROCONTROLLER CORE (ESP32 RF Module)",
-    "_rule": "PCB trace antenna MUST face board edge with no copper underneath for clear RF transmission",
+    "_stage": "STAGE 2G: MICROCONTROLLER CORE & RF PLACEMENT",
+    "_intent": "Place U2 ESP32-WROOM-32 module on center-right zone",
+    "_rule": "PCB antenna MUST point toward outer right edge with NO copper planes underneath for maximum RF range",
     "op": "footprint.place",
     "ref": "U2",
     "anchor": "centre",
@@ -72,10 +98,22 @@
     "y": 100.0,
     "rotation": 0
   },
+  {
+    "_stage": "STAGE 2H: MCU DECOUPLING CAPACITOR",
+    "_intent": "Place C4 100nF decoupling capacitor directly adjacent to MCU 3V3 power pin (Pin 2)",
+    "_rule": "Decoupling capacitor loop inductance MUST be minimized: distance to power pin < 2.5mm",
+    "op": "footprint.place",
+    "ref": "C4",
+    "anchor": "centre",
+    "x": 153.0,
+    "y": 95.0,
+    "rotation": 0
+  },
 
   {
-    "_intent": "STAGE 2G: PULL-UP RESISTORS (Close Proximity to Target IC Pins)",
-    "_rule": "Keep EN and IO0 strap pull-up resistors adjacent to their respective MCU pads",
+    "_stage": "STAGE 2I: PULL-UP RESISTORS & STRAPPING",
+    "_intent": "Place R1 10k EN pull-up resistor next to U2.EN pin",
+    "_rule": "Keep reset and boot pull-up resistors adjacent to their respective IC pads",
     "op": "footprint.place",
     "ref": "R1",
     "anchor": "centre",
@@ -84,8 +122,9 @@
     "rotation": 90
   },
   {
-    "_intent": "STAGE 2G: PULL-UP RESISTORS (Boot Strapping)",
-    "_rule": "Maintain short trace length to minimize parasitic capacitance on high-impedance inputs",
+    "_stage": "STAGE 2I: PULL-UP RESISTORS & STRAPPING",
+    "_intent": "Place R2 10k IO0 pull-up resistor next to U2.IO0 pin",
+    "_rule": "Maintain short routing stubs on high-impedance strapping lines",
     "op": "footprint.place",
     "ref": "R2",
     "anchor": "centre",
@@ -94,8 +133,9 @@
     "rotation": 90
   },
   {
-    "_intent": "STAGE 2H: USER CONTROLS (Tactile Pushbutton Switch)",
-    "_rule": "Place in accessible perimeter zone clear of tall thermal/electrolytic components",
+    "_stage": "STAGE 2J: USER CONTROLS & SWITCHES",
+    "_intent": "Place SW1 BOOT tactile push-button switch in accessible lower-left quadrant",
+    "_rule": "Keep user buttons in clear accessible perimeter zones away from tall or hot components",
     "op": "footprint.place",
     "ref": "SW1",
     "anchor": "centre",
@@ -105,8 +145,9 @@
   },
 
   {
-    "_intent": "STAGE 3: GROUND REFERENCE PLANES (Bottom Layer Flood)",
-    "_rule": "Inject polygon copper pour zones on back and front copper layers",
+    "_stage": "STAGE 3A: GROUND REFERENCE PLANES (Bottom Layer Flood)",
+    "_intent": "Inject low-impedance GND reference polygon on B.Cu",
+    "_rule": "Zone vertices MUST match or encompass the board boundary corners defined in Stage 1",
     "op": "zone.add",
     "net": "GND",
     "layer": "B.Cu",
@@ -121,8 +162,9 @@
     ]
   },
   {
-    "_intent": "STAGE 3: GROUND REFERENCE PLANES (Top Layer Flood)",
-    "_rule": "Thermal relief connections automatically applied to IC ground pads",
+    "_stage": "STAGE 3B: GROUND REFERENCE PLANES (Top Layer Flood)",
+    "_intent": "Inject top copper GND polygon on F.Cu",
+    "_rule": "Thermal relief spokes are automatically computed for all grounded component pads",
     "op": "zone.add",
     "net": "GND",
     "layer": "F.Cu",
@@ -137,40 +179,34 @@
     ]
   },
   {
-    "_intent": "STAGE 3: REFILL COPPER POURS",
-    "_rule": "Refill all zones to compute thermal spokes and copper clearance boundaries",
+    "_stage": "STAGE 3C: ZONE REFILL",
+    "_intent": "Natively compute copper flood geometry and thermal connections",
+    "_rule": "Always call zone.refill after adding or modifying polygon zones",
     "op": "zone.refill"
   },
 
   {
-    "_intent": "STAGE 4: ROUTE PREPARATION AND QUALITY GATE",
-    "_rule": "Purge orphaned traces, verify closed board outline, and check netclass widths",
+    "_stage": "STAGE 4: ROUTE PREPARATION & QUALITY GATE",
+    "_intent": "Purge orphaned traces, verify closed board outline, and check netclass widths",
+    "_rule": "Execute board.prep_for_route immediately prior to launching Freerouting autorouter",
     "op": "board.prep_for_route"
   },
   {
-    "_intent": "STAGE 5: DESIGN RULE CHECK (DRC)",
-    "_rule": "Run automated kicad-cli DRC gate to guarantee 0 violations before export",
+    "_stage": "STAGE 5: DESIGN RULE CHECK (DRC)",
+    "_intent": "Run automated headless DRC check to guarantee 0 design rule violations",
+    "_rule": "DRC check runs via kicad-cli and verifies clearances, track widths, and annular rings",
     "op": "board.drc_check"
   },
 
   {
-    "_intent": "APPENDIX: ADDITIONAL OPS REFERENCE - Lock critical parts",
-    "_rule": "Lock connectors or mounting holes so subsequent relaxation passes will not move them",
-    "op": "footprint.lock",
-    "ref": "J1",
-    "locked": true
+    "_stage": "APPENDIX / ADVANCED OPS REFERENCE",
+    "_usage_guide": "Use board.fit_outline instead of board.set_size when you want KiCad to automatically shrink-wrap the board around placed components with a safety margin (in mm).",
+    "op": "board.fit_outline",
+    "margin": 5.0
   },
   {
-    "_intent": "APPENDIX: ADDITIONAL OPS REFERENCE - Update component text field",
-    "_rule": "Dynamically update value, MPN, or custom attributes directly in PCB memory",
-    "op": "footprint.set_field",
-    "ref": "U1",
-    "name": "Value",
-    "value": "AMS1117-3.3"
-  },
-  {
-    "_intent": "APPENDIX: ADDITIONAL OPS REFERENCE - Fine-grained manual coordinate move",
-    "_rule": "Nudge footprint relative to anchor or move between top and bottom layers",
+    "_stage": "APPENDIX / ADVANCED OPS REFERENCE",
+    "_usage_guide": "Use footprint.move for fine-grained coordinate nudging or flipping a footprint between top (F.Cu) and bottom (B.Cu) layers.",
     "op": "footprint.move",
     "ref": "R1",
     "x": 147.0,
@@ -179,21 +215,23 @@
     "layer": "F.Cu"
   },
   {
-    "_intent": "APPENDIX: ADDITIONAL OPS REFERENCE - Pure rotation",
-    "_rule": "Rotate footprint in-place without altering X/Y coordinates",
+    "_stage": "APPENDIX / ADVANCED OPS REFERENCE",
+    "_usage_guide": "Use footprint.rotate to change footprint orientation in-place without altering its X/Y coordinates.",
     "op": "footprint.rotate",
     "ref": "C1",
     "rotation": 90
   },
   {
-    "_intent": "APPENDIX: ADDITIONAL OPS REFERENCE - Fit board outline dynamically",
-    "_rule": "Automatically shrink-wrap Edge.Cuts rectangle around all placed parts with padding",
-    "op": "board.fit_outline",
-    "margin": 5.0
+    "_stage": "APPENDIX / ADVANCED OPS REFERENCE",
+    "_usage_guide": "Use footprint.set_field to update component values, MPNs, or custom properties directly inside PCB memory.",
+    "op": "footprint.set_field",
+    "ref": "U1",
+    "name": "Value",
+    "value": "AMS1117-3.3"
   },
   {
-    "_intent": "APPENDIX: ADDITIONAL OPS REFERENCE - Manual high-current trace",
-    "_rule": "Draw explicit wide power tracks (e.g. 0.8mm width) between specific coordinates",
+    "_stage": "APPENDIX / ADVANCED OPS REFERENCE",
+    "_usage_guide": "Use track.add to route critical high-current traces, differential pairs, or power rails manually.",
     "op": "track.add",
     "net": "VBUS",
     "layer": "F.Cu",
@@ -202,8 +240,8 @@
     "end": {"x": 119.0, "y": 92.0}
   },
   {
-    "_intent": "APPENDIX: ADDITIONAL OPS REFERENCE - Ground stitching via",
-    "_rule": "Drop stitching vias to connect top and bottom ground planes for low return path inductance",
+    "_stage": "APPENDIX / ADVANCED OPS REFERENCE",
+    "_usage_guide": "Use via.add to drop stitching vias connecting top and bottom ground planes for low return-path inductance.",
     "op": "via.add",
     "net": "GND",
     "x": 135.0,
@@ -214,23 +252,23 @@
     "bottom_layer": "B.Cu"
   },
   {
-    "_intent": "APPENDIX: ADDITIONAL OPS REFERENCE - Dynamic track widening",
-    "_rule": "Adjust track width by UUID without redrawing start and end points",
+    "_stage": "APPENDIX / ADVANCED OPS REFERENCE",
+    "_usage_guide": "Use track.set_width to dynamically adjust trace width by UUID without redrawing coordinates.",
     "op": "track.set_width",
-    "uuid": "<track-uuid>",
+    "uuid": "<track-uuid-from-state>",
     "width": 1.0
   },
   {
-    "_intent": "APPENDIX: ADDITIONAL OPS REFERENCE - Unroute specific net",
-    "_rule": "Delete all routed tracks for a single net before re-routing",
+    "_stage": "APPENDIX / ADVANCED OPS REFERENCE",
+    "_usage_guide": "Use net.delete_routing to clear routed copper traces for a specific net before rerouting.",
     "op": "net.delete_routing",
     "net": "GND",
     "layers": ["F.Cu", "B.Cu"]
   },
   {
-    "_intent": "APPENDIX: ADDITIONAL OPS REFERENCE - Delete item by UUID",
-    "_rule": "Targeted deletion of any single track, via, zone, or drawing by unique UUID",
+    "_stage": "APPENDIX / ADVANCED OPS REFERENCE",
+    "_usage_guide": "Use item.delete for targeted deletion of any specific track, via, zone, or drawing by its unique UUID.",
     "op": "item.delete",
-    "uuid": "<item-uuid>"
+    "uuid": "<item-uuid-from-state>"
   }
 ]
