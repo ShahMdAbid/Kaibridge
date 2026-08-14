@@ -164,110 +164,118 @@ Generated files target KiCad 7 and newer (default KiCad 9; use `--kicad-version`
 4. Agent confirms bridge is alive: `python "<PLUGIN_DIR>\Autoplacer\kicad_agent_bridge.py" --state summary`
     - If `--- KICAD NOT CONNECTED ---` → ask user to open abIDE and retry once.
 
-### 🧠 RULE 6 — Placement → Routing → DRC (Canonical Semantic Architecture Pipeline)
+### 🧠 RULE 6 — Autonomous Placement → Visual Critique → Routing → DRC (The Closed-Loop Vision Protocol)
 
-This is the complete iterative loop from raw F8 import to a beautifully placed, fully routed, DRC-clean board. Follow this flowchart:
+This is the complete closed-loop agentic pipeline from raw F8 import to a production-grade, beautifully placed, fully routed, DRC-clean PCB.
 
 ```mermaid
 graph TD
-    A["1. Get Physical State<br/>--state summary"] --> B["2. AI Semantic Placement<br/>Edges, Thermals, Decoupling"]
-    B --> C["3. Generate ops.json<br/>footprint.place with centre anchor"]
-    C --> D["4. Apply via REST API<br/>--json-ops ops.json --commit"]
-    D -->|Geometry Gate PASS<br/>auto-separation resolved overlaps| E["5. Visual Inspection & SVG<br/>pcb_snapshot.py"]
-    D -->|Geometry Gate FAIL<br/>hard overlap collision| B
-    E -->|User / AI adjustments needed| B
-    E -->|Approved & Route-Ready| F["6. Prep for Route<br/>board.prep_for_route op"]
-    F --> G["7. Route<br/>freerouting_runner.py"]
-    G -->|Routing Success| H["8. DRC Check<br/>board.drc_check op"]
-    G -->|Routing Failure| I{"Diagnose"}
-    I -->|Zero-width netclass| J["Re-run json2sch --apply-netclasses<br/>User: F8 again"]
-    I -->|No board outline| K["Run board.set_size / fit_outline op<br/>(or draw in KiCad UI)"]
-    H -->|DRC Clean (0 violations)| L["9. Final Snapshot<br/>pcb_snapshot.py"]
-    H -->|DRC Violations| M["Fix violations<br/>Loop back to placement/routing"]
-    L --> N["✅ DONE"]
+    A["1. Dynamic Circuit Cognition<br/>Read --state summary / design.json"] --> B["2. AI Semantic Placement<br/>Edges, Thermals, Decoupling, Sizing"]
+    B --> C["3. Generate & Apply ops.json<br/>--json-ops ops.json --commit"]
+    C -->|Geometry Gate PASS| D["4. Visual Snapshot<br/>pcb_snapshot.py (Export SVG)"]
+    C -->|Geometry Gate FAIL| B
+    D --> E["5. Multimodal Visual Self-Critique<br/>Agent inspects SVG: spacing, avenues, loops"]
+    E -->|Refinement Needed| F["Generate Adjustment ops.json<br/>(Nudge passives, widen corridors)"] --> C
+    E -->|Visual Layout Approved| G["6. Prep for Route<br/>board.prep_for_route op"]
+    G --> H["7. Headless Routing<br/>freerouting_runner.py"]
+    H --> I["8. Solid GND Copper Pour<br/>zone.add (F.Cu & B.Cu GND) + zone.refill"]
+    I --> J["9. DRC Verification<br/>board.drc_check op"]
+    J -->|DRC Clean (0 violations)| K["10. Final Visual Snapshot<br/>pcb_snapshot.py"]
+    J -->|DRC Violations| L["Diagnose & Fix via ops.json"] --> G
+    K --> M["✅ DONE (Production Grade A+)"]
 ```
 
-#### Step-by-Step Commands
+#### Step-by-Step Execution Protocol
 
-**Step 1 — Get Board State & Physical Courtyard Dimensions:**
+**Step 1 — Dynamic Circuit Cognition (Zero Hardcoding):**
 ```powershell
 python "<PLUGIN_DIR>\Autoplacer\kicad_agent_bridge.py" --state summary
 ```
-This writes `<PROJECT_DIR>\pcb_brain\ai_context_summary.json`. 
-**Crucial:** Read `state.footprints` to inspect the exact millimeter bounding boxes (`courtyard_mm.w` and `courtyard_mm.h`) of every component before calculating placement coordinates!
+1. Read `<PROJECT_DIR>\pcb_brain\ai_context_summary.json` and `design.json`.
+2. **Dynamically analyze the circuit:** Understand what this specific board does (Microcontroller, Audio Amp, Power Converter, RF, or Sensor) and identify:
+   - External interfaces & Connectors (USB, Barrel Jack, Terminal blocks, Headers).
+   - High-current / Power paths and thermal components (Regulators, FETs, Inductors).
+   - Sensitive signal loops (Oscillators/Crystals, Feedback dividers, Analog inputs).
+   - High-frequency / High-speed digital nets (Bypass caps, D+/D- differential pairs).
 
-**Step 2 — Semantic Layout Architecture (The "Hallmark" Flow):**
-1. **Define Board Bounding Box (Fully Automated):** 
-   - Use `board.set_size` (for fixed dimension enclosures, e.g. 70mm x 45mm) or `board.fit_outline` (to automatically shrinkwrap around components with padding).
-   - Both operations automatically draw clean `Edge.Cuts` rectangular geometry and verify polygon closure with KiCad's geometry engine.
-   - *(Note: In rare cases where a 3rd-party footprint has a stray internal line on the Edge.Cuts layer, the engine safely reports an OpError so you can ask the user to manually draw the outline in the UI as a fallback).*
-   - Top/Bottom edge: Pin headers, terminal blocks (`Conn_01x03`, `Screw_Terminal`).
-   - Left/Right edge: DC Barrel Jack (`J6`), USB ports (orient opening facing outward, e.g. `rotation: 180`).
-3. **Thermal & Mechanical Placement:** 
-   - Linear regulators / power ICs (`LM7805`, `LM317` TO-220): Place along perimeter with heatsink tab facing outward (`rotation: 270`) for airflow/clearance.
-4. **Functional Clustering & Decoupling:**
-   - Place filter/decoupling capacitors (`C1`, `C2`) directly adjacent to IC power/GND pins.
-   - Place feedback/adjust resistors (`R1`, `R3`) directly next to regulator pins.
-   - Place switches (`SW1`) and indicators (`LED + Resistor`) in clear accessible zones.
-5. **Generate `ops.json` in `<PROJECT_DIR>`:**
-   Always follow the complete 16-op schema and spatial layout patterns defined in `<PLUGIN_DIR>\ops_template.json`.
-   Use `{"op": "footprint.place", "anchor": "centre", "ref": "...", "x": ..., "y": ..., "rotation": ...}`.
+**Step 2 — Semantic Layout & Board Outline:**
+1. Determine board outline dimensions: Use `board.set_size` (fixed enclosure) or `board.fit_outline` (shrinkwrap).
+2. Place connectors along board edges with openings oriented outward (e.g. `rotation: 180` or `270`).
+3. Place major ICs in dedicated spatial zones with generous routing corridors ($>3\text{ mm}$ clearance).
+4. Place tight companion passives (decoupling caps, crystal load caps, feedback resistors) directly adjacent to the relevant IC pins ($1-2\text{ mm}$ proximity).
+5. Generate `<PROJECT_DIR>\ops.json` with `{"op": "footprint.place", "anchor": "centre", ...}`.
 
-Example `ops.json` (See `ops_template.json` for all 16 operations):
-```json
-[
-  {"op": "board.set_size", "width": 70.0, "height": 45.0, "origin_x": 105.0, "origin_y": 77.5},
-  {"op": "footprint.place", "anchor": "centre", "ref": "J1", "x": 110.0, "y": 100.0, "rotation": 180},
-  {"op": "footprint.place", "anchor": "centre", "ref": "U1", "x": 136.0, "y": 88.0, "rotation": 270},
-  {"op": "footprint.place", "anchor": "centre", "ref": "C1", "x": 128.0, "y": 90.0, "rotation": 0}
-]
-```
-
-**Step 3 — Apply Ops (with built-in auto-separation):**
+**Step 3 — Apply Ops with In-Memory Geometry Gate:**
 ```powershell
 python "<PLUGIN_DIR>\Autoplacer\kicad_agent_bridge.py" --json-ops ops.json --commit
 ```
+The abIDE Geometry Gate (`gatekeeper.py`) automatically runs `separate()` to resolve any micro-overlaps without crashing KiCad.
 
-> [!IMPORTANT]
-> **Auto-Separation is built in!** When `apply_ops` runs with `--commit`, it automatically executes the abIDE **Geometry Gate** after applying your ops:
-> 1. It runs `placement_report()` to detect any minor overlaps.
-> 2. If overlaps exist, it calls `geometry.separate()` — a relaxation algorithm that nudges unlocked parts apart along the shortest escape vector (like magnets repelling) for up to 80 passes.
-> 3. Parts are clamped inside the board outline boundaries.
-> 4. The result includes `auto_separated: {ref: [new_x, new_y]}` showing what was nudged.
-> 5. Only if `separate()` STILL can't resolve overlaps (e.g., locked parts blocking) does it reject the batch.
->
-> **You do NOT need to write custom overlap detection or separation scripts. The engine handles it.**
-
-**Step 4 — Visual Snapshot & Review:**
+**Step 4 — Visual Snapshot Capture:**
 ```powershell
 python "<PLUGIN_DIR>\Autoplacer\pcb_snapshot.py" "<PROJECT_DIR>"
 ```
-Inspect the generated SVG vector image (`<project>_board.svg`). If the user requests layout adjustments or spacing changes, iterate on `ops.json` coordinates.
+Generates `<project>_board.svg` vector render of the board.
 
-**Step 5 — Prep for Route** (clears old tracks + validates readiness):
-Write an ops.json with:
+**Step 5 — Multimodal Visual Self-Critique & Refinement:**
+The Multimodal AI agent inspects `<project>_board.svg` directly and performs a rigorous visual hardware review:
+- **Routing Corridors:** Are channels between ICs and headers open and uncluttered?
+- **Component Proximity:** Are crystal and decoupling caps tightly hugging their target IC pins?
+- **Orientation & Flow:** Are polarities, pin 1s, and signal flows logically and cleanly oriented?
+- **Thermal & Mechanical:** Do power components have adequate copper clearance and heatsink spacing?
+
+*If the visual critique identifies congestion or suboptimal passive placement, generate an adjustment `ops.json` to nudge those specific parts and re-commit.*
+
+**Step 6 — Prepare for Routing:**
 ```json
 [{"op": "board.prep_for_route"}]
 ```
-This removes ALL existing tracks/vias, runs `placement_report()`, and ensures the board is route-ready (outline closed, zero overlaps, valid netclasses).
+Purges existing stray tracks and markers, verifying outline closure and route readiness.
 
-**Step 6 — Route:**
+**Step 7 — Headless Auto-Routing:**
 ```powershell
 python "<PLUGIN_DIR>\Autoplacer\freerouting_runner.py" "<PROJECT_DIR>"
 ```
-After routing, tell user: **File → Revert to Saved** (Freerouting writes directly to the `.kicad_pcb` file on disk).
+Executes Freerouting with 45° chamfering passes and imports the routed session directly.
 
-**Step 7 — DRC Check:**
+**Step 8 — Solid Ground Copper Pour (F.Cu & B.Cu):**
+Add low-impedance ground planes across the entire board outline to shield EMI and provide clean return paths:
+```json
+[
+  {
+    "op": "zone.add",
+    "net": "GND",
+    "layer": "F.Cu",
+    "priority": 0,
+    "clearance": 0.3,
+    "min_thickness": 0.25,
+    "outline": [{"x": X0, "y": Y0}, {"x": X1, "y": Y0}, {"x": X1, "y": Y1}, {"x": X0, "y": Y1}]
+  },
+  {
+    "op": "zone.add",
+    "net": "GND",
+    "layer": "B.Cu",
+    "priority": 0,
+    "clearance": 0.3,
+    "min_thickness": 0.25,
+    "outline": [{"x": X0, "y": Y0}, {"x": X1, "y": Y0}, {"x": X1, "y": Y1}, {"x": X0, "y": Y1}]
+  },
+  {"op": "zone.refill"}
+]
+```
+
+**Step 9 — DRC Verification:**
 ```json
 [{"op": "board.drc_check"}]
 ```
-This saves the board, runs `kicad-cli pcb drc`, and returns violation count.
+Runs `kicad-cli pcb drc` to verify 0 errors and 0 unrouted nets.
 
-**Step 8 — Snapshot & Visual Review:**
+**Step 10 — Final Production Snapshot:**
 ```powershell
 python "<PLUGIN_DIR>\Autoplacer\pcb_snapshot.py" "<PROJECT_DIR>"
 ```
-This exports an SVG for visual/aesthetic review. If the design looks wrong, adjust ops and loop back.
+Save and present the final board SVG/render artifact to the user.
+
 
 ### 🔮 RULE 7 — Custom `pcbnew` scripting & API Grounding Protocol
 
