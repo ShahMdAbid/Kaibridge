@@ -217,25 +217,36 @@ python "<PLUGIN_DIR>\Autoplacer\pcb_snapshot.py" "<PROJECT_DIR>"
 ```
 Generates `<project>_board.svg` vector render of the board.
 
-**Step 5 — Multimodal Visual Self-Critique & Prompt-Driven Refinement:**
+**Step 5 — Synchronized Multi-Domain Visual Self-Critique & Prompt Refinement:**
 
-The agent views the generated board image/SVG artifact directly and evaluates it against the **Visual Hardware Review Prompt Template**.
+The agent evaluates the board visual render by **synchronizing canonical engineering rules** ([pcb_placement_rules.md](file:///c:/Users/HP/OneDrive/Documents/KiCad/10.0/scripting/plugins/abIDE-main/skillset/pcb_placement_rules.md) and [trackwidth_clearence_viasize.md](file:///c:/Users/HP/OneDrive/Documents/KiCad/10.0/scripting/plugins/abIDE-main/skillset/trackwidth_clearence_viasize.md)) with its **Multimodal Spatial Reasoning Brain**.
 
-##### 📝 Visual Review Prompt & Evaluation Checklist:
-When inspecting the board snapshot, evaluate these 5 visual criteria:
-1. **Routing Corridors (Avenues):** Are there straight, unblocked channels ($\ge 2.5\text{ mm}$ width) between ICs and connectors for bus routing?
-2. **Companion Proximity (Decoupling & Oscillators):** Are decoupling caps ($C_{bypass}$) within $1.5\text{ mm}$ of their target IC power pins? Is the crystal/resonator hugging the oscillator pins with minimal loop area?
-3. **Thermal & Mechanical Spacing:** Are linear regulators, power FETs, or heat sinks spaced at least $3\text{ mm}$ away from heat-sensitive ICs and electrolytic capacitors?
-4. **Connector Ergonomics & Clearance:** Are headers and USB/jack ports facing outward towards board edges with zero physical obstruction?
-5. **Aesthetic Alignment & Symmetry:** Are passive groups (resistor arrays, LED indicators) neatly aligned in rows/columns?
+##### 🌐 Multi-Domain Visual Review Domains:
+Rather than relying on rigid or narrow constraints, the agent dynamically reasons across the board's specific circuit topology (MCU, Power Supply, Audio/Analog, RF, or Sensor) across these core domains:
+
+1. **Signal Flow & Functional Floorplanning:**
+   - Logical left-to-right or perimeter-to-core progression ($Power \rightarrow Regulation \rightarrow Processing \rightarrow Output/IO$).
+   - Are noisy switching circuits/relays physically segregated from sensitive analog or high-gain amplifier sections?
+2. **High-Current & Thermal Paths:**
+   - Are linear regulators, FETs, and power inductors positioned along edges or in clear thermal zones with heatsink/airflow clearance?
+   - Is high-current copper path length minimized from connector to regulators?
+3. **Decoupling & High-Speed Loop Minimization:**
+   - Are high-frequency ceramic bypass capacitors ($0.1\mu\text{F}$) hugging the target IC power/GND pin pairs ($\le 1.5\text{ mm}$ distance)?
+   - Are crystal resonators/oscillators placed directly against oscillator pins with minimal loop area to prevent EMI radiation?
+4. **Routing Avenue & Escape Corridors:**
+   - Are there generous, unobstructed routing channels ($\ge 2.5\text{ mm}$ width) between dense pin arrays, ICs, and headers to avoid routing chokepoints and excessive vias?
+5. **Ergonomics, Enclosure & Symmetry:**
+   - Connectors (USB, Barrel Jacks, Screw Terminals) oriented facing outward towards board edges with zero physical obstruction for mating cables.
+   - Passive component clusters (resistor arrays, LED status banks) neatly aligned for aesthetic symmetry and professional manufacturability.
 
 ##### 📊 Structured Visual Feedback Format:
-The agent MUST output its visual findings in this structured critique table before generating ops:
+The agent MUST output its findings in this structured critique table before executing adjustments:
 
-| Ref | Current Observation | Design Criteria | Severity | Corrective Action | Target Coordinate / Rotation |
+| Ref | Current Visual Observation | Engineering / Skillset Rule Reference | Severity | Corrective Action | Target Coordinate / Rotation |
 |---|---|---|---|---|---|
-| `C1` | Placed 5.2mm away from MCU VDD pin 18 | Decoupling Proximity (<1.5mm) | High | Nudge closer to pin 18 | `x: 132.5, y: 84.0, rot: 90` |
-| `Y1` | Long loop trace between crystal & pins | Crystal Loop Area | Medium | Move directly above pins 7-8 | `x: 125.0, y: 78.0, rot: 0` |
+| `C1` | Placed 5.2mm away from MCU VDD pin | Decoupling Hierarchy (`pcb_placement_rules.md` §2.C) | High | Nudge closer to pin 18 | `x: 132.5, y: 84.0, rot: 90` |
+| `Y1` | Wide loop area between crystal & OSC pins | EMI / Oscillator Loop Area | Medium | Move directly above pins 7-8 | `x: 125.0, y: 78.0, rot: 0` |
+| `U2` | Heatsink tab pointing inward toward MCU | Thermal Dissipation (`pcb_placement_rules.md` §2.B) | High | Rotate 180° so tab faces board edge | `x: 140.0, y: 65.0, rot: 270` |
 | `R1, R2` | Staggered irregularly | Visual Symmetry & Alignment | Low | Align Y coordinate to 92.0mm | `x: 118.0, y: 92.0, rot: 0` |
 
 ##### 🔄 Critique-to-Ops Translation:
@@ -244,11 +255,13 @@ Convert the corrective actions directly into an adjustment `ops.json`:
 [
   {"op": "footprint.place", "anchor": "centre", "ref": "C1", "x": 132.5, "y": 84.0, "rotation": 90},
   {"op": "footprint.place", "anchor": "centre", "ref": "Y1", "x": 125.0, "y": 78.0, "rotation": 0},
+  {"op": "footprint.place", "anchor": "centre", "ref": "U2", "x": 140.0, "y": 65.0, "rotation": 270},
   {"op": "footprint.place", "anchor": "centre", "ref": "R1", "x": 118.0, "y": 92.0, "rotation": 0},
   {"op": "footprint.place", "anchor": "centre", "ref": "R2", "x": 122.0, "y": 92.0, "rotation": 0}
 ]
 ```
-Apply the adjustment via `python Autoplacer/kicad_agent_bridge.py --json-ops ops.json --commit` and proceed once the visual critique score passes.
+Apply the adjustment via `python Autoplacer/kicad_agent_bridge.py --json-ops ops.json --commit` and re-verify.
+
 
 **Step 6 — Prepare for Routing:**
 ```json
