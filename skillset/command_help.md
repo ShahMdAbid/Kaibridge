@@ -44,22 +44,6 @@ python kicad_pins.py <symbol_file> [options]
 
 ---
 
-## 2. PCB Orchestrator
-
-### `abide_pcb.py` (Automated Pipeline)
-This is the most powerful command in the new architecture. It automates the entire Place → Route → Check loop.
-
-**Usage:**
-```bash
-python abide_pcb.py <project_dir> --step {place,route,check,auto} [--commit]
-```
-
-**Options:**
-- `--step auto` : Automates placement, routing (using `freerouting_runner.py`), and DRC checks in one go (default budget: 4 iterations).
-- `--commit` : Applies and saves the changes (otherwise it just runs a dry-run).
-
----
-
 ## 3. Live PCB Bridge (The HTTP REST Bridge)
 
 ### `Autoplacer/kicad_agent_bridge.py` 

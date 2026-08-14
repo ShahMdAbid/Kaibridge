@@ -6,6 +6,7 @@ import socket
 import argparse
 import urllib.request
 import urllib.error
+import base64
 
 sys.stdout.reconfigure(encoding='utf-8')
 
@@ -155,10 +156,9 @@ if __name__ == "__main__":
             parser.error(f"JSON file not found: {args.json_ops}")
         with open(args.json_ops, "r", encoding="utf-8") as f:
             ops_json = f.read()
-        import base64
         ops_b64 = base64.b64encode(ops_json.encode()).decode()
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        reload_stmt = "importlib.reload(currentboardfetcher)\n" if getattr(args, 'reload', False) else ""
+        reload_stmt = "importlib.reload(currentboardfetcher)\n"
         args.code = (
             "import sys, json, base64, importlib\n"
             f"sys.path.insert(0, r'{script_dir}')\n"
@@ -175,7 +175,7 @@ if __name__ == "__main__":
 
     if args.state:
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        reload_stmt = "importlib.reload(currentboardfetcher)\n" if getattr(args, 'reload', False) else ""
+        reload_stmt = "importlib.reload(currentboardfetcher)\n"
         args.code = (
             "import sys, json, importlib\n"
             f"sys.path.insert(0, r'{script_dir}')\n"

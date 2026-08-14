@@ -27,7 +27,6 @@ Before writing ANY custom `pcbnew` Python script, check if the functionality alr
 | `json2sch.py` | `design.json` → `.kicad_sch` schematic files | `python json2sch.py <DIR> --dry-run` |
 | `kicad_lib_init.py` | Initialize project library tables (`sym-lib-table`, `fp-lib-table`) | `python kicad_lib_init.py <DIR> -n abide` |
 | `kicad_pins.py` | Pin extraction, footprint verification, shared `kicad_paths.json` reader | `python kicad_pins.py <SYM> --verify` |
-| `abide_pcb.py` | Orchestrator (place → route → check loop with budget) | `python abide_pcb.py <DIR> --step auto` |
 
 #### `Autoplacer/` Scripts (run via bridge or command line)
 
@@ -198,7 +197,7 @@ This writes `<PROJECT_DIR>\pcb_brain\ai_context_summary.json`.
 **Crucial:** Read `state.footprints` to inspect the exact millimeter bounding boxes (`courtyard_mm.w` and `courtyard_mm.h`) of every component before calculating placement coordinates!
 
 **Step 2 — Semantic Layout Architecture (The "Hallmark" Flow):**
-The AI acts as the **Lead Hardware Architect**:
+The AI acts as the **Lead Hardware Architect** (Refer to `<PLUGIN_DIR>\skillset\pcb_placement_rules.md` for comprehensive placement constraints):
 1. **Define Board Bounding Box:** Decide target dimensions (e.g. Width × Height, centered around board coordinates).
 2. **Boundary Constraints (Connectors):** Place user-facing connectors along outer edges:
    - Top/Bottom edge: Pin headers, terminal blocks (`Conn_01x03`, `Screw_Terminal`).
@@ -302,31 +301,65 @@ graph TD
    - Save to scratch and execute via `python "<PLUGIN_DIR>\Autoplacer\kicad_agent_bridge.py" <script.py>`.
    - Pass `--timeout` generously for heavy operations (zone fills, imports).
 
-### 🔄 RULE 8 — Automated Full Pipeline (shortcut)
+### 🛡️ RULE 8 — Ground Planes, Copper Pour (Zones) & Routing Rules
 
-If you want to skip the manual loop above, use the orchestrator:
+After completing placement and initial routing, or to add low-impedance ground return planes, use built-in zone operations:
 
+#### 1. Adding Ground Copper Pours (`F.Cu` and `B.Cu`):
+Generate an `ops.json` to create polygon copper pour zones and refill them through the live REST bridge:
+```json
+[
+  {
+    "op": "zone.add",
+    "net": "GND",
+    "layer": "F.Cu",
+    "outline": [
+      {"x": 128.0, "y": 54.0},
+      {"x": 176.0, "y": 54.0},
+      {"x": 176.0, "y": 150.0},
+      {"x": 128.0, "y": 150.0}
+    ]
+  },
+  {
+    "op": "zone.add",
+    "net": "GND",
+    "layer": "B.Cu",
+    "outline": [
+      {"x": 128.0, "y": 54.0},
+      {"x": 176.0, "y": 54.0},
+      {"x": 176.0, "y": 150.0},
+      {"x": 128.0, "y": 150.0}
+    ]
+  },
+  {"op": "zone.refill"}
+]
+```
+Apply via:
 ```powershell
-python "<PLUGIN_DIR>\abide_pcb.py" "<PROJECT_DIR>" --step auto
+python "<PLUGIN_DIR>\Autoplacer\kicad_agent_bridge.py" --json-ops ops.json --commit
 ```
 
-This runs the entire Place → Route → Check loop automatically with a budget of 4 iterations.
+> [!CAUTION]
+> **Headless `ZONE_FILLER` Crash Trap (`kimathLogOverflow`):**
+> NEVER run `pcbnew.ZONE_FILLER(board).Fill(board.Zones())` inside a standalone/headless Python process outside KiCad GUI. In KiCad 10, executing zone fills without a live GUI connectivity graph triggers a fatal C++ assertion: `kimathLogOverflow: Overflow converting value to int` which immediately aborts the process and can truncate `.kicad_pcb` to 0 bytes. Always use `zone.add` / `zone.refill` via the REST API bridge (`kicad_agent_bridge.py`), or let the KiCad PCB Editor GUI fill zones natively (pressing **`B`**).
 
-Error handling for `abide_pcb.py`:
-- `OVERLAP` / `OUTSIDE_OUTLINE` → apply the `fix` vector provided in the response.
-- `NETCLASS_ZERO_WIDTH` → rerun `json2sch.py --apply-netclasses` with KiCad closed, then F8.
-- `ROUTER_OOM` / `ROUTER_TIMEOUT` → pass `--heap` or `--timeout` flags, or simplify placement.
+#### 2. Auto-Routing Core Protocols & File Lock Safety:
+- **Prerequisite:** Always ensure `Edge.Cuts` rectangle is closed and drawn before invoking `freerouting_runner.py`.
+- **Preparation:** Always execute `{"op": "board.prep_for_route"}` prior to routing to purge orphaned tracks and validate netclass readiness.
+- **GUI vs File Contention Rule:** While KiCad PCB Editor GUI is open, it holds an active memory copy of the board and a file lock (`~*.kicad_pcb.lck`). Standalone scripts MUST NEVER attempt to directly overwrite `.kicad_pcb` on disk while KiCad is running. All board updates must go through `kicad_agent_bridge.py`.
+- **Post-Route Action:** After Freerouting completes and imports `board.ses`, remind the user to press **File → Revert to Saved** (or press **`B`**) in KiCad PCB Editor to refresh the GUI display with all newly routed tracks.
 
 ### 🚨 RULE 9 — Error recovery (non-negotiable)
 
 1. **Never run the same failing command more than twice.**
 2. If the same error text appears twice, stop. Report the exact command, the exact error, and your best hypothesis. Ask the user.
-3. `--- KICAD NOT CONNECTED ---` has exactly one cause: abIDE is not open. Ask the user to open it and retry **once**. Never search the filesystem, never look for the `.port` file, never restart anything.
+3. `--- KICAD NOT CONNECTED ---` has exactly one cause: abIDE is not open. Ask the user to open it (`Tools > External Plugins > abIDE`) and retry **once**. Never search the filesystem, never look for the `.port` file, never restart anything.
 4. Never "fix" an error by widening scope — no substitute components, no invented pin numbers, no guessed footprints, no synthesized paths.
 5. A non-zero exit code from any script means **nothing downstream may run**.
 6. After any aborted `apply_ops`, treat the board as undefined: rerun `--state summary` before deciding anything. Backups are in `<PROJECT_DIR>\pcb_brain\backups\`.
-7. `SwigPyObject` corruption: If KiCad throws `AttributeError: 'SwigPyObject' object has no attribute...` during a bridge call, it means the user reloaded the PCB (e.g., "Revert to Saved") and broke the internal C++ Python pointer. **Automate the fix:** Use `taskkill /IM kicad.exe /F` to forcefully kill the entire KiCad application and flush the ghost pointer, then politely ask the user to reopen KiCad and the abIDE plugin.
-8. Missing Board Outline: Freerouting strictly requires a closed `Edge.Cuts` polygon to exist. If it is missing, Freerouting will refuse to route outer components, and KiCad will throw a "Board outline is malformed" warning. Never delete the board outline without immediately redrawing it (e.g., a 5mm bounding box) before running Freerouting.
+7. **`SwigPyObject` Corruption & Dangling Pointer:** If KiCad throws `AttributeError: 'SwigPyObject' object has no attribute...` or `RuntimeError: BOARD proxy is corrupt`, it means the user reloaded the PCB (e.g., "Revert to Saved") or an unhandled exception occurred, destroying KiCad's internal C++ board instance while the Python plugin retained a dangling pointer. **Fix:** Use `taskkill /IM kicad.exe /F` to cleanly terminate KiCad, and ask the user to reopen KiCad and abIDE.
+8. **Missing Board Outline:** Freerouting strictly requires a closed `Edge.Cuts` polygon to exist. If it is missing, Freerouting will refuse to route outer components. Never delete the board outline without immediately redrawing it (e.g., a 5mm bounding box) before running Freerouting.
+9. **Zero-Byte File Recovery:** If `.kicad_pcb` ever becomes 0 bytes due to a process crash during disk save, immediately restore the latest working copy from `<PROJECT_DIR>\pcb_brain\backups\` using `Copy-Item`. Never start from scratch.
 
 ### 👁️ RULE 10 — Visual/Aesthetic Feedback Loop
 

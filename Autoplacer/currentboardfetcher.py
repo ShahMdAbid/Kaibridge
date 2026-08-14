@@ -238,7 +238,7 @@ def box_of(fp, pad_margin_mm=0.25):
 
 def board_bounds(board):
     poly = pcbnew.SHAPE_POLY_SET()
-    if not _try(lambda: board.GetBoardPolygonOutlines(poly), False):
+    if not _try(lambda: board.GetBoardPolygonOutlines(poly, True), False):
         return None
     if not poly.OutlineCount():
         return None
@@ -1076,7 +1076,7 @@ def _op_board_set_size(board, idx, op, dry):
         board.Add(seg)
     _try(lambda: board.SetOutlinesChainingEpsilon(from_mm(0.01)))
     poly = pcbnew.SHAPE_POLY_SET()
-    if not _try(lambda: board.GetBoardPolygonOutlines(poly), False) or not poly.OutlineCount():
+    if not _try(lambda: board.GetBoardPolygonOutlines(poly, True), False) or not poly.OutlineCount():
         raise OpError("Edge.Cuts written but KiCad still will not close it. "
                       "Usual cause: a stray Edge.Cuts graphic inside a footprint. "
                       "Open the Edge.Cuts layer in the PCB editor and look.")

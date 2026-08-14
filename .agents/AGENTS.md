@@ -19,3 +19,11 @@ This means a component (often a USB-C connector like HRO_TYPE-C-31) has internal
 
 ### 4. NO FILES IN PLUGIN DIRECTORY (STRICT)
 Under NO circumstances should you create, generate, or save ANY files (like custom python scripts, temporary files, `ops.json`, or text files) inside the main plugin folder (`abIDE-main` or any of its subdirectories). All project-related files (like `ops.json` or `design.json`) MUST be created inside the user's specific `<PROJECT_DIR>` (e.g., the `hotdog` folder). Polluting the plugin's source code tree is strictly forbidden.
+
+### 5. Headless ZONE_FILLER Crash Trap & GUI File Locking
+- **NEVER** invoke `pcbnew.ZONE_FILLER` in standalone/headless Python scripts outside KiCad GUI. In KiCad 10, running zone fill outside a live GUI connectivity graph triggers `kimathLogOverflow` C++ assertion crash, aborting the process and risking 0-byte file truncation.
+- **NEVER** write or overwrite `.kicad_pcb` from standalone background scripts while KiCad PCB Editor GUI has the project open (file lock contention). Always perform board operations (outlines, zones, fills) via `kicad_agent_bridge.py` with `ops.json` on the live in-memory board.
+
+### 6. Zero-Byte File Auto-Recovery
+If `.kicad_pcb` ever becomes 0 bytes due to a crashed process or save interruption, **DO NOT START FROM SCRATCH**. Immediately restore the latest valid board file from `<PROJECT_DIR>/pcb_brain/backups/` using `Copy-Item`.
+

@@ -42,9 +42,17 @@ def run_freerouting(project_dir, jar_path=None, heap_mb=2048, route_timeout=900)
     bridge_path = os.path.join(autoplacer_dir, "kicad_agent_bridge.py")
     plugin_root = os.path.dirname(autoplacer_dir)
     
-    jar_path = jar_path or os.path.join(autoplacer_dir, "freerouting.jar")
-    if not os.path.exists(jar_path):
-        return fail("MISSING_FREEROUTING", f"freerouting.jar not found at {jar_path}")
+    if not jar_path or not os.path.exists(jar_path):
+        candidates = [
+            os.path.join(autoplacer_dir, "freerouting.jar"),
+            os.path.expanduser("~/Downloads/freerouting-2.3.0.jar"),
+            os.path.expanduser("~/Downloads/freerouting-2.2.4.jar"),
+            os.path.expanduser("~/Downloads/freerouting.jar"),
+        ]
+        jar_path = next((c for c in candidates if os.path.exists(c)), None)
+        
+    if not jar_path or not os.path.exists(jar_path):
+        return fail("MISSING_FREEROUTING", f"freerouting.jar not found (checked Autoplacer/ and Downloads/)")
     
     dsn_path = os.path.join(project_dir, "board.dsn")
     ses_path = os.path.join(project_dir, "board.ses")
