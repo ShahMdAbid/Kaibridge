@@ -44,6 +44,8 @@ def run_freerouting(project_dir, jar_path=None, heap_mb=2048, route_timeout=900)
     
     if not jar_path or not os.path.exists(jar_path):
         candidates = [
+            os.path.join(plugin_root, "freerouting-2.3.0.jar"),
+            os.path.join(plugin_root, "freerouting.jar"),
             os.path.join(autoplacer_dir, "freerouting.jar"),
             os.path.expanduser("~/Downloads/freerouting-2.3.0.jar"),
             os.path.expanduser("~/Downloads/freerouting-2.2.4.jar"),
@@ -52,7 +54,7 @@ def run_freerouting(project_dir, jar_path=None, heap_mb=2048, route_timeout=900)
         jar_path = next((c for c in candidates if os.path.exists(c)), None)
         
     if not jar_path or not os.path.exists(jar_path):
-        return fail("MISSING_FREEROUTING", f"freerouting.jar not found (checked Autoplacer/ and Downloads/)")
+        return fail("MISSING_FREEROUTING", f"freerouting.jar not found (checked plugin root, Autoplacer/, and Downloads/)")
     
     dsn_path = os.path.join(project_dir, "board.dsn")
     ses_path = os.path.join(project_dir, "board.ses")
