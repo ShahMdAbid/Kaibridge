@@ -209,14 +209,16 @@ The AI acts as the **Lead Hardware Architect** (Refer to `<PLUGIN_DIR>\skillset\
    - Place feedback/adjust resistors (`R1`, `R3`) directly next to regulator pins.
    - Place switches (`SW1`) and indicators (`LED + Resistor`) in clear accessible zones.
 5. **Generate `ops.json` in `<PROJECT_DIR>`:**
+   Always follow the complete 16-op schema and spatial layout patterns defined in `<PLUGIN_DIR>\ops_template.json`.
    Use `{"op": "footprint.place", "anchor": "centre", "ref": "...", "x": ..., "y": ..., "rotation": ...}`.
 
-Example `ops.json`:
+Example `ops.json` (See `ops_template.json` for all 16 operations):
 ```json
 [
-  {"op": "footprint.place", "anchor": "centre", "ref": "J3", "x": 142.0, "y": 64.0, "rotation": 90},
-  {"op": "footprint.place", "anchor": "centre", "ref": "U2", "x": 141.0, "y": 78.0, "rotation": 270},
-  {"op": "footprint.place", "anchor": "centre", "ref": "C1", "x": 152.0, "y": 83.0, "rotation": 0}
+  {"op": "board.set_size", "width": 70.0, "height": 45.0, "origin_x": 105.0, "origin_y": 77.5},
+  {"op": "footprint.place", "anchor": "centre", "ref": "J1", "x": 110.0, "y": 100.0, "rotation": 180},
+  {"op": "footprint.place", "anchor": "centre", "ref": "U1", "x": 136.0, "y": 88.0, "rotation": 270},
+  {"op": "footprint.place", "anchor": "centre", "ref": "C1", "x": 128.0, "y": 90.0, "rotation": 0}
 ]
 ```
 

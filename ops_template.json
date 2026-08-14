@@ -1,0 +1,236 @@
+[
+  {
+    "_intent": "STAGE 1: BOARD ENVELOPE (Define target PCB boundary: 70mm x 45mm)",
+    "_rule": "Set initial rectangular board outline before placing components",
+    "op": "board.set_size",
+    "width": 70.0,
+    "height": 45.0,
+    "origin_x": 105.0,
+    "origin_y": 77.5
+  },
+
+  {
+    "_intent": "STAGE 2A: CONNECTORS (User-facing USB Port on outer perimeter)",
+    "_rule": "Connector opening MUST face outwards toward board edge (rotation 180 on left edge)",
+    "op": "footprint.place",
+    "ref": "J1",
+    "anchor": "centre",
+    "x": 110.0,
+    "y": 100.0,
+    "rotation": 180,
+    "force": false
+  },
+
+  {
+    "_intent": "STAGE 2B: POWER AND THERMAL (Schottky Diode inline with USB 5V rail)",
+    "_rule": "Place reverse-polarity/rectifier diode immediately downstream of connector",
+    "op": "footprint.place",
+    "ref": "D1",
+    "anchor": "centre",
+    "x": 120.0,
+    "y": 92.0,
+    "rotation": 0
+  },
+  {
+    "_intent": "STAGE 2C: FILTER CAPACITORS (Bulk Input Capacitor for LDO)",
+    "_rule": "Place within 1-3mm of LDO input pin to suppress voltage spikes",
+    "op": "footprint.place",
+    "ref": "C1",
+    "anchor": "centre",
+    "x": 128.0,
+    "y": 90.0,
+    "rotation": 0
+  },
+  {
+    "_intent": "STAGE 2D: LINEAR REGULATOR (Thermal Heatsink Tab Placement)",
+    "_rule": "TO-220/SOT-223 metal tab MUST face outward toward board edge for thermal dissipation",
+    "op": "footprint.place",
+    "ref": "U1",
+    "anchor": "centre",
+    "x": 136.0,
+    "y": 88.0,
+    "rotation": 270
+  },
+  {
+    "_intent": "STAGE 2E: FILTER CAPACITORS (Bulk Output Capacitor for 3V3 Rail)",
+    "_rule": "Place directly adjacent to LDO VOUT pin for low-impedance transient response",
+    "op": "footprint.place",
+    "ref": "C2",
+    "anchor": "centre",
+    "x": 144.0,
+    "y": 90.0,
+    "rotation": 0
+  },
+
+  {
+    "_intent": "STAGE 2F: MICROCONTROLLER CORE (ESP32 RF Module)",
+    "_rule": "PCB trace antenna MUST face board edge with no copper underneath for clear RF transmission",
+    "op": "footprint.place",
+    "ref": "U2",
+    "anchor": "centre",
+    "x": 160.0,
+    "y": 100.0,
+    "rotation": 0
+  },
+
+  {
+    "_intent": "STAGE 2G: PULL-UP RESISTORS (Close Proximity to Target IC Pins)",
+    "_rule": "Keep EN and IO0 strap pull-up resistors adjacent to their respective MCU pads",
+    "op": "footprint.place",
+    "ref": "R1",
+    "anchor": "centre",
+    "x": 147.0,
+    "y": 106.0,
+    "rotation": 90
+  },
+  {
+    "_intent": "STAGE 2G: PULL-UP RESISTORS (Boot Strapping)",
+    "_rule": "Maintain short trace length to minimize parasitic capacitance on high-impedance inputs",
+    "op": "footprint.place",
+    "ref": "R2",
+    "anchor": "centre",
+    "x": 147.0,
+    "y": 112.0,
+    "rotation": 90
+  },
+  {
+    "_intent": "STAGE 2H: USER CONTROLS (Tactile Pushbutton Switch)",
+    "_rule": "Place in accessible perimeter zone clear of tall thermal/electrolytic components",
+    "op": "footprint.place",
+    "ref": "SW1",
+    "anchor": "centre",
+    "x": 125.0,
+    "y": 112.0,
+    "rotation": 0
+  },
+
+  {
+    "_intent": "STAGE 3: GROUND REFERENCE PLANES (Bottom Layer Flood)",
+    "_rule": "Inject polygon copper pour zones on back and front copper layers",
+    "op": "zone.add",
+    "net": "GND",
+    "layer": "B.Cu",
+    "priority": 0,
+    "clearance": 0.3,
+    "min_thickness": 0.25,
+    "outline": [
+      {"x": 105.0, "y": 77.5},
+      {"x": 175.0, "y": 77.5},
+      {"x": 175.0, "y": 122.5},
+      {"x": 105.0, "y": 122.5}
+    ]
+  },
+  {
+    "_intent": "STAGE 3: GROUND REFERENCE PLANES (Top Layer Flood)",
+    "_rule": "Thermal relief connections automatically applied to IC ground pads",
+    "op": "zone.add",
+    "net": "GND",
+    "layer": "F.Cu",
+    "priority": 0,
+    "clearance": 0.3,
+    "min_thickness": 0.25,
+    "outline": [
+      {"x": 105.0, "y": 77.5},
+      {"x": 175.0, "y": 77.5},
+      {"x": 175.0, "y": 122.5},
+      {"x": 105.0, "y": 122.5}
+    ]
+  },
+  {
+    "_intent": "STAGE 3: REFILL COPPER POURS",
+    "_rule": "Refill all zones to compute thermal spokes and copper clearance boundaries",
+    "op": "zone.refill"
+  },
+
+  {
+    "_intent": "STAGE 4: ROUTE PREPARATION AND QUALITY GATE",
+    "_rule": "Purge orphaned traces, verify closed board outline, and check netclass widths",
+    "op": "board.prep_for_route"
+  },
+  {
+    "_intent": "STAGE 5: DESIGN RULE CHECK (DRC)",
+    "_rule": "Run automated kicad-cli DRC gate to guarantee 0 violations before export",
+    "op": "board.drc_check"
+  },
+
+  {
+    "_intent": "APPENDIX: ADDITIONAL OPS REFERENCE - Lock critical parts",
+    "_rule": "Lock connectors or mounting holes so subsequent relaxation passes will not move them",
+    "op": "footprint.lock",
+    "ref": "J1",
+    "locked": true
+  },
+  {
+    "_intent": "APPENDIX: ADDITIONAL OPS REFERENCE - Update component text field",
+    "_rule": "Dynamically update value, MPN, or custom attributes directly in PCB memory",
+    "op": "footprint.set_field",
+    "ref": "U1",
+    "name": "Value",
+    "value": "AMS1117-3.3"
+  },
+  {
+    "_intent": "APPENDIX: ADDITIONAL OPS REFERENCE - Fine-grained manual coordinate move",
+    "_rule": "Nudge footprint relative to anchor or move between top and bottom layers",
+    "op": "footprint.move",
+    "ref": "R1",
+    "x": 147.0,
+    "y": 106.0,
+    "rotation": 90,
+    "layer": "F.Cu"
+  },
+  {
+    "_intent": "APPENDIX: ADDITIONAL OPS REFERENCE - Pure rotation",
+    "_rule": "Rotate footprint in-place without altering X/Y coordinates",
+    "op": "footprint.rotate",
+    "ref": "C1",
+    "rotation": 90
+  },
+  {
+    "_intent": "APPENDIX: ADDITIONAL OPS REFERENCE - Fit board outline dynamically",
+    "_rule": "Automatically shrink-wrap Edge.Cuts rectangle around all placed parts with padding",
+    "op": "board.fit_outline",
+    "margin": 5.0
+  },
+  {
+    "_intent": "APPENDIX: ADDITIONAL OPS REFERENCE - Manual high-current trace",
+    "_rule": "Draw explicit wide power tracks (e.g. 0.8mm width) between specific coordinates",
+    "op": "track.add",
+    "net": "VBUS",
+    "layer": "F.Cu",
+    "width": 0.8,
+    "start": {"x": 112.0, "y": 100.0},
+    "end": {"x": 119.0, "y": 92.0}
+  },
+  {
+    "_intent": "APPENDIX: ADDITIONAL OPS REFERENCE - Ground stitching via",
+    "_rule": "Drop stitching vias to connect top and bottom ground planes for low return path inductance",
+    "op": "via.add",
+    "net": "GND",
+    "x": 135.0,
+    "y": 92.0,
+    "width": 0.8,
+    "drill": 0.4,
+    "top_layer": "F.Cu",
+    "bottom_layer": "B.Cu"
+  },
+  {
+    "_intent": "APPENDIX: ADDITIONAL OPS REFERENCE - Dynamic track widening",
+    "_rule": "Adjust track width by UUID without redrawing start and end points",
+    "op": "track.set_width",
+    "uuid": "<track-uuid>",
+    "width": 1.0
+  },
+  {
+    "_intent": "APPENDIX: ADDITIONAL OPS REFERENCE - Unroute specific net",
+    "_rule": "Delete all routed tracks for a single net before re-routing",
+    "op": "net.delete_routing",
+    "net": "GND",
+    "layers": ["F.Cu", "B.Cu"]
+  },
+  {
+    "_intent": "APPENDIX: ADDITIONAL OPS REFERENCE - Delete item by UUID",
+    "_rule": "Targeted deletion of any single track, via, zone, or drawing by unique UUID",
+    "op": "item.delete",
+    "uuid": "<item-uuid>"
+  }
+]

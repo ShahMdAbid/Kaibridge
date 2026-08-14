@@ -7,9 +7,9 @@ __pycache__/
 *.port
 kicad_paths.json
 Autoplacer/all_functionNameWithDetailedUsecase.py
-pcb_brain/
-ops*.json
-board.dsn
+ops.json
+ops_batch*.json
+!ops_template.json
 board.ses
 *_board.svg
 *.bak
