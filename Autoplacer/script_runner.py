@@ -390,8 +390,10 @@ class ScriptRunnerFrame(wx.Frame):
             with open(pcbnew_path, 'r', encoding='utf-8') as f:
                 file_content = f.read()
             lines = [l.strip() for l in input_text.split('\n') if l.strip()]
-            output_text = ""
-            from oracle import get_kicad_signature
+            try:
+                from legacyboardengine.oracle import get_kicad_signature
+            except ImportError:
+                from .legacyboardengine.oracle import get_kicad_signature
             for line in lines:
                 parts = line.split(' ')
                 if len(parts) >= 2:

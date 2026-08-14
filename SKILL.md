@@ -35,7 +35,7 @@ Before writing ANY custom `pcbnew` Python script, check if the functionality alr
 | `kicad_agent_bridge.py` | CLI ↔ KiCad HTTP bridge. All agent-to-KiCad communication goes through this. | `python bridge.py <script.py>` or `--state summary` or `--oracle "CLASS METHOD"` or `--json-ops <file>` |
 | `boardmanager.py` | **THE board state engine & manager.** Powered by modular `board_engine/`. State extraction, 16 built-in ops, snapshots, diffs, overlap detection, geometry gate, backup/restore. Called internally by bridge `--state` and `--json-ops`. | Never run directly. Used via `--state summary` or `--json-ops`. |
 | `freerouting_runner.py` | DSN export → Freerouting autorouter → SES import back into `.kicad_pcb`. Includes `audit_dsn()` to catch zero-width netclass rules before routing. | `python freerouting_runner.py <DIR>` |
-| `oracle.py` | Live SWIG signature lookup engine. Searches `pcbnew.py` source for exact method definitions. | Called via `bridge.py --oracle "CLASS METHOD"` |
+| `legacyboardengine/oracle.py` | Live SWIG signature lookup engine (Archived Phase 1 tool). Searches `pcbnew.py` source for exact method definitions. | Called via `bridge.py --oracle "CLASS METHOD"` |
 | `pcb_snapshot.py` | Force-save the live board to disk + SVG export via `kicad-cli`. | `python pcb_snapshot.py <DIR>` |
 
 #### `abide/` Package (imported by other scripts, never run directly)
@@ -274,7 +274,7 @@ This exports an SVG for visual/aesthetic review. If the design looks wrong, adju
 
 ```mermaid
 graph TD
-    A["Need to use a pcbnew method on Class C (e.g. BOARD, FOOTPRINT)"] --> B["Step 1: Cheap Existence Check<br/>Search all_functionName.md or kicad10_api_map.md"]
+    A["Need to use a pcbnew method on Class C (e.g. BOARD, FOOTPRINT)"] --> B["Step 1: Cheap Existence Check<br/>Search legacyboardengine/all_functionName.md or kicad10_api_map.md"]
     B -->|Candidate method M found| C["Step 2: Live Oracle Query<br/>Run --oracle 'C M'"]
     B -->|Not found in map| D["Search map for keywords to find candidate M"] --> C
     C -->|Oracle Output: EXACT SWIG OUTPUT| E["Step 3: Code Generation<br/>Use EXACT method signature returned by Oracle"]
@@ -285,7 +285,7 @@ graph TD
 #### 📜 Step-by-Step Protocol
 
 1. **Step 1 — Existence & Candidate Lookup (What to ask):**
-   - Search `<PLUGIN_DIR>\Autoplacer\all_functionName.md` or `<PLUGIN_DIR>\kicad10_api_map.md` using `grep_search`.
+   - Search `<PLUGIN_DIR>\Autoplacer\legacyboardengine\all_functionName.md` or `<PLUGIN_DIR>\Autoplacer\legacyboardengine\kicad10_api_map.md` using `grep_search`.
    - Identify the target class (`BOARD`, `FOOTPRINT`, `PAD`, `PCB_SHAPE`, etc.) and candidate method name `M`.
 2. **Step 2 — Live Oracle Grounding (Asking Oracle):**
    - Query the Oracle against the running KiCad instance:
