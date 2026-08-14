@@ -181,7 +181,7 @@ graph TD
     G -->|Routing Success| H["8. DRC Check<br/>board.drc_check op"]
     G -->|Routing Failure| I{"Diagnose"}
     I -->|Zero-width netclass| J["Re-run json2sch --apply-netclasses<br/>User: F8 again"]
-    I -->|No board outline| K["Draw Edge.Cuts in KiCad & save"]
+    I -->|No board outline| K["Run board.set_size / fit_outline op<br/>(or draw in KiCad UI)"]
     H -->|DRC Clean (0 violations)| L["9. Final Snapshot<br/>pcb_snapshot.py"]
     H -->|DRC Violations| M["Fix violations<br/>Loop back to placement/routing"]
     L --> N["✅ DONE"]
