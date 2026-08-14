@@ -148,7 +148,7 @@ if __name__ == "__main__":
                               "--keep-state: can be combined with any call, or used alone "
                               "with no other arguments to just reset and run nothing.")
     parser.add_argument("--reload", action="store_true",
-                         help="Reload currentboardfetcher module (for development only)")
+                         help="Reload boardmanager module (for development only)")
     args = parser.parse_args()
     
     if args.json_ops:
@@ -158,13 +158,13 @@ if __name__ == "__main__":
             ops_json = f.read()
         ops_b64 = base64.b64encode(ops_json.encode()).decode()
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        reload_stmt = "importlib.reload(currentboardfetcher)\n"
+        reload_stmt = "importlib.reload(boardmanager)\n"
         args.code = (
             "import sys, json, base64, importlib\n"
             f"sys.path.insert(0, r'{script_dir}')\n"
-            "import currentboardfetcher\n"
+            "import boardmanager\n"
             f"{reload_stmt}"
-            "from currentboardfetcher import apply_ops\n"
+            "from boardmanager import apply_ops\n"
             f"ops = json.loads(base64.b64decode('{ops_b64}').decode())\n"
             f"result = apply_ops(ops, dry_run={not getattr(args, 'commit', False)}, save={getattr(args, 'commit', False)}, refill=False, verify=False)\n"
             "print('\\nABIDE_RESULT ' + json.dumps(result))\n"
@@ -175,13 +175,13 @@ if __name__ == "__main__":
 
     if args.state:
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        reload_stmt = "importlib.reload(currentboardfetcher)\n"
+        reload_stmt = "importlib.reload(boardmanager)\n"
         args.code = (
             "import sys, json, importlib\n"
             f"sys.path.insert(0, r'{script_dir}')\n"
-            "import currentboardfetcher\n"
+            "import boardmanager\n"
             f"{reload_stmt}"
-            f"currentboardfetcher.ai_context(mode='{args.state}')\n"
+            f"boardmanager.ai_context(mode='{args.state}')\n"
         )
         args.timeout = max(args.timeout, 120.0)
 

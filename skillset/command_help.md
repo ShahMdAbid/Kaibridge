@@ -91,4 +91,4 @@ python Autoplacer/pcb_snapshot.py <project_dir>
 ```
 
 ---
-*(Note: There is a highly critical engine file named `currentboardfetcher.py` that serves as the backend for `--state` and `--json-ops`. However, it does not need to be called directly from the terminal; it is automatically invoked by the bridge file.)*
+*(Note: There is a highly critical engine file named `boardmanager.py` (backed by `board_engine/`) that serves as the backend for `--state` and `--json-ops`. However, it does not need to be called directly from the terminal; it is automatically invoked by the bridge file.)*

@@ -33,7 +33,7 @@ Before writing ANY custom `pcbnew` Python script, check if the functionality alr
 | File | Purpose | Invocation |
 |---|---|---|
 | `kicad_agent_bridge.py` | CLI ↔ KiCad HTTP bridge. All agent-to-KiCad communication goes through this. | `python bridge.py <script.py>` or `--state summary` or `--oracle "CLASS METHOD"` or `--json-ops <file>` |
-| `currentboardfetcher.py` | **THE board state engine (1400 lines).** State extraction, 16 built-in ops, snapshots, diffs, overlap detection, geometry gate, backup/restore. Called internally by bridge `--state` and `--json-ops`. | Never run directly. Used via `--state summary` or `--json-ops`. |
+| `boardmanager.py` | **THE board state engine & manager.** Powered by modular `board_engine/`. State extraction, 16 built-in ops, snapshots, diffs, overlap detection, geometry gate, backup/restore. Called internally by bridge `--state` and `--json-ops`. | Never run directly. Used via `--state summary` or `--json-ops`. |
 | `freerouting_runner.py` | DSN export → Freerouting autorouter → SES import back into `.kicad_pcb`. Includes `audit_dsn()` to catch zero-width netclass rules before routing. | `python freerouting_runner.py <DIR>` |
 | `oracle.py` | Live SWIG signature lookup engine. Searches `pcbnew.py` source for exact method definitions. | Called via `bridge.py --oracle "CLASS METHOD"` |
 | `pcb_snapshot.py` | Force-save the live board to disk + SVG export via `kicad-cli`. | `python pcb_snapshot.py <DIR>` |
@@ -50,7 +50,7 @@ Before writing ANY custom `pcbnew` Python script, check if the functionality alr
 | `geometry.py` | **Single source of truth for overlap detection.** `Box`, `mtv()`, `find_overlaps()`, `separate()`. |
 | `paths.py` | Reads `kicad_paths.json`, finds `kicad-cli` path. |
 
-#### `currentboardfetcher.py` Built-in Ops (use via `--json-ops`)
+#### `boardmanager.py` (board_engine) Built-in Ops (use via `--json-ops`)
 
 These 16 operations handle backup, validation, geometry gating, and verification automatically. **Always prefer these over raw `pcbnew` scripts:**
 
@@ -389,7 +389,7 @@ When placing PCB components in the `abIDE` pipeline, you **MUST** strictly adher
 
 1. **The Problem:** LLMs alone cannot do sub-millimeter bounding-box collision detection without geometry tools.
 2. **The Architect (AI Agent + Vision):** The AI acts as the Lead Hardware Architect. It reads exact component courtyards from `--state summary`, applies engineering rules (connector edges, heatsink airflow, decoupling proximity), and generates semantic placement operations (`ops.json`).
-3. **The Mason (abIDE Geometry Gate & Solver):** The Python bridge engine (`currentboardfetcher.py` + `geometry.py`) acts as the deterministic spatial solver. During `--commit`, it automatically executes physics relaxation (`geometry.separate()`) across up to 80 passes to nudge components into perfectly legal, zero-overlap positions.
+3. **The Mason (abIDE Geometry Gate & Solver):** The Python bridge engine (`boardmanager.py` + `geometry.py`) acts as the deterministic spatial solver. During `--commit`, it automatically executes physics relaxation (`geometry.separate()`) across up to 80 passes to nudge components into perfectly legal, zero-overlap positions.
 4. **Visual Inspection:** The AI inspects the generated SVG snapshot (`pcb_snapshot.py`), allowing seamless human/AI visual feedback loops.
 
 **Core Directive:** The AI provides the *Hardware Architecture & Intent*. The Geometry Gate does the *Micro-Separation Math*.

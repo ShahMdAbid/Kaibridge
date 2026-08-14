@@ -69,7 +69,7 @@ def run_freerouting(project_dir, jar_path=None, heap_mb=2048, route_timeout=900)
     # 0. Prep for route
     prep_code = (
         "import pcbnew, json, sys\n"
-        "from currentboardfetcher import apply_ops\n"
+        "from boardmanager import apply_ops\n"
         "res = apply_ops([{'op': 'board.prep_for_route'}], dry_run=False, save=True, refill=False, verify=False)\n"
         "if res.get('failed'):\n"
         "    print(json.dumps({'PREP_FAILED': True, 'problems': res.get('problems') or res.get('failed')}))\n"
