@@ -2,19 +2,100 @@
 
 **abIDE** is an end to end KiCad plugin designed to provide autonomous AI agents with the ability to architect pcb from prompt, visually evaluate, and route within the native KiCad environment, operating alongside a human engineer.
 
+## Architecture
+
+
+```text
+                         ┌──────────────────────────┐
+                         │      External AI Agent   │
+                         │                          │
+                         └────────────┬─────────────┘
+                                      │
+                         Design Intent / Agent Actions
+                                      │
+                    ┌─────────────────▼─────────────────┐
+                    │         Agent Protocol            │
+                    │                                   │
+                    │  design.json     ops.json         │
+                    │  state queries   checkpoints      │
+                    └───────────────┬───────────────────┘
+                                    │
+                    ┌───────────────┴────────────────┐
+                    │                                │
+                    ▼                                ▼
+        ┌──────────────────────┐        ┌────────────────────────┐
+        │  Schematic Compiler  │        │   KiCad Agent Bridge   │
+        │                      │        │                        │
+        │ • component resolve  │        │ External agent ↔ KiCad │
+        │ • pin verification   │        │ communication layer    │
+        │ • placement          │        └───────────┬────────────┘
+        │ • .kicad_sch output  │                    │
+        └──────────┬───────────┘                    ▼
+                   │                     ┌────────────────────────┐
+                   ▼                     │      Board Engine      │
+             Native KiCad                │                        │
+              Schematic                  │ • atomic board ops     │
+                                         │ • UUID resolution      │
+                                         │ • unit conversion      │
+                                         │ • object manipulation  │
+                                         └───────────┬────────────┘
+                                                     │
+                         ┌───────────────────────────┼───────────────────────────┐
+                         │                           │                           │
+                         ▼                           ▼                           ▼
+                 ┌───────────────┐           ┌───────────────┐           ┌───────────────┐
+                 │  Enforcement  │           │  Persistence  │           │  Observation  │
+                 ├───────────────┤           ├───────────────┤           ├───────────────┤
+                 │ Geometry Gate │           │ Backup / Diff │           │ State Extract │
+                 │               │           │               │           │               │
+                 │ • collisions  │           │ • snapshots   │           │ • board state │
+                 │ • boundaries  │           │ • rollback    │           │ • comparison  │
+                 │ • route-ready │           │ • comparison  │           │ • nets/tracks │
+                 └───────┬───────┘           └───────┬───────┘           └───────┬───────┘
+                         │                           │                           │
+                         └───────────────────────────┼───────────────────────────┘
+                                                     ▼
+                                            ┌─────────────────┐
+                                            │      KiCad      │
+                                            │                 │
+                                            │ Schematic / PCB │
+                                            └────────┬────────┘
+                                                     │
+                         ┌───────────────────────────┼───────────────────────────┐
+                         ▼                           ▼                           ▼
+                  ┌────────────┐              ┌────────────┐              ┌────────────┐
+                  │ SVG / View │              │    DRC     │              │ Board State│
+                  │  Snapshot  │              │ Validation │              │  / Report  │
+                  └──────┬─────┘              └──────┬─────┘              └──────┬─────┘
+                         │                           │                           │
+                         └───────────────────────────┼───────────────────────────┘
+                                                     ▼
+                                           ┌────────────────────┐
+                                           │ Agent Re-evaluates │
+                                           │                    │
+                                           │ observe → reason → │
+                                           │ modify → validate  │
+                                           └─────────┬──────────┘
+                                                     │
+                                                     └───────► iteration
+```
+
+
 ## Core Capabilities
 * **Hierarchical Schematic Compilation:** Converts prompts > abstract JSON design intent > native, multi-sheet `.kicad_sch` files, complete with automated LCSC/EasyEDA footprint fetching and hierarchical sub-page routing.
-* **Comprehensive PCB Automation:** Exposes 16 atomic operations via a local HTTP server, allowing real-time manipulation without locking files or restarting KiCad.
-  * *(Note: The original Phase 1 `oracle.py` approach—which relied on live C++ SWIG function introspection to prevent AI hallucination—has been deprecated due to severe memory corruption and `SwigPyObject` dangling pointers when the KiCad GUI state changes. It is archived in the `legacyboardengine/` directory.)*
+* **Comprehensive PCB Automation:** Exposes 14 atomic operations via a local HTTP server, allowing real-time manipulation without locking files or restarting KiCad.
+  * *(Note: An earlier SWIG-based API introspection layer was deprecated after instability under changing KiCad GUI state; the current architecture uses explicit operation contracts instead. See `legacyboardengine/` for the archived implementation.)*
 * **AI Visual Thinking:** Automatically renders SVG snapshots of the live layout, allowing multimodal AI agents to visually critique component placement (e.g., decoupling proximity, signal flow) and iteratively refine the board.
 * **Strict Human-in-the-Loop:** Halts autonomous execution at major checkpoints (Schematic Generation $\rightarrow$ Placement $\rightarrow$ Routing). Engineers can visually review the board in the KiCad GUI and provide explicit overrides before the agent proceeds.
 * **Physics-Guided Relaxation:** Incorporates a Separating Axis Theorem collision solver to automatically resolve micro-collisions and enforce strict physical tolerances.
 
 
-
 ## Quick Start
 
 ### 1. Installation
+
+**Compatibility Note:** The abIDE PCB automation plugin and bridge are exclusively for **KiCad 10** (due to Python PCB API changes). The standalone schematic generator (`json2sch.py`) can optionally target KiCad 7+ via CLI flags.
+
 Clone this repository into your KiCad 10 scripting plugins directory.
 
 ### 2. Configuration

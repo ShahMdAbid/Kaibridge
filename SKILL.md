@@ -52,7 +52,7 @@ Before writing ANY custom `pcbnew` Python script, check if the functionality alr
 
 #### `boardmanager.py` (board_engine) Built-in Ops (use via `--json-ops`)
 
-These 16 operations handle backup, validation, geometry gating, and verification automatically. **Always prefer these over raw `pcbnew` scripts:**
+These 14 operations handle backup, validation, geometry gating, and verification automatically. **Always prefer these over raw `pcbnew` scripts:**
 
 ```
 footprint.place    footprint.move     footprint.rotate   footprint.lock
@@ -158,6 +158,8 @@ Generated outputs:
 
 Generated files target KiCad 7 and newer (default KiCad 9; use `--kicad-version` flag to override).
 
+*(Note: While the schematic generator supports targeting KiCad 7+, the abIDE PCB plugin and bridge itself requires KiCad 10.)*
+
 ### 🔧 RULE 5 — Schematic → PCB (Human Handoff)
 
 1. 🧍 **HUMAN**: open the project in KiCad. Tools → Annotate (keep existing) → ERC.
@@ -169,36 +171,11 @@ Generated files target KiCad 7 and newer (default KiCad 9; use `--kicad-version`
 
 ### 🧠 RULE 6 — Autonomous Placement → Visual Critique → Routing → DRC (The Closed-Loop Vision Protocol)
 
-**The Core Architecture (Vision-Guided Semantic Placer):**
-To solve the problem of LLMs lacking sub-millimeter geometry awareness, you **MUST** strictly act as the **Lead Hardware Architect**. You provide the *Spatial Intent* via `ops.json`, and the abIDE Geometry Gate (`boardmanager.py` + `geometry.py`) acts as the deterministic *Mason* to perform micro-separation physics relaxation (`geometry.separate()`). The AI dictates *what* goes where; the Geometry Gate handles the *exact math*.
-
-> [!IMPORTANT]
-> **Skillset Loading (MANDATORY):** Before making ANY engineering decisions regarding component placement, trace widths, clearances, or CLI commands, you MUST consult the canonical rules inside the `<PLUGIN_DIR>\skillset\` directory (e.g., `pcb_placement_rules.md`, `trackwidth_clearence_viasize.md`, `command_help.md`). Do not rely on generic KiCad knowledge.
-
-
-This is the complete closed-loop agentic pipeline from raw F8 import to a production-grade, beautifully placed, fully routed, DRC-clean PCB.
-
-```mermaid
-graph TD
-    A["1. Dynamic Circuit Cognition<br/>Read --state summary / design.json"] --> B["2. AI Vision-Driven Plan<br/>Multimodal critique sense & spatial architecture"]
-    B --> H0["🧍 Human Alignment Checkpoint:<br/>Confirm Design & Placement Intent"]
-    H0 -->|User Directives (Top Priority)| B2["Adopt User's Symmetry / Directives"] --> C["3. Generate & Apply ops.json<br/>--json-ops ops.json --commit"]
-    H0 -->|Approved Default Plan| C
-    C -->|Geometry Gate PASS| D["4. Visual Snapshot<br/>pcb_snapshot.py (Export SVG)"]
-    C -->|Geometry Gate FAIL| B2
-    D --> E["5. Multimodal Spatial Critique<br/>Agent inspects SVG: spacing, corridors, symmetry"]
-    E --> H1["🧍 Human Checkpoint 1:<br/>Placement Approval"]
-    H1 -->|Approved (YES)| G["6. Prep for Route<br/>board.prep_for_route op"]
-    H1 -->|Feedback / Re-alignment (NO)| F["Analyze SVG with AI Critique Brain + User Input<br/>Generate Adjustment ops.json"] --> C
-    G --> H["7. Headless Routing<br/>freerouting_runner.py"]
-    H --> H2["🧍 Human Checkpoint 2:<br/>Routing Approval"]
-    H2 -->|Approved (YES)| I["8. Solid GND Copper Pour<br/>zone.add (F.Cu & B.Cu GND)"]
-    H2 -->|Feedback / Re-route (NO)| G
-    I --> J["9. DRC Verification<br/>board.drc_check op"]
-    J -->|DRC Clean (0 violations)| K["10. Final Visual Snapshot<br/>pcb_snapshot.py"]
-    J -->|DRC Violations| L["Diagnose & Fix via ops.json"] --> G
-    K --> M["✅ DONE (Production Grade A+)"]
-```
+**Placement principle:**
+The agent provides spatial intent through `ops.json`.
+Never assume the LLM's coordinates are geometrically valid.
+All placement must pass the Geometry Gate.
+(See `docs/architecture/agentic-placement.md` for the full conceptual architecture).
 
 #### Step-by-Step Execution Protocol
 
@@ -241,25 +218,7 @@ Generates `<project>_board.svg` vector render of the physical board.
 
 ##### 🧠 Spatial Critique Framework (Used during Step 5):
 
-The agent evaluates the board visual render by **synchronizing canonical engineering rules** ([pcb_placement_rules.md](file:///c:/Users/HP/OneDrive/Documents/KiCad/10.0/scripting/plugins/abIDE-main/skillset/pcb_placement_rules.md) and [trackwidth_clearence_viasize.md](file:///c:/Users/HP/OneDrive/Documents/KiCad/10.0/scripting/plugins/abIDE-main/skillset/trackwidth_clearence_viasize.md)) with its **Multimodal Spatial Reasoning Brain**.
-
-###### 🌐 Multi-Domain Visual Review Domains:
-Rather than relying on rigid or narrow constraints, the agent dynamically reasons across the board's specific circuit topology (MCU, Power Supply, Audio/Analog, RF, or Sensor) across these core domains:
-
-1. **Signal Flow & Functional Floorplanning:**
-   - Logical left-to-right or perimeter-to-core progression ($Power \rightarrow Regulation \rightarrow Processing \rightarrow Output/IO$).
-   - Are noisy switching circuits/relays physically segregated from sensitive analog or high-gain amplifier sections?
-2. **High-Current & Thermal Paths:**
-   - Are linear regulators, FETs, and power inductors positioned along edges or in clear thermal zones with heatsink/airflow clearance?
-   - Is high-current copper path length minimized from connector to regulators?
-3. **Decoupling & High-Speed Loop Minimization:**
-   - Are high-frequency ceramic bypass capacitors ($0.1\mu\text{F}$) hugging the target IC power/GND pin pairs ($\le 1.5\text{ mm}$ distance)?
-   - Are crystal resonators/oscillators placed directly against oscillator pins with minimal loop area to prevent EMI radiation?
-4. **Routing Avenue & Escape Corridors:**
-   - Are there generous, unobstructed routing channels ($\ge 2.5\text{ mm}$ width) between dense pin arrays, ICs, and headers to avoid routing chokepoints and excessive vias?
-5. **Ergonomics, Enclosure & Symmetry:**
-   - Connectors (USB, Barrel Jacks, Screw Terminals) oriented facing outward towards board edges with zero physical obstruction for mating cables.
-   - Passive component clusters (resistor arrays, LED status banks) neatly aligned for aesthetic symmetry and professional manufacturability.
+The agent evaluates the board visual render by **synchronizing canonical engineering rules** ([pcb_placement_rules.md](skillset/pcb_placement_rules.md) and [trackwidth_clearence_viasize.md](skillset/trackwidth_clearence_viasize.md)) with its **Multimodal Spatial Reasoning Brain**.
 
 ###### 📊 Structured Visual Feedback Format:
 The agent MUST output its findings in this structured critique table before executing adjustments:
@@ -369,17 +328,49 @@ graph TD
 - **GUI vs File Contention Rule:** While KiCad PCB Editor GUI is open, it holds an active memory copy of the board and a file lock (`~*.kicad_pcb.lck`). Standalone scripts MUST NEVER attempt to directly overwrite `.kicad_pcb` on disk while KiCad is running. All board updates must go through `kicad_agent_bridge.py`.
 - **Exception (Freerouting):** `freerouting_runner.py` is the *only* exception to the file-lock rule. Because it overwrites the file directly, you MUST coordinate with the user: instruct them to Save before routing, and use **File → Revert to Saved** immediately after.
 
-### 🚨 RULE 9 — Error recovery (non-negotiable)
+### 🚨 RULE 9 — Failure Recovery
 
-1. **Never run the same failing command more than twice.**
-2. If the same error text appears twice, stop. Report the exact command, the exact error, and your best hypothesis. Ask the user.
-3. `--- KICAD NOT CONNECTED ---` has exactly one cause: abIDE is not open. Ask the user to open it (`Tools > External Plugins > abIDE`) and retry **once**. Never search the filesystem, never look for the `.port` file, never restart anything.
-4. Never "fix" an error by widening scope — no substitute components, no invented pin numbers, no guessed footprints, no synthesized paths.
-5. A non-zero exit code from any script means **nothing downstream may run**.
-6. After any aborted `apply_ops`, treat the board as undefined: rerun `--state summary` before deciding anything. Backups are in `<PROJECT_DIR>\pcb_brain\backups\`.
-7. **`SwigPyObject` Corruption & Dangling Pointer:** If KiCad throws `AttributeError: 'SwigPyObject' object has no attribute...` or `RuntimeError: BOARD proxy is corrupt`, it means the user reloaded the PCB (e.g., "Revert to Saved") or an unhandled exception occurred, destroying KiCad's internal C++ board instance while the Python plugin retained a dangling pointer. **CRITICAL Fix:** Do NOT immediately use `taskkill`! First, politely ask the user to manually save their work (`Ctrl+S`), close KiCad, and reopen it. Only use `taskkill /IM kicad.exe /F` if the user confirms KiCad is completely frozen.
-8. **Missing Board Outline:** Freerouting strictly requires a closed `Edge.Cuts` polygon to exist. If it is missing, Freerouting will refuse to route outer components. Never delete the board outline without immediately redrawing it (e.g., a 5mm bounding box) before running Freerouting.
-9. **Zero-Byte File Recovery Trigger:** If `.kicad_pcb` ever becomes 0 bytes due to a process crash during disk save, immediately restore the latest working copy from `<PROJECT_DIR>\pcb_brain\backups\` using `Copy-Item`. **Trigger:** Always verify the file size using `Get-Item` before heavy `--json-ops` or `--state summary` operations to catch this blindly.
+**If bridge reports KICAD NOT CONNECTED:**
+- ask user to open the abIDE plugin.
+- retry exactly once.
+- do not start another bridge.
+
+**If geometry gate fails:**
+- do not bypass the gate.
+- inspect `placement_report`.
+- generate corrective `ops.json`.
+
+**If DRC fails:**
+- do not declare success.
+- classify violations.
+- correct through supported operations.
+- rerun DRC.
+
+**If component download fails:**
+- retry the same component at most twice.
+- never silently substitute another component.
+
+**If pin verification fails:**
+- do not proceed.
+- do not invent pin mappings.
+- inform the user and stop.
+
+**If `SwigPyObject` corruption occurs:**
+- ask user to manually save (`Ctrl+S`).
+- ask user to close KiCad and reopen.
+- do not use `taskkill` unless user confirms KiCad is frozen.
+
+**If `.kicad_pcb` becomes 0 bytes:**
+- restore latest working copy from `backups/` using `Copy-Item`.
+- never start from scratch.
+
+**If `Edge.Cuts` is missing before Freerouting:**
+- redraw it before running Freerouting.
+
+**If the same error text appears twice:**
+- stop.
+- report the exact command and error.
+- ask the user.
 
 ### 👁️ RULE 10 — Visual/Aesthetic Feedback Loop
 

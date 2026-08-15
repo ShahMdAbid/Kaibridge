@@ -145,47 +145,6 @@
   },
 
   {
-    "_stage": "STAGE 3A: GROUND REFERENCE PLANES (Bottom Layer Flood)",
-    "_intent": "Inject low-impedance GND reference polygon on B.Cu",
-    "_rule": "Zone vertices MUST match or encompass the board boundary corners defined in Stage 1",
-    "op": "zone.add",
-    "net": "GND",
-    "layer": "B.Cu",
-    "priority": 0,
-    "clearance": 0.3,
-    "min_thickness": 0.25,
-    "outline": [
-      {"x": 105.0, "y": 77.5},
-      {"x": 175.0, "y": 77.5},
-      {"x": 175.0, "y": 122.5},
-      {"x": 105.0, "y": 122.5}
-    ]
-  },
-  {
-    "_stage": "STAGE 3B: GROUND REFERENCE PLANES (Top Layer Flood)",
-    "_intent": "Inject top copper GND polygon on F.Cu",
-    "_rule": "Thermal relief spokes are automatically computed for all grounded component pads",
-    "op": "zone.add",
-    "net": "GND",
-    "layer": "F.Cu",
-    "priority": 0,
-    "clearance": 0.3,
-    "min_thickness": 0.25,
-    "outline": [
-      {"x": 105.0, "y": 77.5},
-      {"x": 175.0, "y": 77.5},
-      {"x": 175.0, "y": 122.5},
-      {"x": 105.0, "y": 122.5}
-    ]
-  },
-  {
-    "_stage": "STAGE 3C: ZONE REFILL",
-    "_intent": "Natively compute copper flood geometry and thermal connections",
-    "_rule": "Always call zone.refill after adding or modifying polygon zones",
-    "op": "zone.refill"
-  },
-
-  {
     "_stage": "STAGE 4: ROUTE PREPARATION & QUALITY GATE",
     "_intent": "Purge orphaned traces, verify closed board outline, and check netclass widths",
     "_rule": "Execute board.prep_for_route immediately prior to launching Freerouting autorouter",
