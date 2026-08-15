@@ -12,20 +12,23 @@ This is the complete closed-loop agentic pipeline from raw F8 import to a produc
 graph TD
     A["1. Dynamic Circuit Cognition<br/>Read --state summary / design.json"] --> B["2. AI Vision-Driven Plan<br/>Multimodal critique sense & spatial architecture"]
     B --> H0["🧍 Human Alignment Checkpoint:<br/>Confirm Design & Placement Intent"]
-    H0 -->|User Directives (Top Priority)| B2["Adopt User's Symmetry / Directives"] --> C["3. Generate & Apply ops.json<br/>--json-ops ops.json --commit"]
+    H0 -->|User Directives| B2["Adopt User Symmetry / Directives"]
+    B2 --> C["3. Generate & Apply ops.json<br/>--json-ops ops.json --commit"]
     H0 -->|Approved Default Plan| C
     C -->|Geometry Gate PASS| D["4. Visual Snapshot<br/>pcb_snapshot.py (Export SVG)"]
     C -->|Geometry Gate FAIL| B2
     D --> E["5. Multimodal Spatial Critique<br/>Agent inspects SVG: spacing, corridors, symmetry"]
     E --> H1["🧍 Human Checkpoint 1:<br/>Placement Approval"]
-    H1 -->|Approved (YES)| G["6. Prep for Route<br/>board.prep_for_route op"]
-    H1 -->|Feedback / Re-alignment (NO)| F["Analyze SVG with AI Critique Brain + User Input<br/>Generate Adjustment ops.json"] --> C
+    H1 -->|Approved| G["6. Prep for Route<br/>board.prep_for_route op"]
+    H1 -->|Feedback| F["Analyze SVG with AI Critique Brain + User Input<br/>Generate Adjustment ops.json"]
+    F --> C
     G --> H["7. Headless Routing<br/>freerouting_runner.py"]
     H --> H2["🧍 Human Checkpoint 2:<br/>Routing Approval"]
-    H2 -->|Approved (YES)| I["8. Solid GND Copper Pour<br/>zone.add (F.Cu & B.Cu GND)"]
-    H2 -->|Feedback / Re-route (NO)| G
+    H2 -->|Approved| I["8. Solid GND Copper Pour<br/>zone.add (F.Cu & B.Cu GND)"]
+    H2 -->|Feedback| G
     I --> J["9. DRC Verification<br/>board.drc_check op"]
-    J -->|DRC Clean (0 violations)| K["10. Final Visual Snapshot<br/>pcb_snapshot.py"]
-    J -->|DRC Violations| L["Diagnose & Fix via ops.json"] --> G
+    J -->|DRC Clean| K["10. Final Visual Snapshot<br/>pcb_snapshot.py"]
+    J -->|DRC Violations| L["Diagnose & Fix via ops.json"]
+    L --> G
     K --> M["✅ DONE (Production Grade A+)"]
 ```

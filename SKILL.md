@@ -175,7 +175,7 @@ Generated files target KiCad 7 and newer (default KiCad 9; use `--kicad-version`
 The agent provides spatial intent through `ops.json`.
 Never assume the LLM's coordinates are geometrically valid.
 All placement must pass the Geometry Gate.
-(See `docs/architecture/agentic-placement.md` for the full conceptual architecture).
+(See `.agents/agentic-placement.md` for the full conceptual architecture).
 
 #### Step-by-Step Execution Protocol
 
