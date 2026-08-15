@@ -57,8 +57,8 @@ These 16 operations handle backup, validation, geometry gating, and verification
 ```
 footprint.place    footprint.move     footprint.rotate   footprint.lock
 footprint.set_field track.add         track.set_width    via.add
-item.delete        net.delete_routing zone.refill        zone.add
-board.set_size     board.fit_outline  board.prep_for_route board.drc_check
+item.delete        net.delete_routing board.set_size     board.fit_outline
+board.prep_for_route board.drc_check
 ```
 
 #### ⚠️ Anti-Reinvention Rules (MANDATORY)
@@ -68,7 +68,7 @@ board.set_size     board.fit_outline  board.prep_for_route board.drc_check
 3. **Need to clear tracks?** → `board.prep_for_route` op, NOT a custom `board.Remove(t)` loop.
 4. **Need board outline?** → `board.fit_outline` op, NOT drawing `PCB_SHAPE` manually.
 5. **Need overlap check?** → Read `placement_report.overlaps` from `--state summary`, NOT custom math.
-6. **Need to add a zone?** → `zone.add` op, NOT raw `pcbnew.ZONE()` construction.
+6. **Need to add a zone?** → **STOP.** Do not use `zone.add` or raw scripts. Ground pouring is a manual human task.
 7. **Need to run DRC?** → `board.drc_check` op, NOT a custom `kicad-cli` subprocess.
 
 ### 🛑 RULE 1 — Environment & initialization
@@ -141,11 +141,14 @@ python "<PLUGIN_DIR>\json2sch.py" "<PROJECT_DIR>" --dry-run
 
 Always read the dry-run report: it lists every sheet with its part count, net count and paper size, plus every warning.
 
-Then, with **KiCad closed** (it will overwrite both files on exit otherwise):
+**Automated ERC Verification & Generation (MANDATORY):**
+Then, with **KiCad closed** (it will overwrite files on exit otherwise), you must generate the schematic, apply netclasses, and verify it is electrically sound in one command using the `--erc` flag:
 
 ```powershell
-python "<PLUGIN_DIR>\json2sch.py" "<PROJECT_DIR>" --apply-netclasses
+python "<PLUGIN_DIR>\json2sch.py" "<PROJECT_DIR>" --apply-netclasses --erc
 ```
+
+Read the console output. If you see severe violations (like `[ERROR] Pin not connected (Symbol R11 Pin 1)`), it means you have a typo in your `design.json` net labels. Fix the `design.json` and re-run the command. Only proceed to the human handoff when the schematic is clean.
 
 Generated outputs:
 - `<project>.kicad_sch` — root schematic
@@ -165,6 +168,13 @@ Generated files target KiCad 7 and newer (default KiCad 9; use `--kicad-version`
     - If `--- KICAD NOT CONNECTED ---` → ask user to open abIDE and retry once.
 
 ### 🧠 RULE 6 — Autonomous Placement → Visual Critique → Routing → DRC (The Closed-Loop Vision Protocol)
+
+**The Core Architecture (Vision-Guided Semantic Placer):**
+To solve the problem of LLMs lacking sub-millimeter geometry awareness, you **MUST** strictly act as the **Lead Hardware Architect**. You provide the *Spatial Intent* via `ops.json`, and the abIDE Geometry Gate (`boardmanager.py` + `geometry.py`) acts as the deterministic *Mason* to perform micro-separation physics relaxation (`geometry.separate()`). The AI dictates *what* goes where; the Geometry Gate handles the *exact math*.
+
+> [!IMPORTANT]
+> **Skillset Loading (MANDATORY):** Before making ANY engineering decisions regarding component placement, trace widths, clearances, or CLI commands, you MUST consult the canonical rules inside the `<PLUGIN_DIR>\skillset\` directory (e.g., `pcb_placement_rules.md`, `trackwidth_clearence_viasize.md`, `command_help.md`). Do not rely on generic KiCad knowledge.
+
 
 This is the complete closed-loop agentic pipeline from raw F8 import to a production-grade, beautifully placed, fully routed, DRC-clean PCB.
 
@@ -282,38 +292,22 @@ Apply the adjustment via `python Autoplacer/kicad_agent_bridge.py --json-ops ops
 Purges existing stray tracks and markers, verifying outline closure and route readiness.
 
 
-**Step 7 — Headless Auto-Routing:**
+**Step 7 — Headless Auto-Routing (File-Lock Safe):**
+> [!WARNING]
+> **File-Lock Contention:** `freerouting_runner.py` edits the `.kicad_pcb` file directly on disk. You MUST ask the user to save their board (`Ctrl+S`) before running this command, and Revert to Saved after it finishes.
+
+1. **Ask User:** "Please press `Ctrl+S` to save your board and do not make any edits. I am starting the auto-router."
+2. **Execute:** 
 ```powershell
 python "<PLUGIN_DIR>\Autoplacer\freerouting_runner.py" "<PROJECT_DIR>"
 ```
-Executes Freerouting with 45° chamfering passes and imports the routed session directly.
+3. **Ask User:** "Routing is complete! Please go to **File → Revert to Saved** in KiCad to load the routed tracks."
 
-**Step 8 — Solid Ground Copper Pour (Standard Bounding Box Method):**
-Add low-impedance ground planes across the entire board outline matching the 4 corners of `Edge.Cuts`:
-```json
-[
-  {
-    "op": "zone.add",
-    "net": "GND",
-    "layer": "F.Cu",
-    "priority": 0,
-    "clearance": 0.3,
-    "min_thickness": 0.25,
-    "outline": [{"x": X0, "y": Y0}, {"x": X1, "y": Y0}, {"x": X1, "y": Y1}, {"x": X0, "y": Y1}]
-  },
-  {
-    "op": "zone.add",
-    "net": "GND",
-    "layer": "B.Cu",
-    "priority": 0,
-    "clearance": 0.3,
-    "min_thickness": 0.25,
-    "outline": [{"x": X0, "y": Y0}, {"x": X1, "y": Y0}, {"x": X1, "y": Y1}, {"x": X0, "y": Y1}]
-  }
-]
-```
-> [!IMPORTANT]
-> **Crash-Proof Zone Filling Rule:** `zone.add` cleanly registers the 4-corner zone polygons in the `.kicad_pcb` board. Zone rendering/filling is handled natively by KiCad GUI (press **`B`**) or automatically by `kicad-cli` during Gerber/DRC exports. Python code MUST NEVER invoke `pcbnew.ZONE_FILLER` directly in background threads as KiCad 10's OpenMP thread scheduler crashes on background fills.
+**Step 8 — 🧍 Human Checkpoint (Ground Copper Pour):**
+Ground pouring via JSON is deprecated due to KiCad thread-lock crashes. 
+Instruct the user to manually draw the GND copper zones:
+1. Ask the user: "Please use the 'Add a filled zone' tool in KiCad to draw a GND zone on `F.Cu` and `B.Cu` around the board outline, and press **`B`** to fill them. Save the board (`Ctrl+S`) when done."
+2. Wait for the user to confirm they have filled the zones and saved before proceeding to DRC.
 
 **Step 9 — DRC Verification:**
 ```json
@@ -365,16 +359,15 @@ graph TD
 
 ### 🛡️ RULE 8 — Ground Planes, Copper Pour & Routing Safety
 
-#### 1. Ground Copper Pour Protocol (Standard Bounding Box Method):
-- Define 4-corner bounding box coordinates matching the `Edge.Cuts` rectangle for `F.Cu` and `B.Cu` zones.
-- Use `{"op": "zone.add", "net": "GND", "layer": "...", "outline": [...]}` via `kicad_agent_bridge.py`.
-- **Refill Rule:** Zone rendering is handled natively by KiCad GUI (press **`B`**) or automatically during Gerber/DRC exports. Standalone Python code must never invoke raw C++ `ZONE_FILLER` in background threads.
+#### 1. Ground Copper Pour Protocol (Manual):
+- Ground pouring is a manual human task. NEVER invoke `pcbnew.ZONE_FILLER` or use `zone.add` via JSON.
+- Instruct the user to draw and fill zones natively in KiCad PCB Editor and press **`B`** to refill.
 
 #### 2. Auto-Routing Core Protocols & File Lock Safety:
 - **Prerequisite:** Always ensure `Edge.Cuts` rectangle is closed and drawn before invoking `freerouting_runner.py`.
 - **Preparation:** Always execute `{"op": "board.prep_for_route"}` prior to routing to purge orphaned tracks and validate netclass readiness.
 - **GUI vs File Contention Rule:** While KiCad PCB Editor GUI is open, it holds an active memory copy of the board and a file lock (`~*.kicad_pcb.lck`). Standalone scripts MUST NEVER attempt to directly overwrite `.kicad_pcb` on disk while KiCad is running. All board updates must go through `kicad_agent_bridge.py`.
-- **Post-Route Action:** After Freerouting completes and imports `board.ses`, remind the user to press **File → Revert to Saved** (or press **`B`**) in KiCad PCB Editor to refresh the GUI display with all newly routed tracks.
+- **Exception (Freerouting):** `freerouting_runner.py` is the *only* exception to the file-lock rule. Because it overwrites the file directly, you MUST coordinate with the user: instruct them to Save before routing, and use **File → Revert to Saved** immediately after.
 
 ### 🚨 RULE 9 — Error recovery (non-negotiable)
 
@@ -384,9 +377,9 @@ graph TD
 4. Never "fix" an error by widening scope — no substitute components, no invented pin numbers, no guessed footprints, no synthesized paths.
 5. A non-zero exit code from any script means **nothing downstream may run**.
 6. After any aborted `apply_ops`, treat the board as undefined: rerun `--state summary` before deciding anything. Backups are in `<PROJECT_DIR>\pcb_brain\backups\`.
-7. **`SwigPyObject` Corruption & Dangling Pointer:** If KiCad throws `AttributeError: 'SwigPyObject' object has no attribute...` or `RuntimeError: BOARD proxy is corrupt`, it means the user reloaded the PCB (e.g., "Revert to Saved") or an unhandled exception occurred, destroying KiCad's internal C++ board instance while the Python plugin retained a dangling pointer. **Fix:** Use `taskkill /IM kicad.exe /F` to cleanly terminate KiCad, and ask the user to reopen KiCad and abIDE.
+7. **`SwigPyObject` Corruption & Dangling Pointer:** If KiCad throws `AttributeError: 'SwigPyObject' object has no attribute...` or `RuntimeError: BOARD proxy is corrupt`, it means the user reloaded the PCB (e.g., "Revert to Saved") or an unhandled exception occurred, destroying KiCad's internal C++ board instance while the Python plugin retained a dangling pointer. **CRITICAL Fix:** Do NOT immediately use `taskkill`! First, politely ask the user to manually save their work (`Ctrl+S`), close KiCad, and reopen it. Only use `taskkill /IM kicad.exe /F` if the user confirms KiCad is completely frozen.
 8. **Missing Board Outline:** Freerouting strictly requires a closed `Edge.Cuts` polygon to exist. If it is missing, Freerouting will refuse to route outer components. Never delete the board outline without immediately redrawing it (e.g., a 5mm bounding box) before running Freerouting.
-9. **Zero-Byte File Recovery:** If `.kicad_pcb` ever becomes 0 bytes due to a process crash during disk save, immediately restore the latest working copy from `<PROJECT_DIR>\pcb_brain\backups\` using `Copy-Item`. Never start from scratch.
+9. **Zero-Byte File Recovery Trigger:** If `.kicad_pcb` ever becomes 0 bytes due to a process crash during disk save, immediately restore the latest working copy from `<PROJECT_DIR>\pcb_brain\backups\` using `Copy-Item`. **Trigger:** Always verify the file size using `Get-Item` before heavy `--json-ops` or `--state summary` operations to catch this blindly.
 
 ### 👁️ RULE 10 — Visual/Aesthetic Feedback Loop
 
@@ -407,19 +400,8 @@ graph TD
 | 6 | Open KiCad after automated close | Windows Session 0 isolation hides agent-spawned GUI apps |
 | 7 | **Design Alignment Gate (Checkpoint 0)** | Confirm layout strategy and prioritize user-specific placement / symmetry directives |
 | 8 | **Placement Approval (Checkpoint 1)** | Human engineer validates physical layout, spacing, and connector orientation before triggering router |
-| 9 | **Routing Approval (Checkpoint 2)** | Human engineer inspects trace topologies and layer flow before committing ground copper pour |
+| 9 | **Routing Approval & Ground Pour (Checkpoint 2)** | Human engineer inspects trace topologies and manually draws/fills GND copper zones (automated zone fills crash KiCad's OpenMP thread) |
 
 > [!TIP]
-> **Semi-Automation Rule:** To save the user from the hassle of constantly closing KiCad manually, the agent is authorized and encouraged to automatically force-close KiCad using `taskkill /IM kicad.exe /F` whenever it needs to be closed (e.g., before running `--apply-netclasses` or to clear footprint caches). 
-> The agent must simply inform the user: *"I have closed KiCad. Please open it manually and press F8."*
-
-### 🚀 RULE 11 — The V2 Holy Grail Architecture (Vision-Guided Semantic Placer)
-
-When placing PCB components in the `abIDE` pipeline, you **MUST** strictly adhere to the Hybrid Architecture approach.
-
-1. **The Problem:** LLMs alone cannot do sub-millimeter bounding-box collision detection without geometry tools.
-2. **The Architect (AI Agent + Vision):** The AI acts as the Lead Hardware Architect. It reads exact component courtyards from `--state summary`, applies engineering rules (connector edges, heatsink airflow, decoupling proximity), and generates semantic placement operations (`ops.json`).
-3. **The Mason (abIDE Geometry Gate & Solver):** The Python bridge engine (`boardmanager.py` + `geometry.py`) acts as the deterministic spatial solver. During `--commit`, it automatically executes physics relaxation (`geometry.separate()`) across up to 80 passes to nudge components into perfectly legal, zero-overlap positions.
-4. **Visual Inspection:** The AI inspects the generated SVG snapshot (`pcb_snapshot.py`), allowing seamless human/AI visual feedback loops.
-
-**Core Directive:** The AI provides the *Hardware Architecture & Intent*. The Geometry Gate does the *Micro-Separation Math*.
+> **Semi-Automation Rule (Safe Closing):** To save the user from the hassle of dealing with frozen windows, the agent is authorized to force-close KiCad using `taskkill /IM kicad.exe /F` ONLY if the user explicitly confirms they have saved their work (`Ctrl+S`) or if the application is completely unresponsive. 
+> The agent must always ask first: *"Please save your work. May I close KiCad for you?"*

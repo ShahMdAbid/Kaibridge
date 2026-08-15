@@ -19,6 +19,7 @@ python json2sch.py <project_dir> [design.json] [options]
 - `-o, --out PATH` : Root schematic path (default: `<project>.kicad_sch`).
 - `--dry-run` : Only compile, validate, and report; do not save any files. **Always run `--dry-run` first.**
 - `--apply-netclasses` : Using this saves the track width, clearance, and other rules defined in your JSON file directly into the KiCad `.kicad_pro` file. *(KiCad MUST be completely closed when running this!)*
+- `--erc` : Runs the KiCad Electrical Rules Check (ERC) automatically and prints a summary of missing connections or errors directly to the console.
 - `--no-backup` : Do not create timestamped `.bak` copies.
 - `--kicad-version N` : Format stamp; `20250114` = KiCad 9 (default), `20231120` = KiCad 8.
 

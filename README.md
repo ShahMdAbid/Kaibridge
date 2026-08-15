@@ -4,8 +4,8 @@
 
 ## Core Capabilities
 * **Hierarchical Schematic Compilation:** Converts prompts > abstract JSON design intent > native, multi-sheet `.kicad_sch` files, complete with automated LCSC/EasyEDA footprint fetching and hierarchical sub-page routing.
-* **Comprehensive PCB Automation:** Exposes 16 atomic operations (including `footprint.place`, `zone.add`, and `board.fit_outline`) via a local HTTP server, allowing real-time manipulation without locking files or restarting KiCad.
-* **AI Visual Thinking (Vision Gate):** Automatically renders SVG snapshots of the live layout, allowing multimodal AI agents to visually critique component placement (e.g., decoupling proximity, signal flow) and iteratively refine the board.
+* **Comprehensive PCB Automation:** Exposes 16 atomic operations via a local HTTP server, allowing real-time manipulation without locking files or restarting KiCad.
+* **AI Visual Thinking:** Automatically renders SVG snapshots of the live layout, allowing multimodal AI agents to visually critique component placement (e.g., decoupling proximity, signal flow) and iteratively refine the board.
 * **Strict Human-in-the-Loop:** Halts autonomous execution at major checkpoints (Schematic Generation $\rightarrow$ Placement $\rightarrow$ Routing). Engineers can visually review the board in the KiCad GUI and provide explicit overrides before the agent proceeds.
 * **Physics-Guided Relaxation:** Incorporates a Separating Axis Theorem (SAT) collision solver to automatically resolve micro-collisions and enforce strict physical tolerances.
 

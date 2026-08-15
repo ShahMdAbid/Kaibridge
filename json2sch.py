@@ -3,7 +3,7 @@
 json2sch.py -- design.json -> KiCad hierarchical schematics.
 
   python json2sch.py <PROJECT_DIR> [design.json] [-o board.kicad_sch]
-                     [--dry-run] [--apply-netclasses] [--no-backup]
+                     [--dry-run] [--apply-netclasses] [--erc] [--no-backup]
 
 Sub-sheets are written next to the root file as <sheet_id>.kicad_sch.
 A sidecar <PROJECT_DIR>/abide_build.json records the resolved design metadata.
@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -22,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from schematic_gen import __version__
 from schematic_gen.klib import LibError, LibIndex
 from schematic_gen.model import DesignError, load, sidecar
+from schematic_gen.paths import load_cli
 from schematic_gen.place import plan
 from schematic_gen.render import VERSION, build, existing_uuid, uid, write
 from schematic_gen.sexpr import SexprError
@@ -40,6 +42,57 @@ ALIASES = {"via_dia": "via_diameter", "via_size": "via_diameter",
 def fail(message):
     print(f"Error: {message}", file=sys.stderr)
     return 1
+
+def execute_erc(sch_path: Path, project_dir: Path) -> int:
+    cli = load_cli()
+    if not cli:
+        print("  warning: kicad-cli not found, skipping automated ERC verification.")
+        return 0
+    report_path = project_dir / "erc_report.json"
+    cmd = [str(cli), "sch", "erc", str(sch_path), "--output", str(report_path), "--format", "json"]
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if not report_path.exists():
+            print(f"  warning: ERC report was not generated: {res.stderr}")
+            return 0
+        data = json.loads(report_path.read_text(encoding="utf-8"))
+        sheets = data.get("sheets", [])
+        errors = []
+        warnings = []
+        for s in sheets:
+            sheet_name = s.get("name") or "Root"
+            for v in s.get("violations", []):
+                sev = v.get("severity")
+                desc = v.get("description")
+                t = v.get("type")
+                items = v.get("items", [])
+                item_desc = " <-> ".join([i.get("description", "") for i in items]) if items else ""
+                msg = f"[{t}] {sheet_name}: {desc}"
+                if item_desc:
+                    msg += f" ({item_desc})"
+                
+                if sev == "error":
+                    errors.append(msg)
+                else:
+                    warnings.append(msg)
+        print("\n  === ERC Verification Report ===")
+        print(f"  Total Errors: {len(errors)}, Total Warnings: {len(warnings)}")
+        if errors:
+            print("  ERRORS:")
+            for e in errors[:10]:
+                print(f"    - {e}")
+            if len(errors) > 10:
+                print(f"    ... and {len(errors) - 10} more errors.")
+            print(f"  Saved detailed report to: {report_path.name}")
+            return len(errors)
+        else:
+            print("  Status: PASSED (0 Errors)")
+            if warnings:
+                print(f"  (Found {len(warnings)} warning(s); see {report_path.name})")
+            return 0
+    except Exception as e:
+        print(f"  warning: failed to run ERC: {e}")
+        return 0
 
 def detect_project(project_dir):
     """(name, .kicad_pro path, default root .kicad_sch path)."""
@@ -137,6 +190,8 @@ def main(argv=None):
                     help="compile and report, write nothing")
     ap.add_argument("--apply-netclasses", action="store_true",
                     help="also write netclasses into the .kicad_pro")
+    ap.add_argument("--erc", action="store_true",
+                    help="run KiCad ERC check automatically and output report")
     ap.add_argument("--no-backup", action="store_true",
                     help="do not keep .bak copies of replaced files")
     ap.add_argument("--kicad-version", type=int, default=VERSION,
@@ -195,6 +250,8 @@ def main(argv=None):
         notes += apply_netclasses(pro_path, design,
                                   backup=not args.no_backup)
     report(design, files, results, orphans, notes)
+    if args.erc:
+        execute_erc(out_path, project_dir)
     print("  next: open the project in KiCad, then Tools -> Update PCB from "
           "Schematic (F8)")
     return 0
