@@ -20,9 +20,11 @@ Or `AttributeError: 'SwigPyObject' object has no attribute...`
 ### 4. NO FILES IN PLUGIN DIRECTORY (STRICT)
 Under NO circumstances should you create, generate, or save ANY files (like custom python scripts, temporary files, `ops.json`, or text files) inside the main plugin folder (`abIDE-main` or any of its subdirectories). All project-related files (like `ops.json` or `design.json`) MUST be created inside the user's specific `<PROJECT_DIR>` (e.g., the `hotdog` folder). Polluting the plugin's source code tree is strictly forbidden.
 
-### 5. Headless ZONE_FILLER Crash Trap & GUI File Locking
-- **NEVER** invoke `pcbnew.ZONE_FILLER` in standalone/headless Python scripts outside KiCad GUI. In KiCad 10, running zone fill outside a live GUI connectivity graph triggers `kimathLogOverflow` C++ assertion crash, aborting the process and risking 0-byte file truncation.
-- **NEVER** write or overwrite `.kicad_pcb` from standalone background scripts while KiCad PCB Editor GUI has the project open (file lock contention). Always perform board operations (outlines, zones, fills) via `kicad_agent_bridge.py` with `ops.json` on the live in-memory board.
+### 5. Ground Pouring & Crash-Proof Zone Handling
+- **NEVER** invoke `pcbnew.ZONE_FILLER` in Python scripts or plugins. In KiCad 10, executing zone fills from Python threads triggers C++ OpenMP / thread-lock access violation crashes (`kimathLogOverflow` or GUI freeze).
+- **Standard Bounding Box Method:** Always create ground planes by passing 4-corner bounding box coordinates to `zone.add` in `ops.json`. The engine registers the zone polygons cleanly into the board.
+- **Native GUI Refill:** Let KiCad GUI fill the zones natively (press **`B`**) or let `kicad-cli` fill them during DRC/Gerber export.
+- **NEVER** write or overwrite `.kicad_pcb` from standalone background scripts while KiCad PCB Editor GUI has the project open (file lock contention). Always perform board operations via `kicad_agent_bridge.py` with `ops.json` on the live in-memory board.
 
 ### 6. Zero-Byte File Auto-Recovery
 If `.kicad_pcb` ever becomes 0 bytes due to a crashed process or save interruption, **DO NOT START FROM SCRATCH**. Immediately restore the latest valid board file from `<PROJECT_DIR>/pcb_brain/backups/` using `Copy-Item`.

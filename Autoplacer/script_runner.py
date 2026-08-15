@@ -6,7 +6,12 @@ import threading
 import secrets
 import http.server
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_AUTOPLACER_DIR = os.path.dirname(os.path.abspath(__file__))
+_PLUGIN_ROOT = os.path.dirname(_AUTOPLACER_DIR)
+
+for _p in (_PLUGIN_ROOT, _AUTOPLACER_DIR):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 import wx
 import pcbnew

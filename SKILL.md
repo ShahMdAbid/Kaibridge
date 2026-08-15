@@ -170,15 +170,20 @@ This is the complete closed-loop agentic pipeline from raw F8 import to a produc
 
 ```mermaid
 graph TD
-    A["1. Dynamic Circuit Cognition<br/>Read --state summary / design.json"] --> B["2. AI Semantic Placement<br/>Edges, Thermals, Decoupling, Sizing"]
-    B --> C["3. Generate & Apply ops.json<br/>--json-ops ops.json --commit"]
+    A["1. Dynamic Circuit Cognition<br/>Read --state summary / design.json"] --> B["2. AI Vision-Driven Plan<br/>Multimodal critique sense & spatial architecture"]
+    B --> H0["🧍 Human Alignment Checkpoint:<br/>Confirm Design & Placement Intent"]
+    H0 -->|User Directives (Top Priority)| B2["Adopt User's Symmetry / Directives"] --> C["3. Generate & Apply ops.json<br/>--json-ops ops.json --commit"]
+    H0 -->|Approved Default Plan| C
     C -->|Geometry Gate PASS| D["4. Visual Snapshot<br/>pcb_snapshot.py (Export SVG)"]
-    C -->|Geometry Gate FAIL| B
-    D --> E["5. Multimodal Visual Self-Critique<br/>Agent inspects SVG: spacing, avenues, loops"]
-    E -->|Refinement Needed| F["Generate Adjustment ops.json<br/>(Nudge passives, widen corridors)"] --> C
-    E -->|Visual Layout Approved| G["6. Prep for Route<br/>board.prep_for_route op"]
+    C -->|Geometry Gate FAIL| B2
+    D --> E["5. Multimodal Spatial Critique<br/>Agent inspects SVG: spacing, corridors, symmetry"]
+    E --> H1["🧍 Human Checkpoint 1:<br/>Placement Approval"]
+    H1 -->|Approved (YES)| G["6. Prep for Route<br/>board.prep_for_route op"]
+    H1 -->|Feedback / Re-alignment (NO)| F["Analyze SVG with AI Critique Brain + User Input<br/>Generate Adjustment ops.json"] --> C
     G --> H["7. Headless Routing<br/>freerouting_runner.py"]
-    H --> I["8. Solid GND Copper Pour<br/>zone.add (F.Cu & B.Cu GND) + zone.refill"]
+    H --> H2["🧍 Human Checkpoint 2:<br/>Routing Approval"]
+    H2 -->|Approved (YES)| I["8. Solid GND Copper Pour<br/>zone.add (F.Cu & B.Cu GND)"]
+    H2 -->|Feedback / Re-route (NO)| G
     I --> J["9. DRC Verification<br/>board.drc_check op"]
     J -->|DRC Clean (0 violations)| K["10. Final Visual Snapshot<br/>pcb_snapshot.py"]
     J -->|DRC Violations| L["Diagnose & Fix via ops.json"] --> G
@@ -187,41 +192,48 @@ graph TD
 
 #### Step-by-Step Execution Protocol
 
-**Step 1 — Dynamic Circuit Cognition (Zero Hardcoding):**
+**Step 1 — Dynamic Circuit Cognition & Vision-Driven Implementation Plan:**
 ```powershell
 python "<PLUGIN_DIR>\Autoplacer\kicad_agent_bridge.py" --state summary
 ```
 1. Read `<PROJECT_DIR>\pcb_brain\ai_context_summary.json` and `design.json`.
-2. **Dynamically analyze the circuit:** Understand what this specific board does (Microcontroller, Audio Amp, Power Converter, RF, or Sensor) and identify:
-   - External interfaces & Connectors (USB, Barrel Jack, Terminal blocks, Headers).
-   - High-current / Power paths and thermal components (Regulators, FETs, Inductors).
-   - Sensitive signal loops (Oscillators/Crystals, Feedback dividers, Analog inputs).
-   - High-frequency / High-speed digital nets (Bypass caps, D+/D- differential pairs).
+2. **Activate Multimodal Visual Critique Sense:** Dynamically reason across the circuit's functional topology (Sensors, MCU, Power, or Connectors).
+3. Draft a comprehensive `implementation_plan.md` outlining proposed board outline, connector positions, companion passive groupings, and spatial flow.
 
-**Step 2 — Semantic Layout & Board Outline:**
-1. Determine board outline dimensions: Use `board.set_size` (fixed enclosure) or `board.fit_outline` (shrinkwrap).
-2. Place connectors along board edges with openings oriented outward (e.g. `rotation: 180` or `270`).
-3. Place major ICs in dedicated spatial zones with generous routing corridors ($>3\text{ mm}$ clearance).
-4. Place tight companion passives (decoupling caps, crystal load caps, feedback resistors) directly adjacent to the relevant IC pins ($1-2\text{ mm}$ proximity).
-5. Generate `<PROJECT_DIR>\ops.json` with `{"op": "footprint.place", "anchor": "centre", ...}`.
+**Step 2 — Human Alignment Gate (Top Priority Rule):**
+1. Ask the user if the proposed design matches their intended physical layout.
+2. **STRICT PRIORITY RULE:** If the user provides specific guidelines, reference pictures, symmetry rules (e.g., `[Resistor_Left] [Sensor] [Resistor_Right]`), connector orientations, or form-factor constraints, the agent **MUST** prioritize the user's instructions over all generic heuristics.
+3. If no specific user override is given, proceed according to the approved plan.
 
-**Step 3 — Apply Ops with In-Memory Geometry Gate:**
+**Step 3 — Generate & Apply `ops.json` with In-Memory Geometry Gate:**
+1. Translate the aligned spatial architecture into `<PROJECT_DIR>\ops.json` with exact non-overlapping coordinates.
+2. Apply via bridge:
 ```powershell
 python "<PLUGIN_DIR>\Autoplacer\kicad_agent_bridge.py" --json-ops ops.json --commit
 ```
-The abIDE Geometry Gate (`gatekeeper.py`) automatically runs `separate()` to resolve any micro-overlaps without crashing KiCad.
+The abIDE Geometry Gate (`gatekeeper.py`) verifies zero courtyard collisions and closes `Edge.Cuts`.
 
-**Step 4 — Visual Snapshot Capture:**
+**Step 4 — Visual Snapshot Export:**
 ```powershell
 python "<PLUGIN_DIR>\Autoplacer\pcb_snapshot.py" "<PROJECT_DIR>"
 ```
-Generates `<project>_board.svg` vector render of the board.
+Generates `<project>_board.svg` vector render of the physical board.
 
-**Step 5 — Synchronized Multi-Domain Visual Self-Critique & Prompt Refinement:**
+**Step 5 — 🧍 Human Checkpoint 1 (Placement Approval & Iterative Critique Loop):**
+1. Present the snapshot SVG and detailed spatial critique table to the user.
+2. Explicitly ask: *"Is the component placement approved to proceed to routing?"*
+3. **If Approved (YES):** Proceed immediately to Step 6 (`board.prep_for_route`) and Step 7 (`freerouting_runner.py`).
+4. **If Feedback / Rejected (NO):**
+   - **Do NOT proceed to routing.**
+   - Capture the current SVG snapshot using `pcb_snapshot.py`.
+   - Re-analyze the board using the agent's spatial critique brain in conjunction with the user's specific feedback.
+   - Generate adjustment `ops.json`, apply with `--commit`, export new snapshot SVG, and present back to the user in the same iterative review loop until approved.
+
+##### 🧠 Spatial Critique Framework (Used during Step 5):
 
 The agent evaluates the board visual render by **synchronizing canonical engineering rules** ([pcb_placement_rules.md](file:///c:/Users/HP/OneDrive/Documents/KiCad/10.0/scripting/plugins/abIDE-main/skillset/pcb_placement_rules.md) and [trackwidth_clearence_viasize.md](file:///c:/Users/HP/OneDrive/Documents/KiCad/10.0/scripting/plugins/abIDE-main/skillset/trackwidth_clearence_viasize.md)) with its **Multimodal Spatial Reasoning Brain**.
 
-##### 🌐 Multi-Domain Visual Review Domains:
+###### 🌐 Multi-Domain Visual Review Domains:
 Rather than relying on rigid or narrow constraints, the agent dynamically reasons across the board's specific circuit topology (MCU, Power Supply, Audio/Analog, RF, or Sensor) across these core domains:
 
 1. **Signal Flow & Functional Floorplanning:**
@@ -239,7 +251,7 @@ Rather than relying on rigid or narrow constraints, the agent dynamically reason
    - Connectors (USB, Barrel Jacks, Screw Terminals) oriented facing outward towards board edges with zero physical obstruction for mating cables.
    - Passive component clusters (resistor arrays, LED status banks) neatly aligned for aesthetic symmetry and professional manufacturability.
 
-##### 📊 Structured Visual Feedback Format:
+###### 📊 Structured Visual Feedback Format:
 The agent MUST output its findings in this structured critique table before executing adjustments:
 
 | Ref | Current Visual Observation | Engineering / Skillset Rule Reference | Severity | Corrective Action | Target Coordinate / Rotation |
@@ -249,7 +261,7 @@ The agent MUST output its findings in this structured critique table before exec
 | `U2` | Heatsink tab pointing inward toward MCU | Thermal Dissipation (`pcb_placement_rules.md` §2.B) | High | Rotate 180° so tab faces board edge | `x: 140.0, y: 65.0, rot: 270` |
 | `R1, R2` | Staggered irregularly | Visual Symmetry & Alignment | Low | Align Y coordinate to 92.0mm | `x: 118.0, y: 92.0, rot: 0` |
 
-##### 🔄 Critique-to-Ops Translation:
+###### 🔄 Critique-to-Ops Translation:
 Convert the corrective actions directly into an adjustment `ops.json`:
 ```json
 [
@@ -276,8 +288,8 @@ python "<PLUGIN_DIR>\Autoplacer\freerouting_runner.py" "<PROJECT_DIR>"
 ```
 Executes Freerouting with 45° chamfering passes and imports the routed session directly.
 
-**Step 8 — Solid Ground Copper Pour (F.Cu & B.Cu):**
-Add low-impedance ground planes across the entire board outline to shield EMI and provide clean return paths:
+**Step 8 — Solid Ground Copper Pour (Standard Bounding Box Method):**
+Add low-impedance ground planes across the entire board outline matching the 4 corners of `Edge.Cuts`:
 ```json
 [
   {
@@ -297,10 +309,11 @@ Add low-impedance ground planes across the entire board outline to shield EMI an
     "clearance": 0.3,
     "min_thickness": 0.25,
     "outline": [{"x": X0, "y": Y0}, {"x": X1, "y": Y0}, {"x": X1, "y": Y1}, {"x": X0, "y": Y1}]
-  },
-  {"op": "zone.refill"}
+  }
 ]
 ```
+> [!IMPORTANT]
+> **Crash-Proof Zone Filling Rule:** `zone.add` cleanly registers the 4-corner zone polygons in the `.kicad_pcb` board. Zone rendering/filling is handled natively by KiCad GUI (press **`B`**) or automatically by `kicad-cli` during Gerber/DRC exports. Python code MUST NEVER invoke `pcbnew.ZONE_FILLER` directly in background threads as KiCad 10's OpenMP thread scheduler crashes on background fills.
 
 **Step 9 — DRC Verification:**
 ```json
@@ -350,47 +363,12 @@ graph TD
    - Save to scratch and execute via `python "<PLUGIN_DIR>\Autoplacer\kicad_agent_bridge.py" <script.py>`.
    - Pass `--timeout` generously for heavy operations (zone fills, imports).
 
-### 🛡️ RULE 8 — Ground Planes, Copper Pour (Zones) & Routing Rules
+### 🛡️ RULE 8 — Ground Planes, Copper Pour & Routing Safety
 
-After completing placement and initial routing, or to add low-impedance ground return planes, use built-in zone operations:
-
-#### 1. Adding Ground Copper Pours (`F.Cu` and `B.Cu`):
-Generate an `ops.json` to create polygon copper pour zones and refill them through the live REST bridge:
-```json
-[
-  {
-    "op": "zone.add",
-    "net": "GND",
-    "layer": "F.Cu",
-    "outline": [
-      {"x": 128.0, "y": 54.0},
-      {"x": 176.0, "y": 54.0},
-      {"x": 176.0, "y": 150.0},
-      {"x": 128.0, "y": 150.0}
-    ]
-  },
-  {
-    "op": "zone.add",
-    "net": "GND",
-    "layer": "B.Cu",
-    "outline": [
-      {"x": 128.0, "y": 54.0},
-      {"x": 176.0, "y": 54.0},
-      {"x": 176.0, "y": 150.0},
-      {"x": 128.0, "y": 150.0}
-    ]
-  },
-  {"op": "zone.refill"}
-]
-```
-Apply via:
-```powershell
-python "<PLUGIN_DIR>\Autoplacer\kicad_agent_bridge.py" --json-ops ops.json --commit
-```
-
-> [!CAUTION]
-> **Headless `ZONE_FILLER` Crash Trap (`kimathLogOverflow`):**
-> NEVER run `pcbnew.ZONE_FILLER(board).Fill(board.Zones())` inside a standalone/headless Python process outside KiCad GUI. In KiCad 10, executing zone fills without a live GUI connectivity graph triggers a fatal C++ assertion: `kimathLogOverflow: Overflow converting value to int` which immediately aborts the process and can truncate `.kicad_pcb` to 0 bytes. Always use `zone.add` / `zone.refill` via the REST API bridge (`kicad_agent_bridge.py`), or let the KiCad PCB Editor GUI fill zones natively (pressing **`B`**).
+#### 1. Ground Copper Pour Protocol (Standard Bounding Box Method):
+- Define 4-corner bounding box coordinates matching the `Edge.Cuts` rectangle for `F.Cu` and `B.Cu` zones.
+- Use `{"op": "zone.add", "net": "GND", "layer": "...", "outline": [...]}` via `kicad_agent_bridge.py`.
+- **Refill Rule:** Zone rendering is handled natively by KiCad GUI (press **`B`**) or automatically during Gerber/DRC exports. Standalone Python code must never invoke raw C++ `ZONE_FILLER` in background threads.
 
 #### 2. Auto-Routing Core Protocols & File Lock Safety:
 - **Prerequisite:** Always ensure `Edge.Cuts` rectangle is closed and drawn before invoking `freerouting_runner.py`.
@@ -427,6 +405,9 @@ python "<PLUGIN_DIR>\Autoplacer\kicad_agent_bridge.py" --json-ops ops.json --com
 | 4 | **Ctrl+S** after F8 | `pcb_snapshot` and `kicad-cli` read from disk |
 | 5 | Open **abIDE** | The bridge HTTP REST API server only exists while the window is open |
 | 6 | Open KiCad after automated close | Windows Session 0 isolation hides agent-spawned GUI apps |
+| 7 | **Design Alignment Gate (Checkpoint 0)** | Confirm layout strategy and prioritize user-specific placement / symmetry directives |
+| 8 | **Placement Approval (Checkpoint 1)** | Human engineer validates physical layout, spacing, and connector orientation before triggering router |
+| 9 | **Routing Approval (Checkpoint 2)** | Human engineer inspects trace topologies and layer flow before committing ground copper pour |
 
 > [!TIP]
 > **Semi-Automation Rule:** To save the user from the hassle of constantly closing KiCad manually, the agent is authorized and encouraged to automatically force-close KiCad using `taskkill /IM kicad.exe /F` whenever it needs to be closed (e.g., before running `--apply-netclasses` or to clear footprint caches). 

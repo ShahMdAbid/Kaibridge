@@ -1,8 +1,11 @@
-"""
-Autoplacer/board_engine/gatekeeper.py — Geometry Gate, Courtyard bounding boxes, overlap detection, and physics auto-separation.
-"""
-
+import os
+import sys
 import pcbnew
+
+_plugin_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if _plugin_root not in sys.path:
+    sys.path.insert(0, _plugin_root)
+
 from schematic_gen.geometry import Box, find_overlaps, outside, separate
 from .common import (
     to_mm, from_mm, mk_point, _try, _call_any, uuid_of

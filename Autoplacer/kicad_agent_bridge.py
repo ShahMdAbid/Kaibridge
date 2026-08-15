@@ -99,7 +99,18 @@ def run_kicad_code(script_path=None, code_stdin=False, inline_code=None,
             output = resp.get("output", "")
             print(f"--- KICAD {status.upper()} ---")
             print(output)
-            return status == "success"
+            if status != "success":
+                return False
+            if "ABIDE_RESULT" in output:
+                for line in output.split("\n"):
+                    if line.startswith("ABIDE_RESULT "):
+                        try:
+                            r = json.loads(line[13:])
+                            if r.get("failed") or r.get("applied") is False:
+                                return False
+                        except Exception:
+                            pass
+            return True
     except urllib.error.URLError as e:
         if isinstance(e.reason, ConnectionRefusedError) or isinstance(e.reason, OSError):
             print("--- KICAD NOT CONNECTED ---")
@@ -168,9 +179,6 @@ if __name__ == "__main__":
             f"ops = json.loads(base64.b64decode('{ops_b64}').decode())\n"
             f"result = apply_ops(ops, dry_run={not getattr(args, 'commit', False)}, save={getattr(args, 'commit', False)}, refill=False, verify=False)\n"
             "print('\\nABIDE_RESULT ' + json.dumps(result))\n"
-            "ok = not result.get('problems') and not result.get('failed')\n"
-            "if not ok:\n"
-            "    raise SystemExit(1)\n"
         )
 
     if args.state:

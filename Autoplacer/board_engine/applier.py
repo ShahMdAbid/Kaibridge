@@ -168,9 +168,13 @@ def _op_delete_net_tracks(board, idx, op, dry):
 
 def _op_zone_refill(board, idx, op, dry):
     if not dry:
-        filler = pcbnew.ZONE_FILLER(board)
-        filler.Fill(board.Zones())
-    return "refill all zones"
+        try:
+            _try(lambda: board.BuildConnectivity())
+            for z in board.Zones():
+                z.SetNeedRefill(True)
+        except Exception:
+            pass
+    return "marked all zones for refill (press 'B' in KiCad to render fills)"
 
 def _op_zone_add(board, idx, op, dry):
     _need(op, "net", "layer", "outline")
@@ -394,7 +398,11 @@ def apply_ops(ops, board=None, dry_run=True, save=False, refill=True, verify=Tru
                   "press Ctrl+Z in KiCad or File > Revert to Saved.")
 
     if refill and failed is None:
-        _try(lambda: pcbnew.ZONE_FILLER(board).Fill(board.Zones()), key="refill")
+        try:
+            for z in board.Zones():
+                z.SetNeedRefill(True)
+        except Exception:
+            pass
 
     _try(lambda: pcbnew.Refresh())
 
