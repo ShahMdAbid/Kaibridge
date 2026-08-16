@@ -27,6 +27,7 @@ Before writing ANY custom `pcbnew` Python script, check if the functionality alr
 | `json2sch.py` | `design.json` → `.kicad_sch` schematic files | `python json2sch.py <DIR> --dry-run` |
 | `kicad_lib_init.py` | Initialize project library tables (`sym-lib-table`, `fp-lib-table`) | `python kicad_lib_init.py <DIR> -n abide` |
 | `kicad_pins.py` | Pin extraction, footprint verification, shared `kicad_paths.json` reader | `python kicad_pins.py <SYM> --verify` |
+| `export_jlcpcb.py` | Generates JLCPCB-compatible Gerber ZIP, BOM CSV, and CPL CSV | `python export_jlcpcb.py <DIR>` |
 
 #### `Autoplacer/` Scripts (run via bridge or command line)
 
@@ -279,6 +280,13 @@ Runs `kicad-cli pcb drc` to verify 0 errors and 0 unrouted nets.
 python "<PLUGIN_DIR>\Autoplacer\pcb_snapshot.py" "<PROJECT_DIR>"
 ```
 Save and present the final board SVG/render artifact to the user.
+
+**Step 11 — JLCPCB Production Export:**
+When the user asks to prepare files for manufacturing or JLCPCB ordering, ALWAYS read the `skillset/jlcpcb_production.md` instruction file first. 
+```powershell
+python "<PLUGIN_DIR>\export_jlcpcb.py" "<PROJECT_DIR>"
+```
+This generates a clean `Gerber_<project>.zip`, `BOM_<project>.csv`, and `CPL_<project>.csv` inside `<PROJECT_DIR>\jlcpcb_production\`. Present the final summary to the user.
 
 
 ### 🔮 RULE 7 — Custom `pcbnew` scripting & API Grounding Protocol
