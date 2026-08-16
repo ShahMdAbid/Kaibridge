@@ -4,7 +4,10 @@
 
 A token-efficient, faster, and lighter atomic REST API based alternative to generic MCP servers.
 
+[![Download abIDE (Windows)](https://img.shields.io/badge/Download_abIDE_(Windows)-v1.0-2EA043?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/ShahMdAbid/abIDE/releases/latest/download/abIDE-v1.0.zip) [![License](https://img.shields.io/badge/License-AGPL_v3.0-1D70B8?style=for-the-badge)](https://github.com/ShahMdAbid/abIDE/blob/main/LICENSE)
 
+**System Requirements:**  
+![KiCad](https://img.shields.io/badge/KiCad-10-blue?style=for-the-badge&logo=kicad) ![Java](https://img.shields.io/badge/Java-17%2B-EA2D2E?style=for-the-badge&logo=openjdk&logoColor=white) ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)
 
 ## Architecture
 
@@ -111,7 +114,13 @@ Update the `kicad_paths.json` file in the root directory to point to your local 
 3. Open this plugin directory (`abIDE-main`) in your preferred agent environment (e.g., **Antigravity IDE**). 
 4. Provide the agent with the absolute path to your project directory alongside your initial prompt to begin the automated design flow.
 
-## Routing Options
+## Other Routing Options
 
-* **Local Autorouting (Default):** Download [Freerouting](https://github.com/freerouting/freerouting/releases) and utilize the included `freerouting_runner.py` script for rapid, headless local routing.
 * **Cloud AI Routing:** After initial load in pcb editor give a edge cut and your board is ready for advanced cloud routing platforms such as [Quilter AI](https://app.quilter.ai).
+
+## License
+
+This project is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**.
+You are free to use and modify this plugin. However, if you modify the code and make it available over a network (e.g., as a SaaS  or web tool), you **must** open-source your modified backend code under the same AGPL-3.0 license. 
+
+See the `LICENSE` file for more details.
