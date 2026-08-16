@@ -1,6 +1,10 @@
 # abIDE (Agent Bridge IDE)
 
-**abIDE** is an end to end KiCad plugin designed to provide autonomous AI agents with the ability to architect pcb from prompt, visually evaluate, and route within the native KiCad environment, operating alongside a human engineer.
+**abIDE** is an end-to-end KiCad plugin that connects external AI agents to architect circuits, source verified components, compile multi-sheet schematics, place components via closed-loop visual feedback, and route PCBs inside the native KiCad environment—operating alongside a human engineer.
+
+A token-efficient, faster, and lighter atomic REST API based alternative to generic MCP servers.
+
+
 
 ## Architecture
 
@@ -87,7 +91,7 @@
   * *(Note: An earlier SWIG-based API introspection layer was deprecated after instability under changing KiCad GUI state; the current architecture uses explicit operation contracts instead. See `legacyboardengine/` for the archived implementation.)*
 * **AI Visual Thinking:** Automatically renders SVG snapshots of the live layout, allowing multimodal AI agents to visually critique component placement (e.g., decoupling proximity, signal flow) and iteratively refine the board.
 * **Strict Human-in-the-Loop:** Halts autonomous execution at major checkpoints (Schematic Generation $\rightarrow$ Placement $\rightarrow$ Routing). Engineers can visually review the board in the KiCad GUI and provide explicit overrides before the agent proceeds.
-* **Physics-Guided Relaxation:** Incorporates a Separating Axis Theorem collision solver to automatically resolve micro-collisions and enforce strict physical tolerances.
+* **Deterministic Geometry Gate:** Incorporates a 2D Minimum Translation Vector (MTV) collision solver to automatically detect overlaps, enforce courtyard boundaries, and resolve micro-clearances before committing to PCB.
 
 
 ## Quick Start

@@ -72,7 +72,7 @@ python Autoplacer/kicad_agent_bridge.py [script_path] [options]
 ## 4. Supporting Scripts
 
 ### Semantic Placement Protocol (REST API & Geometry Gate)
-Direct component placement is handled by combining AI hardware layout semantics with the Live PCB REST API Bridge (`kicad_agent_bridge.py --json-ops ops.json --commit`). abIDE's built-in Geometry Gate automatically resolves any micro-overlaps via physics relaxation.
+Direct component placement is handled by combining AI hardware layout semantics with the Live PCB REST API Bridge (`kicad_agent_bridge.py --json-ops ops.json --commit`). abIDE's built-in Geometry Gate automatically resolves any micro-overlaps via deterministic courtyard relaxation.
 
 ### `Autoplacer/freerouting_runner.py` (Headless Auto-Router)
 This script exports the DSN file from KiCad, routes the entire board in the background using FreeRouting (Java), and imports the SES file back into KiCad.

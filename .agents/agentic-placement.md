@@ -1,7 +1,7 @@
 # Agentic Placement Architecture
 
 **The Core Architecture (Vision-Guided Semantic Placer):**
-To solve the problem of LLMs lacking sub-millimeter geometry awareness, you **MUST** strictly act as the **Lead Hardware Architect**. You provide the *Spatial Intent* via `ops.json`, and the abIDE Geometry Gate (`boardmanager.py` + `geometry.py`) acts as the deterministic *Mason* to perform micro-separation physics relaxation (`geometry.separate()`). The AI dictates *what* goes where; the Geometry Gate handles the *exact math*.
+To solve the problem of LLMs lacking sub-millimeter geometry awareness, you **MUST** strictly act as the **Lead Hardware Architect**. You provide the *Spatial Intent* via `ops.json`, and the abIDE Geometry Gate (`boardmanager.py` + `geometry.py`) acts as the deterministic *Mason* to perform micro-separation courtyard collision relaxation (`geometry.separate()`). The AI dictates *what* goes where; the Geometry Gate handles the *exact math*.
 
 > [!IMPORTANT]
 > **Skillset Loading (MANDATORY):** Before making ANY engineering decisions regarding component placement, trace widths, clearances, or CLI commands, you MUST consult the canonical rules inside the `<PLUGIN_DIR>\skillset\` directory (e.g., `pcb_placement_rules.md`, `trackwidth_clearence_viasize.md`, `command_help.md`). Do not rely on generic KiCad knowledge.
