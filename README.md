@@ -20,7 +20,9 @@
 
 * [Core Capabilities](docs/core-capabilities.md)
 * [Architecture](docs/architecture.md)
-* [User Guide](docs/user-guide.md) 
+* [User Guide](docs/user-guide.md)
+* [Contributing Guidelines](docs/contributing.md)
+* [Issue Tracker](https://github.com/ShahMdAbid/abIDE/issues)
 
 
 ## Quick Start
@@ -38,15 +40,13 @@
 3. In the top menu, click **Tools** → **External Plugins** → **abIDE**.
 4. Open the plugin folder in your AI agent (e.g. Antigravity IDE) and start prompting! (See the [User Guide](docs/user-guide.md) for a step-by-step example conversation).
 
----
-
 ## AI Disclosure
  
-> This project was developed with the support of AI-assisted coding tools. AI tools were used to accelerate development — creative decisions and architecture remain entirely with the author(s).
+This project was developed with the support of AI-assisted coding tools. AI tools were used to accelerate development — creative decisions and architecture remain entirely with the author(s).
 
 ## Disclaimer
 
-> **A Note on Fundamentals:** Please do not jump directly into AI automation without first understanding the basics of PCB design. While this tool accelerates and streamlines your workflow significantly, **AI-generated design suggestions do not replace qualified engineering review.**
+ **A Note on Fundamentals:** This tool is designed to accelerate and streamline your workflow. However, it requires a foundational understanding of PCB design—**AI-generated design suggestions do not replace qualified engineering review.**
 
 > **No Warranty**
 > 
@@ -56,16 +56,10 @@
 > - Damage to hardware, components, or devices caused by incorrect designs
 > - Financial losses due to manufacturing errors or incorrect orders
 > - Data loss or corruption of KiCAD project files
-> 
-> Safety-critical applications (medical, aerospace, automotive, etc.) require mandatory independent expert verification.
-> 
-> This project is licensed under the AGPL-3.0 License — which likewise excludes all liability.
-
----
 
 ## License
 
 This project is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**.
 You are free to use and modify this plugin. However, if you modify the code and make it available over a network (e.g., as a SaaS or web tool), you **must** open-source your modified backend code under the same AGPL-3.0 license. 
 
-See the `LICENSE` file for more details.
+
