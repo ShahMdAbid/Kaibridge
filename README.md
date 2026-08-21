@@ -1,10 +1,10 @@
-<div align="center">
+﻿<div align="center">
   <h1>Kaibridge</h1>
   <p><em>KiCad ↔ AI Agent Bridge</em></p>
   <p><b>An end-to-end KiCad plugin that connects external AI agents to architect circuits, source verified components, compile multi-sheet schematics, place components via closed-loop visual feedback, and route PCBs inside the native KiCad environment—operating alongside a human engineer.</b></p>
 
 
-[![Download Kaibridge (Windows)](https://img.shields.io/badge/Download_Kaibridge_(Windows)-v1.0-2EA043?style=flat-square&logo=windows&logoColor=white)](https://github.com/ShahMdAbid/Kaibridge/releases/latest/download/Kaibridge_v1.0.zip)
+[![Download Kaibridge (Windows)](https://img.shields.io/badge/Download_Kaibridge_(Windows)-v1.0-2EA043?style=flat-square&logo=windows&logoColor=white)](https://github.com/ShahMdAbid/Kaibridge/releases/latest/download/Kaibridge-v1.0.zip)
 
 <br/>
 
