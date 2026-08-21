@@ -6,7 +6,7 @@ json2sch.py -- design.json -> KiCad hierarchical schematics.
                      [--dry-run] [--apply-netclasses] [--erc] [--no-backup]
 
 Sub-sheets are written next to the root file as <sheet_id>.kicad_sch.
-A sidecar <PROJECT_DIR>/abide_build.json records the resolved design metadata.
+A sidecar <PROJECT_DIR>/kaibridge_build.json records the resolved design metadata.
 """
 from __future__ import annotations
 
@@ -224,7 +224,7 @@ def main(argv=None):
     except ValueError as e:              # kicad_paths.json problems
         return fail(str(e))
 
-    print(f"abIDE {__version__}  project '{name}'  {lib.summary()}")
+    print(f"Kaibridge {__version__}  project '{name}'  {lib.summary()}")
     for warning in design.warnings:
         print(f"  warning: {warning}")
 
@@ -243,7 +243,7 @@ def main(argv=None):
 
     results, orphans = write(files, out_path.parent, backup=not args.no_backup)
     notes = []
-    build_path = project_dir / "abide_build.json"
+    build_path = project_dir / "kaibridge_build.json"
     build_path.write_text(json.dumps(sidecar(design), indent=2), encoding="utf-8")
     notes.append(f"sidecar: {build_path.name}")
     if args.apply_netclasses:

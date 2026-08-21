@@ -1,7 +1,7 @@
 """
-abide/paths.py -- the one place that knows about kicad_paths.json.
+kaibridge/paths.py -- the one place that knows about kicad_paths.json.
 
-Moved out of kicad_pins.py so nothing inside abide/ ever has to import the
+Moved out of kicad_pins.py so nothing inside kaibridge/ ever has to import the
 plugin root. kicad_pins.py re-exports these names, so every existing caller
 (kicad_lib_init, oracle, pcb_snapshot, currentboardfetcher) is unaffected.
 """

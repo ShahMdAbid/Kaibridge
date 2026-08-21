@@ -12,7 +12,7 @@ import pcbnew
 from .common import (
     resolve_board, build_index, OpError, _need, _resolve_fp,
     _resolve_layer, _resolve_net, mk_point, to_mm, from_mm, pt,
-    uuid_of, _try, _enum
+    uuid_of, _try, _enum, snap_grid
 )
 from .gatekeeper import box_of, placement_report, _geometry_gate
 from .backup import _store_dir, diff_states, print_diff
@@ -25,6 +25,7 @@ from .fetcher import get_full_board_state
 def _op_fp_place(board, idx, op, dry):
     fp = _resolve_fp(idx, op)
     anchor = op.get("anchor", "centre")
+    grid = op.get("grid")           # per-op override; 0 disables snap
     if dry:
         return "place %s anchor=%s -> (%s, %s) rot=%s" % (
             fp.GetReference(), anchor, op.get("x"), op.get("y"), op.get("rotation"))
@@ -38,6 +39,7 @@ def _op_fp_place(board, idx, op, dry):
     box = box_of(fp)
     tx = float(op["x"]) if op.get("x") is not None else box.cx
     ty = float(op["y"]) if op.get("y") is not None else box.cy
+    tx, ty = snap_grid(tx, grid), snap_grid(ty, grid)
     if anchor == "origin":
         nx, ny = tx, ty
     elif anchor == "centre":
@@ -55,11 +57,13 @@ def _op_fp_place(board, idx, op, dry):
 def _op_fp_move(board, idx, op, dry):
     fp = _resolve_fp(idx, op)
     _need(op, "x", "y")
+    grid = op.get("grid")
+    mx, my = snap_grid(op["x"], grid), snap_grid(op["y"], grid)
     old = pt(fp.GetPosition())
     if not dry:
         if fp.IsLocked() and not op.get("force"):
             raise OpError("%s is locked (pass force:true)" % fp.GetReference())
-        fp.SetPosition(mk_point(op["x"], op["y"]))
+        fp.SetPosition(mk_point(mx, my))
         if op.get("rotation") is not None:
             fp.SetOrientationDegrees(float(op["rotation"]))
         if op.get("layer"):
@@ -67,7 +71,7 @@ def _op_fp_move(board, idx, op, dry):
             if bool(fp.IsFlipped()) != want_back:
                 fp.Flip(fp.GetPosition(), False)
     return "move %s %s -> (%.3f, %.3f)%s" % (
-        fp.GetReference(), old, op["x"], op["y"],
+        fp.GetReference(), old, mx, my,
         " rot=%s" % op["rotation"] if op.get("rotation") is not None else "")
 
 def _op_fp_rotate(board, idx, op, dry):

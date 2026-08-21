@@ -1,5 +1,5 @@
 """
-abide/place.py -- where every symbol goes, one sheet at a time.
+kaibridge/place.py -- where every symbol goes, one sheet at a time.
 
 Same model as your pack(): upright symbols, a stub off every connected pin, a
 label at the end of the stub, groups laid out as shelves. What changed:
@@ -272,5 +272,5 @@ def _plan_sheet(sheet, design, layout, extents):
         if biggest is not None else ""
     raise DesignError(
         f"sheet '{sheet.id}' does not fit on A0 with readable spacing."
-        f"{hint} Split it into more sheets or more groups -- abIDE will not "
+        f"{hint} Split it into more sheets or more groups -- Kaibridge will not "
         f"emit an oversized custom page.")

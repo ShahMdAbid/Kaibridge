@@ -6,7 +6,7 @@ _plugin_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 if _plugin_root not in sys.path:
     sys.path.insert(0, _plugin_root)
 
-from schematic_gen.geometry import Box, find_overlaps, outside, separate
+from schematic_gen.geometry import Box, find_overlaps, outside
 from .common import (
     to_mm, from_mm, mk_point, _try, _call_any, uuid_of
 )
@@ -86,16 +86,5 @@ def _geometry_gate(board, clearance=0.25, edge_margin=0.5, autoresolve=True):
     rep = placement_report(board, clearance, edge_margin)
     if not rep["overlaps"] and not rep["outside_outline"]:
         return rep, []
-    if not autoresolve:
-        return rep, ["placement rejected: %d overlap(s), %d part(s) outside the outline"
-                     % (len(rep["overlaps"]), len(rep["outside_outline"]))]
-    boxes = [box_of(fp) for fp in board.GetFootprints()]
-    moved, left = separate(boxes, clearance, rep["board_bounds_mm"], edge_margin)
-    for ref, (ox, oy) in moved.items():
-        fp = board.FindFootprintByReference(ref)
-        if fp is not None and not fp.IsLocked():
-            fp.SetPosition(mk_point(ox, oy))
-    rep = placement_report(board, clearance, edge_margin)
-    rep["auto_separated"] = moved
-    return rep, ([] if not left else
-                 ["could not separate %d pair(s) automatically" % len(left)])
+    return rep, ["placement rejected: %d overlap(s), %d part(s) outside the outline"
+                 % (len(rep["overlaps"]), len(rep["outside_outline"]))]

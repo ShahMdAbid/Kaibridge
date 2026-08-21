@@ -1,6 +1,6 @@
 # User Guide
 
-This guide demonstrates a simple end-to-end conversation between a **Human Engineer** and the **AI Agent** using abIDE.
+This guide demonstrates a simple end-to-end conversation between a **Human Engineer** and the **AI Agent** using Kaibridge.
 
 ---
 
@@ -28,7 +28,7 @@ This guide demonstrates a simple end-to-end conversation between a **Human Engin
 > 2. Open the Schematic Editor → **Tools → Annotate** → Run ERC to verify.
 > 3. Open the PCB Editor and press **F8** (Update PCB from Schematic).
 > 4. Press **Ctrl+S** to save the board.
-> 5. Click **Tools → External Plugins → abIDE** to start the local bridge.
+> 5. Click **Tools → External Plugins → Kaibridge** to start the local bridge.
 > 
 > Let me know when the bridge is running!"
 

@@ -1,11 +1,11 @@
 """
-abide/klib.py -- real KiCad library resolution.
+kaibridge/klib.py -- real KiCad library resolution.
 
 Nickname -> file, in exactly KiCad's order:
   1. <PROJECT_DIR>/sym-lib-table         (project table, ${KIPRJMOD} aware)
   2. <kicad_config_dir>/sym-lib-table    (global table)
   3. <kicad_symbol_dir>/<nick>.kicad_sym (stock fallback, no table needed)
-  4. <PROJECT_DIR>/libs/<nick>.kicad_sym (legacy abIDE fallback)
+  4. <PROJECT_DIR>/libs/<nick>.kicad_sym (legacy Kaibridge fallback)
 Same four steps for footprints via fp-lib-table and <nick>.pretty.
 
 One parse per library file per run; symbols are cached by lib_id.
@@ -234,7 +234,7 @@ class LibIndex:
                     units.add(int(match.group(1)))
         if len(units) > 1:
             raise LibError(
-                f"'{lib_id}' is a {max(units)}-unit symbol. abIDE draws one "
+                f"'{lib_id}' is a {max(units)}-unit symbol. Kaibridge draws one "
                 f"unit per part, so units 2-{max(units)} would be dropped "
                 f"without a word. Use a single-unit equivalent symbol, or "
                 f"split the part by hand.")

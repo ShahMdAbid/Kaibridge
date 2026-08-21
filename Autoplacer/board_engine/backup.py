@@ -140,3 +140,4 @@ def quick_diff(board=None, against=None):
     new = get_full_board_state(board)
     print_diff(diff_states(old, new))
     return new
+

@@ -3,10 +3,10 @@
 kicad_pins.py -- read pins out of .kicad_sym files and verify their footprints.
 Also holds the shared kicad_paths.json reader used by kicad_lib_init.py.
 
-    python kicad_pins.py "F:/kicadtest1/libs/abide.kicad_sym"
-    python kicad_pins.py "F:/kicadtest1/libs/abide.kicad_sym" -s AMS1117-3.3 --json
+    python kicad_pins.py "F:/kicadtest1/libs/kaibridge.kicad_sym"
+    python kicad_pins.py "F:/kicadtest1/libs/kaibridge.kicad_sym" -s AMS1117-3.3 --json
     python kicad_pins.py --native Device -s R --json
-    python kicad_pins.py "F:/kicadtest1/libs/abide.kicad_sym" --verify
+    python kicad_pins.py "F:/kicadtest1/libs/kaibridge.kicad_sym" --verify
 
 --verify exits 1 if any symbol fails the footprint / pad-count gate.
 """

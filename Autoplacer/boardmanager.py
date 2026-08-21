@@ -19,3 +19,4 @@ from board_engine import *
 if __name__ == "__main__":
     _b = resolve_board()
     print(json.dumps(get_full_board_state(_b), indent=2, default=safe_json_default))
+

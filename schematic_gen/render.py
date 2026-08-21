@@ -1,5 +1,5 @@
 """
-abide/render.py -- Design + Layout -> .kicad_sch text, one file per sheet.
+kaibridge/render.py -- Design + Layout -> .kicad_sch text, one file per sheet.
 
 The two rules:
 
@@ -20,7 +20,7 @@ from typing import Dict, List
 from .place import FONT, SHEET_PIN_PITCH, SHEET_PIN_TOP, STUB, stubs
 from .sexpr import Quoted, dumps, first, parse, value
 
-GENERATOR = "abide_json2sch"
+GENERATOR = "kaibridge_json2sch"
 GENERATOR_VERSION = "9.0"
 VERSION = 20250114          # KiCad 9 schematic format
 NS = uuid.NAMESPACE_URL
@@ -34,7 +34,7 @@ LABEL_TAG = {"global": "global_label", "hierarchical": "hierarchical_label"}
 
 def uid(design_id, kind, key):
     """The whole determinism story, in one line."""
-    return str(uuid.uuid5(NS, f"abide:{design_id}:{kind}:{key}"))
+    return str(uuid.uuid5(NS, f"kaibridge:{design_id}:{kind}:{key}"))
 
 def _n(number):
     text = f"{float(number):.4f}".rstrip("0").rstrip(".")

@@ -1,6 +1,6 @@
-# Setting Track Width, Clearance, and Via Sizes in abIDE
+# Setting Track Width, Clearance, and Via Sizes in Kaibridge
 
-The `abIDE` plugin relies on KiCad's **Netclasses** feature to automatically enforce track widths, clearances, and via sizes. You can declare these design specifications directly in your `design.json` file, and `abIDE` will inject them into your KiCad project.
+The `Kaibridge` plugin relies on KiCad's **Netclasses** feature to automatically enforce track widths, clearances, and via sizes. You can declare these design specifications directly in your `design.json` file, and `Kaibridge` will inject them into your KiCad project.
 
 ## 1. Defining Netclasses in `design.json`
 

@@ -22,7 +22,7 @@ import time
 PORT_FILE = os.path.join(os.path.dirname(__file__), "kicad_agent_bridge.port")
 DEBUG_LOG = os.path.join(os.path.dirname(__file__), "kicad_agent_bridge_debug.log")
 
-class AbideTimeout(BaseException):
+class KaibridgeTimeout(BaseException):
     """BaseException on purpose: `except Exception` in user code must NOT swallow it."""
 
 
@@ -33,7 +33,7 @@ class ScriptRunnerFrame(wx.Frame):
             self, 
             parent, 
             id=wx.ID_ANY, 
-            title="abIDE", 
+            title="Kaibridge", 
             size=(700, 500),
             style=wx.DEFAULT_FRAME_STYLE
         )
@@ -211,7 +211,7 @@ class ScriptRunnerFrame(wx.Frame):
                             "status": "error",
                             "output": ("Execution did not finish within the timeout. KiCad's main "
                                        "thread may still be busy running it - check the Output "
-                                       "Console tab in abIDE. Avoid infinite loops / long sleeps.")
+                                       "Console tab in Kaibridge. Avoid infinite loops / long sleeps.")
                         })
                         return
                     self._send_json(result)
@@ -238,7 +238,7 @@ class ScriptRunnerFrame(wx.Frame):
             self._server_thread = threading.Thread(target=self._http_server.serve_forever, daemon=True)
             self._server_thread.start()
         except Exception as e:
-            msg = f"abIDE: could not start agent bridge server: {e}"
+            msg = f"Kaibridge: could not start agent bridge server: {e}"
             wx.LogWarning(msg)
             self.log_debug(msg)
 
@@ -325,8 +325,8 @@ class ScriptRunnerFrame(wx.Frame):
             if instruction_count[0] >= 200:
                 instruction_count[0] = 0
                 if time.time() - start_time > timeout_seconds:
-                    raise AbideTimeout(
-                        f"Timed out after {timeout_seconds}s -- killed by the abIDE watchdog. "
+                    raise KaibridgeTimeout(
+                        f"Timed out after {timeout_seconds}s -- killed by the Kaibridge watchdog. "
                         "The board may be partially modified; a backup is in pcb_brain/backups/.")
             return None      # <-- call-level tracing only. Do not trace every line.
 
@@ -348,8 +348,8 @@ class ScriptRunnerFrame(wx.Frame):
                 code_obj = compile(code_str, '<Code Snippet>', 'exec')
                 exec(code_obj, globals_dict)
             success = True
-        except AbideTimeout as e:
-            error_tb = f"AbideTimeout: {e}\n"
+        except KaibridgeTimeout as e:
+            error_tb = f"KaibridgeTimeout: {e}\n"
         except BaseException:
             error_tb = traceback.format_exc()
         finally:
@@ -477,7 +477,7 @@ class ScriptRunnerFrame(wx.Frame):
 
 class ScriptRunnerPlugin(pcbnew.ActionPlugin):
     def defaults(self):
-        self.name = "abIDE"
+        self.name = "Kaibridge"
         self.category = "Utility"
         self.description = "Select and run any external board python script or paste code directly"
         self.show_toolbar_button = True

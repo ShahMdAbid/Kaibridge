@@ -145,3 +145,4 @@ if __name__ == "__main__":
     else:
         print(get_kicad_signature(file_content, args.class_name, args.method_name))
 
+

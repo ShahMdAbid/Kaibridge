@@ -61,7 +61,7 @@ def _ensure_board(b):
             _warn_once("cast", "BOARD arrived unwrapped; Cast_to_BOARD recovered it.")
             return b2
     raise RuntimeError(
-        "BOARD proxy is corrupt (SwigPyObject). Close and reopen the abIDE window. "
+        "BOARD proxy is corrupt (SwigPyObject). Close and reopen the Kaibridge window. "
         "Do not importlib.reload modules that import pcbnew.")
 
 def resolve_board(board=None, pcb_path=None):
@@ -113,6 +113,21 @@ def pt(p):
     if p is None:
         return None
     return {"x": round(to_mm(p.x), 6), "y": round(to_mm(p.y), 6)}
+
+# --- Grid-snap placement aid ---
+DEFAULT_GRID_MM = 0.5
+
+def snap_grid(v, grid=None):
+    """Quantize a mm coordinate to the nearest grid step.
+    grid=0 or grid=None disables snapping and returns the value unchanged.
+    Default grid is 0.5 mm — fine enough for mixed-size components,
+    coarse enough to eliminate micro-overlap decimal noise.
+    """
+    if grid is None:
+        grid = DEFAULT_GRID_MM
+    if grid <= 0:
+        return float(v)
+    return round(float(v) / grid) * grid
 
 def uuid_of(item):
     return _try(lambda: item.m_Uuid.AsString(),

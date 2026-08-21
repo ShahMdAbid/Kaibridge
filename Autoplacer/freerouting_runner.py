@@ -151,3 +151,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     run_freerouting(args.project_dir, jar_path=args.jar, heap_mb=args.heap, route_timeout=args.timeout)
+

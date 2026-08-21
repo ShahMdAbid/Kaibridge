@@ -1,4 +1,4 @@
-# abIDE Command Line Interface (CLI) Guide
+# Kaibridge Command Line Interface (CLI) Guide
 
 This project includes several important scripts that can be run from the command line (CLI) with various flags (options). The entire system can be divided into 4 main categories: Root Scripts, PCB Orchestrator, Live PCB Bridge (HTTP REST Bridge), and Supporting Scripts. The purpose and usage of each are detailed below:
 
@@ -7,7 +7,7 @@ This project includes several important scripts that can be run from the command
 ## 1. Root Scripts
 
 ### `json2sch.py` (JSON to Schematic Generator)
-This script reads your `design.json` file and generates KiCad schematic (`.kicad_sch`) files. It supports multi-sheet hierarchies and creates an `abide_build.json` sidecar file.
+This script reads your `design.json` file and generates KiCad schematic (`.kicad_sch`) files. It supports multi-sheet hierarchies and creates an `kaibridge_build.json` sidecar file.
 
 **Usage:**
 ```bash
@@ -28,7 +28,7 @@ This script sets up the necessary `sym-lib-table` and `fp-lib-table` in your pro
 
 **Usage:**
 ```bash
-python kicad_lib_init.py <project_dir> -n abide
+python kicad_lib_init.py <project_dir> -n kaibridge
 ```
 
 ### `kicad_pins.py` (Pin Extractor & Verifier)
@@ -72,7 +72,7 @@ python Autoplacer/kicad_agent_bridge.py [script_path] [options]
 ## 4. Supporting Scripts
 
 ### Semantic Placement Protocol (REST API & Geometry Gate)
-Direct component placement is handled by combining AI hardware layout semantics with the Live PCB REST API Bridge (`kicad_agent_bridge.py --json-ops ops.json --commit`). abIDE's built-in Geometry Gate automatically resolves any micro-overlaps via deterministic courtyard relaxation.
+Direct component placement is handled by combining AI hardware layout semantics with the Live PCB REST API Bridge (`kicad_agent_bridge.py --json-ops ops.json --commit`). Kaibridge's built-in Geometry Gate automatically resolves any micro-overlaps via deterministic courtyard relaxation.
 
 ### `Autoplacer/freerouting_runner.py` (Headless Auto-Router)
 This script exports the DSN file from KiCad, routes the entire board in the background using FreeRouting (Java), and imports the SES file back into KiCad.

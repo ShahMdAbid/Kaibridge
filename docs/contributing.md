@@ -1,11 +1,11 @@
-# Contributing to abIDE
+# Contributing to Kaibridge
 
-First off, thank you for considering contributing to abIDE! It's people like you that make the open-source community such a great place to learn, inspire, and create.
+First off, thank you for considering contributing to Kaibridge! It's people like you that make the open-source community such a great place to learn, inspire, and create.
 
 ## How Can I Contribute?
 
 ### 1. Reporting Bugs & Issues
-If you encounter a bug, a crash, or unexpected behavior while using the KiCad AI bridge, please open an issue on our [GitHub Issue Tracker](https://github.com/ShahMdAbid/abIDE/issues).
+If you encounter a bug, a crash, or unexpected behavior while using the KiCad AI bridge, please open an issue on our [GitHub Issue Tracker](https://github.com/ShahMdAbid/Kaibridge/issues).
 When reporting an issue, please include:
 - Your KiCad version (e.g., KiCad 10.0.0)
 - Your Operating System
@@ -28,6 +28,6 @@ We welcome pull requests! If you want to fix a bug or add a feature:
 - Avoid introducing blocking GUI operations that freeze the KiCad main thread.
 
 ## License
-By contributing to abIDE, you agree that your contributions will be licensed under its **AGPL-3.0 License**.
+By contributing to Kaibridge, you agree that your contributions will be licensed under its **AGPL-3.0 License**.
 
 Once again, thank you for your support!

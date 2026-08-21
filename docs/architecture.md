@@ -1,4 +1,4 @@
-# abIDE System Architecture
+# Kaibridge System Architecture
 
 
 ```text

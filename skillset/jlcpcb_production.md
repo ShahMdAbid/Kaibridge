@@ -8,7 +8,7 @@ description: Instructions for generating manufacturing (Gerber) and assembly (BO
 When the user asks to prepare the board for manufacturing, ordering, or exporting to JLCPCB (e.g., "generate gerbers", "make JLCPCB files", "order dewar jonno file"), use this automated skillset.
 
 ## Context
-The `abIDE` plugin provides a built-in script, `export_jlcpcb.py`, located in the root of the plugin directory (`abIDE-main`). This script leverages `kicad-cli` to securely and cleanly export exactly what JLCPCB needs:
+The `Kaibridge` plugin provides a built-in script, `export_jlcpcb.py`, located in the root of the plugin directory (`Kaibridge-main`). This script leverages `kicad-cli` to securely and cleanly export exactly what JLCPCB needs:
 1.  **Gerber ZIP:** Cleaned production-ready zip containing only necessary fabrication layers and Excellon drill files.
 2.  **BOM (Bill of Materials) CSV:** Merged components with standard JLCPCB headers (`Comment, Designator, Footprint, Quantity, LCSC Part #`). It automatically resolves LCSC part numbers from `design.json`, schematic fields, or common defaults.
 3.  **CPL (Component Placement List / Pick and Place) CSV:** Precise centroid data formatted for JLCPCB (`Designator, Mid X, Mid Y, Layer, Rotation, Comment, Package`), filtering out non-SMD mechanical mounting holes.

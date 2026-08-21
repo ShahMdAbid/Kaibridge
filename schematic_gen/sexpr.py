@@ -1,5 +1,5 @@
 """
-abide/sexpr.py -- KiCad S-expression reader and writer.
+kaibridge/sexpr.py -- KiCad S-expression reader and writer.
 
 Neither parse() nor dumps() nor walk() recurses: a pathological file can
 never raise RecursionError, no matter how deeply nested.

@@ -1,5 +1,5 @@
 """
-abide/model.py -- design.json in, a validated Design out.
+kaibridge/model.py -- design.json in, a validated Design out.
 
 Accepts your current schema 2 (no 'sheets' key) and schema 3-lite. A schema 2
 file is upgraded in memory to one implicit root sheet, so old designs keep
@@ -518,7 +518,7 @@ def load(raw, lib):
     if schema not in (2, 3):
         raise DesignError(f"unsupported schema {schema}: this compiler reads 2 and 3")
     meta = dict(raw.get("meta") or {})
-    design_id = _text(meta.get("design_id")) or _text(meta.get("title")) or "abide"
+    design_id = _text(meta.get("design_id")) or _text(meta.get("title")) or "kaibridge"
     parts = _read_parts(raw, lib)
     groups, by_id = _read_groups(raw, parts)
     sheets = _read_sheets(raw, groups, by_id)
@@ -552,10 +552,10 @@ def load(raw, lib):
     return design
 
 def sidecar(design):
-    """abide_build.json -- the resolved design metadata sidecar."""
+    """kaibridge_build.json -- the resolved design metadata sidecar."""
     return {
         "schema": 3,
-        "generated_by": "abide",
+        "generated_by": "kaibridge",
         "design_id": design.design_id,
         "sheets": [
             {"id": s.id, "title": s.title, "paper": s.paper}

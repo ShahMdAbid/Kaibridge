@@ -1,6 +1,6 @@
 ---
-name: KiCad abIDE Plugin Usage
-description: Guidelines and instructions for using the abIDE plugin for KiCad 10.
+name: KiCad Kaibridge Plugin Usage
+description: Guidelines and instructions for using the Kaibridge plugin for KiCad 10.
 ---
 
 ### Agent Protocol: Autonomous KiCad Flow 
@@ -13,7 +13,7 @@ STRICT instructions. Zero hallucination. If a rule and your instinct disagree, t
     - `<PROJECT_DIR>` — the folder containing the `.kicad_pro`
     - `<PLUGIN_DIR>` — the folder containing `json2sch.py`
 2. **Never search the filesystem for either.** If a path is wrong, ask again — do not probe.
-3. `<LIB_NAME>` is `abide` everywhere. `kicad_lib_init.py -n abide` and `easyeda2kicad --output "$PWD/libs/abide"` must use the same name or the library tables will not resolve.
+3. `<LIB_NAME>` is `kaibridge` everywhere. `kicad_lib_init.py -n kaibridge` and `easyeda2kicad --output "$PWD/libs/kaibridge"` must use the same name or the library tables will not resolve.
 4. Confirm `kicad_paths.json` exists next to `json2sch.py` and is filled in. If a script errors about it, paste the error to the user verbatim — the error already contains the instructions. Do not write path-finding code.
 
 ### 📂 RULE 0.5 — File Map (read before writing ANY pcbnew code)
@@ -25,7 +25,7 @@ Before writing ANY custom `pcbnew` Python script, check if the functionality alr
 | File | Purpose | Invocation |
 |---|---|---|
 | `json2sch.py` | `design.json` → `.kicad_sch` schematic files | `python json2sch.py <DIR> --dry-run` |
-| `kicad_lib_init.py` | Initialize project library tables (`sym-lib-table`, `fp-lib-table`) | `python kicad_lib_init.py <DIR> -n abide` |
+| `kicad_lib_init.py` | Initialize project library tables (`sym-lib-table`, `fp-lib-table`) | `python kicad_lib_init.py <DIR> -n kaibridge` |
 | `kicad_pins.py` | Pin extraction, footprint verification, shared `kicad_paths.json` reader | `python kicad_pins.py <SYM> --verify` |
 | `export_jlcpcb.py` | Generates JLCPCB-compatible Gerber ZIP, BOM CSV, and CPL CSV | `python export_jlcpcb.py <DIR>` |
 
@@ -48,7 +48,7 @@ Before writing ANY custom `pcbnew` Python script, check if the functionality alr
 | `place.py` | Schematic symbol placement / layout engine. Grid-based shelf packing with stub wiring. |
 | `klib.py` | KiCad symbol library reader. Extracts bounding boxes, pins, footprint fields from `.kicad_sym`. |
 | `sexpr.py` | S-expression parser/serializer for all KiCad file formats. |
-| `geometry.py` | **Single source of truth for overlap detection.** `Box`, `mtv()`, `find_overlaps()`, `separate()`. |
+| `geometry.py` | **Single source of truth for overlap detection.** `Box`, `mtv()`, `find_overlaps()`. |
 | `paths.py` | Reads `kicad_paths.json`, finds `kicad-cli` path. |
 
 #### `boardmanager.py` (board_engine) Built-in Ops (use via `--json-ops`)
@@ -61,6 +61,16 @@ footprint.set_field track.add         track.set_width    via.add
 item.delete        net.delete_routing board.set_size     board.fit_outline
 board.prep_for_route board.drc_check
 ```
+
+**Op Syntax Requirements:**
+*   `board.set_size`: Requires exact keys `width`, `height`, `origin_x`, `origin_y` (all in mm). **Do not use `_mm` suffixes.**
+*   `board.fit_outline`: Requires exact key `margin` (in mm). Automatically shrink-wraps the board around all placed components with the specified safety margin radius at the corners.
+
+**Grid-Snap Placement (Automatic):**
+All `footprint.place` and `footprint.move` coordinates are automatically quantized to a **0.5mm grid** before reaching `SetPosition()`. This eliminates micro-overlap decimal noise and produces cleaner, more professional layouts.
+*   **Default grid:** 0.5mm (works well for mixed-size components from 0402 passives to QFP-48 ICs).
+*   **Per-op override:** Add `"grid": 0.25` to use a finer grid, or `"grid": 0` to disable snapping for that specific op (e.g., for precision pad-anchored placement).
+*   Example: `{"op": "footprint.place", "ref": "C1", "x": 132.37, "y": 84.12, ...}` → snapped to `(132.5, 84.0)`.
 
 #### ⚠️ Anti-Reinvention Rules (MANDATORY)
 
@@ -80,7 +90,7 @@ board.prep_for_route board.drc_check
 4. Initialize libraries:
 
 ```powershell
-python "<PLUGIN_DIR>\kicad_lib_init.py" "<PROJECT_DIR>" -n abide
+python "<PLUGIN_DIR>\kicad_lib_init.py" "<PROJECT_DIR>" -n kaibridge
 ```
 
 ### 📥 RULE 2 — Component acquisition
@@ -93,7 +103,7 @@ One component per command. CWD **must** be `<PROJECT_DIR>` or `--project-relativ
 
 ```powershell
 Push-Location "<PROJECT_DIR>"
-easyeda2kicad --lcsc_id <LCSC_ID> --full --output "$PWD/libs/abide" --overwrite --project-relative
+easyeda2kicad --lcsc_id <LCSC_ID> --full --output "$PWD/libs/kaibridge" --overwrite --project-relative
 Pop-Location
 ```
 
@@ -102,7 +112,7 @@ Pop-Location
 ### 🔎 RULE 3 — Pin verification (MANDATORY GATE)
 
 ```powershell
-python "<PLUGIN_DIR>\kicad_pins.py" "<PROJECT_DIR>\libs\abide.kicad_sym" --verify
+python "<PLUGIN_DIR>\kicad_pins.py" "<PROJECT_DIR>\libs\kaibridge.kicad_sym" --verify
 ```
 
 Exit code 1 = broken part. `FAIL` and `SKIP` are both blocking — a library you cannot reach is a library `Update PCB from Schematic` will silently skip.
@@ -110,7 +120,7 @@ Exit code 1 = broken part. `FAIL` and `SKIP` are both blocking — a library you
 Then extract exact data for each symbol you will use:
 
 ```powershell
-python "<PLUGIN_DIR>\kicad_pins.py" "<PROJECT_DIR>\libs\abide.kicad_sym" -s <SYMBOL_NAME> --json
+python "<PLUGIN_DIR>\kicad_pins.py" "<PROJECT_DIR>\libs\kaibridge.kicad_sym" -s <SYMBOL_NAME> --json
 python "<PLUGIN_DIR>\kicad_pins.py" --native <LIBRARY_NAME> -s <SYMBOL_NAME> --json
 ```
 
@@ -129,6 +139,7 @@ Rules:
 1. Pin references are `"<REF>.<PIN_NUMBER>"` and come **only** from `kicad_pins.py --json`. Never guess a pin number.
 2. Name every junction (`LED_A`, `EN`, `IO0`). Never `Net-(D1_Pad1)` — the compiler rejects it.
 3. Label style is derived, not declared. Rails (`GND`, `+3V3`, `VBUS`, `VIN`, anything in `power_flags`) become global labels automatically. A net that touches two sheets becomes a hierarchical label plus a sheet pin automatically. Only set `nets[].style` when you need to override that, which is almost never.
+   * **ERC Trap Warning:** Only assign `power_flags` to strictly passive nets (like raw connector inputs or diode outputs). Never assign `power_flags` to nets actively driven by regulators (like LDO or DC-DC output pins), or KiCad ERC will throw a `[pin_to_pin]` collision error.
 4. Every unconnected `power_in` pin is a hard error. Wire it or list it in `no_connect`.
 5. If the design has more than ~40 parts, declare `sheets`. One sheet per functional block. Never split a group across sheets.
 
@@ -154,21 +165,21 @@ Read the console output. If you see severe violations (like `[ERROR] Pin not con
 Generated outputs:
 - `<project>.kicad_sch` — root schematic
 - One `<sheet_id>.kicad_sch` per declared sheet (multi-sheet only)
-- `abide_build.json` — resolved design sidecar
+- `kaibridge_build.json` — resolved design sidecar
 - Timestamped `.bak` files for anything replaced
 
 Generated files target KiCad 7 and newer (default KiCad 9; use `--kicad-version` flag to override).
 
-*(Note: While the schematic generator supports targeting KiCad 7+, the abIDE PCB plugin and bridge itself requires KiCad 10.)*
+*(Note: While the schematic generator supports targeting KiCad 7+, the Kaibridge PCB plugin and bridge itself requires KiCad 10.)*
 
 ### 🔧 RULE 5 — Schematic → PCB (Human Handoff)
 
 1. 🧍 **HUMAN**: open the project in KiCad. Tools → Annotate (keep existing) → ERC.
 2. 🧍 **HUMAN**: PCB Editor → **F8** (Update PCB from Schematic) → **Ctrl+S**.
     - There is **no** headless or scripted equivalent of F8. Do not attempt one. Stop and wait.
-3. 🧍 **HUMAN**: Tools → External Plugins → **abIDE** (starts the bridge HTTP REST API server).
+3. 🧍 **HUMAN**: Tools → External Plugins → **Kaibridge** (starts the bridge HTTP REST API server).
 4. Agent confirms bridge is alive: `python "<PLUGIN_DIR>\Autoplacer\kicad_agent_bridge.py" --state summary`
-    - If `--- KICAD NOT CONNECTED ---` → ask user to open abIDE and retry once.
+    - If `--- KICAD NOT CONNECTED ---` → ask user to open Kaibridge and retry once.
 
 ### 🧠 RULE 6 — Autonomous Placement → Visual Critique → Routing → DRC (The Closed-Loop Vision Protocol)
 
@@ -199,7 +210,7 @@ python "<PLUGIN_DIR>\Autoplacer\kicad_agent_bridge.py" --state summary
 ```powershell
 python "<PLUGIN_DIR>\Autoplacer\kicad_agent_bridge.py" --json-ops ops.json --commit
 ```
-The abIDE Geometry Gate (`gatekeeper.py`) verifies zero courtyard collisions and closes `Edge.Cuts`.
+The Kaibridge Geometry Gate (`gatekeeper.py`) verifies zero courtyard collisions and closes `Edge.Cuts`.
 
 **Step 4 — Visual Snapshot Export:**
 ```powershell
@@ -339,7 +350,7 @@ graph TD
 ### 🚨 RULE 9 — Failure Recovery
 
 **If bridge reports KICAD NOT CONNECTED:**
-- ask user to open the abIDE plugin.
+- ask user to open the Kaibridge plugin.
 - retry exactly once.
 - do not start another bridge.
 
@@ -395,7 +406,7 @@ graph TD
 | 2 | Reopen the project after `json2sch` writes | KiCad caches the schematic in memory |
 | 3 | **F8** — Update PCB from Schematic | No CLI and no Python API exposes it |
 | 4 | **Ctrl+S** after F8 | `pcb_snapshot` and `kicad-cli` read from disk |
-| 5 | Open **abIDE** | The bridge HTTP REST API server only exists while the window is open |
+| 5 | Open **Kaibridge** | The bridge HTTP REST API server only exists while the window is open |
 | 6 | Open KiCad after automated close | Windows Session 0 isolation hides agent-spawned GUI apps |
 | 7 | **Design Alignment Gate (Checkpoint 0)** | Confirm layout strategy and prioritize user-specific placement / symmetry directives |
 | 8 | **Placement Approval (Checkpoint 1)** | Human engineer validates physical layout, spacing, and connector orientation before triggering router |

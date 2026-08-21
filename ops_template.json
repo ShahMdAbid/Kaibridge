@@ -25,7 +25,7 @@
   {
     "_stage": "STAGE 2A: LOCK EDGE CONNECTOR",
     "_intent": "Lock J1 in place to anchor the mechanical boundary",
-    "_rule": "Always lock edge connectors immediately so subsequent auto-separation passes do not nudge them",
+    "_rule": "Always lock edge connectors immediately to prevent accidental movement",
     "op": "footprint.lock",
     "ref": "J1",
     "locked": true

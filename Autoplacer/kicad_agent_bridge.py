@@ -1,4 +1,4 @@
-"""CLI bridge for sending python commands to the KiCad abIDE plugin."""
+"""CLI bridge for sending python commands to the KiCad Kaibridge plugin."""
 import sys
 import os
 import json
@@ -64,11 +64,11 @@ def run_kicad_code(script_path=None, code_stdin=False, inline_code=None,
     port, token = get_port_and_token()
     if port is None:
         print("--- KICAD NOT CONNECTED ---")
-        print("FATAL ERROR: No port file found - abIDE has not been opened yet "
-              "in this KiCad session. Open the abIDE window in KiCad's PCB "
-              "Editor (Tools > External Plugins > abIDE) and try again.")
+        print("FATAL ERROR: No port file found - Kaibridge has not been opened yet "
+              "in this KiCad session. Open the Kaibridge window in KiCad's PCB "
+              "Editor (Tools > External Plugins > Kaibridge) and try again.")
         print("AI AGENT: Do NOT search the filesystem or guess a fix - just ask "
-              "the user to open abIDE, then retry once.")
+              "the user to open Kaibridge, then retry once.")
         return False
 
     # §2.8: Include auth token in payload
@@ -86,14 +86,14 @@ def run_kicad_code(script_path=None, code_stdin=False, inline_code=None,
             raw = response.read()
             if not raw:
                 print("--- KICAD ERROR ---")
-                print("Connection closed by abIDE with no response.")
+                print("Connection closed by Kaibridge with no response.")
                 return False
             try:
                 resp = json.loads(raw.decode('utf-8'))
             except json.JSONDecodeError:
                 print("--- KICAD ERROR ---")
                 print("Zombie Port Detected! Connected to a wrong program.")
-                print("Please reopen the abIDE window in KiCad to refresh the port.")
+                print("Please reopen the Kaibridge window in KiCad to refresh the port.")
                 return False
             status = resp.get("status", "unknown")
             output = resp.get("output", "")
@@ -101,9 +101,9 @@ def run_kicad_code(script_path=None, code_stdin=False, inline_code=None,
             print(output)
             if status != "success":
                 return False
-            if "ABIDE_RESULT" in output:
+            if "KAIBRIDGE_RESULT" in output:
                 for line in output.split("\n"):
-                    if line.startswith("ABIDE_RESULT "):
+                    if line.startswith("KAIBRIDGE_RESULT "):
                         try:
                             r = json.loads(line[13:])
                             if r.get("failed") or r.get("applied") is False:
@@ -114,25 +114,25 @@ def run_kicad_code(script_path=None, code_stdin=False, inline_code=None,
     except urllib.error.URLError as e:
         if isinstance(e.reason, ConnectionRefusedError) or isinstance(e.reason, OSError):
             print("--- KICAD NOT CONNECTED ---")
-            print("FATAL ERROR: abIDE is not listening. Open the abIDE window in "
-                  "KiCad's PCB Editor (Tools > External Plugins > abIDE) and try again.")
+            print("FATAL ERROR: Kaibridge is not listening. Open the Kaibridge window in "
+                  "KiCad's PCB Editor (Tools > External Plugins > Kaibridge) and try again.")
             print("AI AGENT: Do NOT search the filesystem or guess a fix - just ask "
-                  "the user to open abIDE, then retry once.")
+                  "the user to open Kaibridge, then retry once.")
             return False
         if isinstance(e.reason, socket.timeout):
             print("--- KICAD TIMEOUT ---")
-            print(f"No response from abIDE within {timeout}s. The script may still be "
+            print(f"No response from Kaibridge within {timeout}s. The script may still be "
                   "running on KiCad's main thread (check the Output Console tab in "
-                  "abIDE). Increase --timeout if the script is expected to be slow.")
+                  "Kaibridge). Increase --timeout if the script is expected to be slow.")
             return False
         print("--- KICAD ERROR ---")
         print(f"Bridge communication error: {e}")
         return False
     except socket.timeout:
         print("--- KICAD TIMEOUT ---")
-        print(f"No response from abIDE within {timeout}s. The script may still be "
+        print(f"No response from Kaibridge within {timeout}s. The script may still be "
               "running on KiCad's main thread (check the Output Console tab in "
-              "abIDE). Increase --timeout if the script is expected to be slow.")
+              "Kaibridge). Increase --timeout if the script is expected to be slow.")
         return False
     except Exception as e:
         print("--- KICAD ERROR ---")
@@ -153,7 +153,7 @@ if __name__ == "__main__":
     parser.add_argument("--keep-state", action="store_true",
                          help="Reuse the shared persistent namespace across calls, like a REPL "
                               "(default: a brand new namespace every call). Also shared with "
-                              "the manual 'Run' button in KiCad's abIDE window.")
+                              "the manual 'Run' button in KiCad's Kaibridge window.")
     parser.add_argument("--reset-state", action="store_true",
                          help="Clear the shared persistent namespace. Independent of "
                               "--keep-state: can be combined with any call, or used alone "
@@ -178,7 +178,7 @@ if __name__ == "__main__":
             "from boardmanager import apply_ops\n"
             f"ops = json.loads(base64.b64decode('{ops_b64}').decode())\n"
             f"result = apply_ops(ops, dry_run={not getattr(args, 'commit', False)}, save={getattr(args, 'commit', False)}, refill=False, verify=False)\n"
-            "print('\\nABIDE_RESULT ' + json.dumps(result))\n"
+            "print('\\nKAIBRIDGE_RESULT ' + json.dumps(result))\n"
         )
 
     if args.state:

@@ -2,7 +2,7 @@
 """
 kicad_lib_init.py -- add project-scoped library plumbing to an existing KiCad project.
 
-    python kicad_lib_init.py "F:/kicadtest1" -n abide
+    python kicad_lib_init.py "F:/kicadtest1" -n kaibridge
 
 Creates / upserts:
     <PROJECT_DIR>/sym-lib-table
@@ -87,7 +87,7 @@ def upsert_table(file: Path, tag, version, name, uri_tpl):
 def main():
     ap = argparse.ArgumentParser(description="Set up project libraries for a KiCad project.")
     ap.add_argument("project_dir", help="existing KiCad project folder")
-    ap.add_argument("-n", "--name", default="abide", help="project library name")
+    ap.add_argument("-n", "--name", default="kaibridge", help="project library name")
     a = ap.parse_args()
 
     name = a.name.strip()

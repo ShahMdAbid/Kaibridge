@@ -1,5 +1,5 @@
 """
-abide/geometry.py -- the only place in abIDE that knows what "overlap" means.
+kaibridge/geometry.py -- the only place in Kaibridge that knows what "overlap" means.
 Everything is mm. KiCad's Y axis points DOWN, so y0 is the TOP edge.
 """
 from dataclasses import dataclass

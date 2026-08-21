@@ -1,9 +1,10 @@
 <div align="center">
-  <h1>abIDE (Agent Bridge IDE)</h1>
+  <h1>Kaibridge</h1>
+  <p><em>KiCad ↔ AI Agent Bridge</em></p>
   <p><b>An end-to-end KiCad plugin that connects external AI agents to architect circuits, source verified components, compile multi-sheet schematics, place components via closed-loop visual feedback, and route PCBs inside the native KiCad environment—operating alongside a human engineer.</b></p>
 
 
-[![Download abIDE (Windows)](https://img.shields.io/badge/Download_abIDE_(Windows)-v1.0-2EA043?style=flat-square&logo=windows&logoColor=white)](https://github.com/ShahMdAbid/abIDE/releases/latest/download/abIDE_v1.0.zip)
+[![Download Kaibridge (Windows)](https://img.shields.io/badge/Download_Kaibridge_(Windows)-v1.0-2EA043?style=flat-square&logo=windows&logoColor=white)](https://github.com/ShahMdAbid/Kaibridge/releases/latest/download/Kaibridge_v1.0.zip)
 
 <br/>
 
@@ -22,13 +23,13 @@
 * [Architecture](docs/architecture.md)
 * [User Guide](docs/user-guide.md)
 * [Contributing Guidelines](docs/contributing.md)
-* [Issue Tracker](https://github.com/ShahMdAbid/abIDE/issues)
+* [Issue Tracker](https://github.com/ShahMdAbid/Kaibridge/issues)
 
 
 ## Quick Start
 
 ### 1. Install
-- Download abIDE.
+- Download Kaibridge.
 - Extract the folder into your KiCad 10 plugins directory (`Documents\KiCad\10.0\scripting\plugins\`).
 
 ### 2. Configure
@@ -37,7 +38,7 @@
 ### 3. Run
 1. Open **KiCad 10** and open your project.
 2. Click to open the **PCB Editor**.
-3. In the top menu, click **Tools** → **External Plugins** → **abIDE**.
+3. In the top menu, click **Tools** → **External Plugins** → **Kaibridge**.
 4. Open the plugin folder in your AI agent (e.g. Antigravity IDE) and start prompting! (See the [User Guide](docs/user-guide.md) for a step-by-step example conversation).
 
 ## AI Disclosure
@@ -46,20 +47,17 @@ This project was developed with the support of AI-assisted coding tools. AI tool
 
 ## Disclaimer
 
- **A Note on Fundamentals:** This tool is designed to accelerate and streamline your workflow. However, it requires a foundational understanding of PCB design—**AI-generated design suggestions do not replace qualified engineering review.**
+This project is provided without any warranty, express or implied. The author(s) accept no liability for damages of any kind arising from the use of this plugin, including but not limited to: 
 
-> **No Warranty**
-> 
-> This project is provided without any warranty, express or implied. The author(s) accept no liability for damages of any kind arising from the use of this plugin, including but not limited to:
-> 
-> - Errors in generated schematics, PCB layouts, or manufacturing files
-> - Damage to hardware, components, or devices caused by incorrect designs
-> - Financial losses due to manufacturing errors or incorrect orders
-> - Data loss or corruption of KiCAD project files
+- Errors in generated schematics, PCB layouts, or manufacturing files
+- Damage to hardware, components, or devices caused by incorrect designs
+- Financial losses due to manufacturing errors or incorrect orders
+- Data loss or corruption of KiCAD project files.
+
+ **A Note on Fundamentals:** Although this tool is designed to accelerate and streamline your workflow, it requires a foundational understanding of PCB design. **AI-generated design suggestions do not replace qualified engineering review.**
 
 ## License
 
 This project is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**.
-You are free to use and modify this plugin. However, if you modify the code and make it available over a network (e.g., as a SaaS or web tool), you **must** open-source your modified backend code under the same AGPL-3.0 license. 
-
+You are free to use and modify this plugin. However, if you modify the code and make it available over a network (e.g., as a SaaS or web tool), you **must** open-source your modified backend code under the same AGPL-3.0 license.
 

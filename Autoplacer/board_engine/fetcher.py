@@ -499,3 +499,4 @@ def ai_context(board=None, mode="summary", net_filter=None):
     if size_kb > 900:
         print("  !! large. Use mode='summary' or net_filter=[...] for the AI prompt.")
     return bundle
+
