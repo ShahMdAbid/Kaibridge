@@ -1,7 +1,6 @@
 <div align="center">
-  <h1>Kaibridge 2.0</h1>
-  <p><em>KiCad <-> AI Agent Bridge</em></p>
-  <p><b>An end-to-end bridge that connects external AI agents to architect circuits, source verified components, compile multi-sheet schematics, place components, and route PCBs inside KiCad 10—operating alongside a human engineer.</b></p>
+  <h1>Kaibridge</h1>
+  <p><b>A Model Context Protocol (MCP) server that connects AI agents to architect circuits, source components, compile schematics, place footprints, and route PCBs inside KiCad 10—operating alongside a human engineer.</b></p>
 
 [![Download Kaibridge (Windows)](https://img.shields.io/badge/Download_Kaibridge_(Windows)-v2.0-2EA043?style=flat-square&logo=windows&logoColor=white)](https://github.com/ShahMdAbid/Kaibridge/releases/latest/download/Kaibridge_v2.0.zip)
 
