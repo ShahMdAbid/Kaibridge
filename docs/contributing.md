@@ -1,33 +1,34 @@
-# Contributing to Kaibridge
+#Contributing to Kaibridge
 
-First off, thank you for considering contributing to Kaibridge! It's people like you that make the open-source community such a great place to learn, inspire, and create.
+Thank you for considering contributing to Kaibridge!
 
-## How Can I Contribute?
+##How Can I Contribute?
 
-### 1. Reporting Bugs & Issues
-If you encounter a bug, a crash, or unexpected behavior while using the KiCad AI bridge, please open an issue on our [GitHub Issue Tracker](https://github.com/ShahMdAbid/Kaibridge/issues).
+###1. Reporting Bugs & Issues
+If you encounter a bug, unexpected behavior, or DRC/ERC discrepancy, please open an issue on the [GitHub Issue Tracker](https://github.com/ShahMdAbid/Kaibridge/issues).
 When reporting an issue, please include:
-- Your KiCad version (e.g., KiCad 10.0.0)
+- Your KiCad version (e.g. KiCad 10.0.0)
 - Your Operating System
-- The exact error log or traceback from the KiCad scripting console or the background terminal
-- A description of what you were trying to do (e.g., "Tried to place U1 and the geometry gate crashed").
+- The terminal traceback or MCP error log
+- The minimal circuit prompt or `design.json` that triggered the issue
 
-### 2. Suggesting Enhancements
-If you have ideas for new features (like better prompt engineering, new sourcing providers besides LCSC, or UI improvements), feel free to open a feature request issue.
+###2. Suggesting Enhancements
+Feature requests for new EDA capabilities, routing heuristics, or footprint libraries are welcome via GitHub issues.
 
-### 3. Submitting Pull Requests
-We welcome pull requests! If you want to fix a bug or add a feature:
+###3. Submitting Pull Requests
 1. Fork the repository.
-2. Create a new branch for your feature (`git checkout -b feature/amazing-feature`).
-3. Commit your changes (`git commit -m 'feat: add amazing feature'`).
-4. Push to the branch (`git push origin feature/amazing-feature`).
-5. Open a Pull Request.
+2. Create a feature branch (`git checkout -b feature/my-feature`).
+3. Ensure all tests pass:
+   ```powershell
+   python tests/run_all_tests.py
+   ```
+4. Commit your changes (`git commit -m 'feat: description of changes'`).
+5. Push to your fork and submit a Pull Request.
 
-## Development Setup
-- Please ensure you test your Python scripts against the **native KiCad Python interpreter** (`pcbnew`), not just a standalone Python environment.
-- Avoid introducing blocking GUI operations that freeze the KiCad main thread.
+##Development Guidelines
+- All PCB operations must maintain compatibility with KiCad 10's headless Python bindings (`pcbnew`).
+- Avoid adding GUI blocking calls that prevent headless execution.
+- Maintain deterministic behavior in placement and routing scripts.
 
-## License
-By contributing to Kaibridge, you agree that your contributions will be licensed under its **AGPL-3.0 License**.
-
-Once again, thank you for your support!
+##License
+By contributing to Kaibridge, you agree that your contributions will be licensed under its **GNU Affero General Public License v3.0 (AGPL-3.0)**.

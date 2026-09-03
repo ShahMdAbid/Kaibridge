@@ -1,417 +1,346 @@
 ---
-name: KiCad Kaibridge Plugin Usage
-description: Guidelines and instructions for using the Kaibridge plugin for KiCad 10.
+name: KiCad Kaibridge 2.0 Hardware Automation Engine & MCP Protocol
+description: Guidelines, tool reference, and execution protocol for Kaibridge 2.0 — the autonomous, headless KiCad 10 hardware design automation engine with MCP integration, closed-loop visual critique, live SWIG API Oracle, structural board introspection, snapshot diffing, offline LCSC sourcing, and 100% factory-ready JLCPCB production export.
 ---
 
-### Agent Protocol: Autonomous KiCad Flow 
+#Kaibridge 2.0 Autonomous Hardware Engineering Protocol
 
 STRICT instructions. Zero hallucination. If a rule and your instinct disagree, the rule wins.
 
-### 🧭 RULE 0 — Session contract (do this before anything else)
+---
 
-1. Ask the user for exactly two paths and echo them back for confirmation:
-    - `<PROJECT_DIR>` — the folder containing the `.kicad_pro`
-    - `<PLUGIN_DIR>` — the folder containing `json2sch.py`
-2. **Never search the filesystem for either.** If a path is wrong, ask again — do not probe.
-3. `<LIB_NAME>` is `kaibridge` everywhere. `kicad_lib_init.py -n kaibridge` and `easyeda2kicad --output "$PWD/libs/kaibridge"` must use the same name or the library tables will not resolve.
-4. Confirm `kicad_paths.json` exists next to `json2sch.py` and is filled in. If a script errors about it, paste the error to the user verbatim — the error already contains the instructions. Do not write path-finding code.
+### RULE 0 — Session Contract & Project Directory Resolution
 
-### 📂 RULE 0.5 — File Map (read before writing ANY pcbnew code)
+1. **Project Directory Handling:**
+   - If the user provides `<PROJECT_DIR>` or points to an existing KiCad project folder, use that path directly.
+   - If the user has **NOT** specified a project directory: The agent **MUST NOT** make silent assumptions. Propose creating a dedicated project directory (e.g. `<workspace>/<Project_Name>`) and confirm before initializing files.
+2. **Headless New Project Bootstrapping (`kaibridge_init_project`):**
+   - If starting a brand-new project from scratch, call `kaibridge_init_project` with `project_dir` and `project_name`.
+   - This automatically creates the project directory, `<name>.kicad_pro` (KiCad 10 JSON format), empty `<name>.kicad_pcb`, `sym-lib-table`, `fp-lib-table`, and `kaibridge_dump/` folder in one step without requiring KiCad GUI.
+3. `<LIB_NAME>` is `kaibridge` everywhere. `kicad_lib_init.py -n kaibridge` and `easyeda2kicad --output "$PWD/libs/kaibridge"` must use the same library nickname.
+4. Confirm `kicad_paths.json` exists in the plugin directory and points to valid KiCad 10 binaries and libraries.
+5. **Intermediate Artifacts & Clean Workspace Rule (`kaibridge_dump/`):**
+   - Store all intermediate compiler specifications (`design.json`, `ops.json`, `erc_report.json`, `drc_report.json`, `board.dsn`, `board.ses`, schematic SVGs, board state dumps) inside `<PROJECT_DIR>/kaibridge_dump/`.
+   - The Kaibridge compiler and tooling natively resolve `<PROJECT_DIR>/kaibridge_dump/design.json`.
 
-Before writing ANY custom `pcbnew` Python script, check if the functionality already exists in these files. **Never reinvent what is already built.**
+---
 
-#### Root Scripts (run from command line)
+### RULE 1 — Mandatory Implementation Plan & Human Alignment Gate
 
-| File | Purpose | Invocation |
+1. **Mandatory Planning Gate (Start of Every Design Task):**
+   - When a user asks to design a circuit, create a board, or generate PCB files, the agent **MUST NOT** immediately begin creating or modifying files without approval.
+   - The agent **MUST** first enter planning mode and create an `implementation_plan.md` artifact outlining:
+     - Circuit Architecture & Sub-blocks (Power, MCU, Sensors, Connectors)
+     - Component BOM with target LCSC C-Part numbers and footprint packages (e.g. 0603, 0805, QFP-32, SOT-223)
+     - Proposed Board Dimensions, Connector Orientations & Spatial Placement Flow
+     - Verification Plan (ERC, DRC, Visual Render checkpoints)
+   - The agent **MUST HALT / STOP** calling tools, present the implementation plan with `RequestFeedback: true`, and explicitly wait for the user to approve (`"Proceed"` / `"Approved"`) before creating/modifying any files or executing the pipeline.
+
+2. **Sequential Human Checkpoints (Review & Approval Gates):**
+   - **Checkpoint 1 (Post-Schematic Review):** After generating `.kicad_sch` with 0 ERC errors, call `kaibridge_render_schematic_preview`, present the vector SVG preview path (`kaibridge_dump/schematic_svg/`), stop calling tools, and ask: *"Schematic is ready and verified (0 ERC errors). Shall I proceed to PCB synchronization and component placement?"*
+   - **Checkpoint 2 (Post-Placement & Visual Critique Review):** After placing components with `kaibridge_apply_ops_layout`, export the board SVG with `kaibridge_render_pcb_preview`, present the snapshot path & board analytics (dimensions, component positions), stop calling tools, and ask: *"Component placement is verified (0 courtyard overlaps). Shall I proceed to auto-routing?"*
+   - **Checkpoint 3 (Post-Routing & DRC Review):** After routing with `kaibridge_route_pcb` and adding ground planes, run `kaibridge_run_drc`, report violation status (0 errors, 0 unrouted nets), stop calling tools, and ask before generating production files.
+
+3. **User Overrides & Directives (Top Priority - Tier 0):**
+   - If the user provides specific placement guidelines, symmetry rules, connector orientations, or form-factor constraints, the agent **MUST** prioritize the user's instructions over all generic heuristics.
+
+4. **Manual Human Edits in KiCad:**
+   - The user is always free to open KiCad, inspect the schematic or PCB, make manual tweaks, and save (`Ctrl+S`).
+   - If the user makes manual edits in KiCad GUI:
+     - *Headless Resumption:* User saves (`Ctrl+S`) and closes KiCad so the headless engine can continue without file locks.
+     - *Live Visual Sync:* User keeps KiCad open with the Kaibridge window active.
+5. **Resumption:** When the user gives feedback or approves with *"proceed" / "continue"*, the agent seamlessly resumes from the current checkpoint without re-running completed work.
+
+---
+
+### RULE 2 — Tool & Core Engine Map (22 Integrated MCP Tools)
+
+When operating via MCP (e.g. Antigravity IDE), use these 22 dedicated Kaibridge 2.0 tools:
+
+| # | MCP Tool Name | Purpose | Key Parameters |
+|---|---|---|---|
+| 1 | `kaibridge_init_project` | **Headless Bootstrapper:** Create project folder, `.kicad_pro`, empty `.kicad_pcb`, library tables, and `kaibridge_dump/` | `project_dir`, `project_name` |
+| 2 | `kaibridge_lookup_lcsc_part` | **Instant Offline DB Sourcing:** Query local `easyeda-std.elib` & Golden Cache in < 1ms for MPN, basic/extended class, and footprint mapping | `lcsc_id`, `component_type`, `value`, `package` |
+| 3 | `kaibridge_fetch_lcsc_component` | Download symbol (.kicad_sym), footprint (.kicad_mod), and 3D model from LCSC with sequential pacing & retry | `project_dir`, `lcsc_id`, `lib_name`, `delay_sec` |
+| 4 | `kaibridge_query_symbol_pins` | Extract pin numbers, names, electrical types, and footprint from `.kicad_sym` (smart fuzzy & case fallback) | `project_dir`, `lib_id` |
+| 5 | `kaibridge_build_schematic` | Compile `design.json` into hierarchical `.kicad_sch` and run ERC validation (handles UTF-8 BOM) | `project_dir`, `apply_netclasses`, `run_erc_check` |
+| 6 | `kaibridge_render_schematic_preview` | Export high-resolution vector SVG or multi-page PDF of compiled schematic for AI visual verification | `project_dir`, `format`, `pages`, `exclude_drawing_sheet` |
+| 7 | `kaibridge_sync_to_pcb` | **Headless F8:** Instantiate footprints on `.kicad_pcb` and bind nets/ratsnest | `project_dir` |
+| 8 | `kaibridge_apply_ops_layout` | Execute `ops.json` layout payload (place, move, rotate, lock, unlock, add tracks, vias, delete, edge cuts) in <100ms with 0.5mm grid snap | `project_dir`, `ops` |
+| 9 | `kaibridge_autoplace_pcb` | Smart Geometric Autoplacer with collision avoidance and automatic Edge.Cuts board generation | `project_dir`, `board_width_mm`, `board_height_mm`, `pitch_mm` |
+| 10 | `kaibridge_render_pcb_preview` | Export vector SVG snapshot, top PNG render, and structural board analytics (dimensions, positions, track/via count) | `project_dir` |
+| 11 | `kaibridge_route_pcb` | Headless Freerouting 2.4.1 autorouter with 150um edge clearance & strict DRC + automatic zone refilling | `project_dir`, `track_width_mm`, `timeout_sec`, `copper_edge_clearance_um`, `strict_drc`, `max_passes` |
+| 12 | `kaibridge_unroute_pcb` | Rip up / delete copper tracks, vias, & optional copper zones (entire board, net, or layer) | `project_dir`, `net`, `layer`, `remove_zones` |
+| 13 | `kaibridge_add_ground_plane` | Add and fill copper ground pour zone (`GND` on `B.Cu` or `F.Cu`) with 0.3mm clearance | `project_dir`, `net`, `layer`, `clearance_mm` |
+| 14 | `kaibridge_run_drc` | Run headless Design Rules Check (DRC) via `kicad-cli` with `--refill-zones` and parse JSON violations | `project_dir` |
+| 15 | `kaibridge_export_production` | Generate 100% JLCPCB-compatible bundle (`Gerber_*.zip`, Drill, `BOM_*.csv`, `CPL_*.csv`) with auto-healing BOM fallback | `project_dir` |
+| 16 | `kaibridge_auto_relax_layout` | Physics-based geometry engine to automatically resolve courtyard collisions by pushing components apart | `project_dir`, `locked_refs`, `passes`, `margin` |
+| 17 | `kaibridge_api_oracle` | Live KiCad SWIG signature, class, constant & rules oracle; queries host `pcbnew.py` in < 4ms | `query`, `class_name` |
+| 18 | `kaibridge_inspect_board` | Structural board state introspection (alias: `kaibridge_get_board_state`; mode='summary' or 'full') | `project_dir`, `mode` |
+| 19 | `kaibridge_audit_placement` | Geometry Gate evaluation (alias: `kaibridge_placement_audit`): detect courtyard overlaps & boundary | `project_dir` |
+| 20 | `kaibridge_snapshot_board` | Save an immutable board state checkpoint and backup `.kicad_pcb` tagged before major operations | `project_dir`, `tag` |
+| 21 | `kaibridge_diff_board` | Compute structural delta (added/removed/moved parts, tracks, vias) between two snapshots or vs live board | `project_dir`, `snapshot_a`, `snapshot_b`, `tag_a`, `tag_b` |
+| 22 | `kaibridge_restore_snapshot` | Restore `.kicad_pcb` state from a previous snapshot checkpoint by tag or filename | `project_dir`, `tag`, `snapshot_file` |
+
+---
+
+### File Map & Core Modular Engines
+
+| File | Purpose | Invocation / Import |
 |---|---|---|
-| `json2sch.py` | `design.json` → `.kicad_sch` schematic files | `python json2sch.py <DIR> --dry-run` |
-| `kicad_lib_init.py` | Initialize project library tables (`sym-lib-table`, `fp-lib-table`) | `python kicad_lib_init.py <DIR> -n kaibridge` |
-| `kicad_pins.py` | Pin extraction, footprint verification, shared `kicad_paths.json` reader | `python kicad_pins.py <SYM> --verify` |
-| `export_jlcpcb.py` | Generates JLCPCB-compatible Gerber ZIP, BOM CSV, and CPL CSV | `python export_jlcpcb.py <DIR>` |
-
-#### `Autoplacer/` Scripts (run via bridge or command line)
-
-| File | Purpose | Invocation |
-|---|---|---|
-| `kicad_agent_bridge.py` | CLI ↔ KiCad HTTP bridge. All agent-to-KiCad communication goes through this. | `python bridge.py <script.py>` or `--state summary` or `--oracle "CLASS METHOD"` or `--json-ops <file>` |
-| `boardmanager.py` | **THE board state engine & manager.** Powered by modular `board_engine/`. State extraction, 16 built-in ops, snapshots, diffs, overlap detection, geometry gate, backup/restore. Called internally by bridge `--state` and `--json-ops`. | Never run directly. Used via `--state summary` or `--json-ops`. |
-| `freerouting_runner.py` | DSN export → Freerouting autorouter → SES import back into `.kicad_pcb`. Includes `audit_dsn()` to catch zero-width netclass rules before routing. | `python freerouting_runner.py <DIR>` |
-| `legacyboardengine/oracle.py` | Live SWIG signature lookup engine (Archived Phase 1 tool). Searches `pcbnew.py` source for exact method definitions. | Called via `bridge.py --oracle "CLASS METHOD"` |
-| `pcb_snapshot.py` | Force-save the live board to disk + SVG export via `kicad-cli`. | `python pcb_snapshot.py <DIR>` |
-
-#### `schematic_gen/` Package (Schematic Compiler & Geometry Solver)
-
-| File | Purpose |
-|---|---|
-| `model.py` | Validates `design.json` → `Design` object. All schema validation, net resolution, sheet assignment lives here. |
-| `render.py` | `Design` + `Layout` → `.kicad_sch` text files. UUID-stable regeneration (re-run produces identical UUIDs). |
-| `place.py` | Schematic symbol placement / layout engine. Grid-based shelf packing with stub wiring. |
-| `klib.py` | KiCad symbol library reader. Extracts bounding boxes, pins, footprint fields from `.kicad_sym`. |
-| `sexpr.py` | S-expression parser/serializer for all KiCad file formats. |
-| `geometry.py` | **Single source of truth for overlap detection.** `Box`, `mtv()`, `find_overlaps()`. |
-| `paths.py` | Reads `kicad_paths.json`, finds `kicad-cli` path. |
-
-#### `boardmanager.py` (board_engine) Built-in Ops (use via `--json-ops`)
-
-These 14 operations handle backup, validation, geometry gating, and verification automatically. **Always prefer these over raw `pcbnew` scripts:**
-
-```
-footprint.place    footprint.move     footprint.rotate   footprint.lock
-footprint.set_field track.add         track.set_width    via.add
-item.delete        net.delete_routing board.set_size     board.fit_outline
-board.prep_for_route board.drc_check
-```
-
-**Op Syntax Requirements:**
-*   `board.set_size`: Requires exact keys `width`, `height`, `origin_x`, `origin_y` (all in mm). **Do not use `_mm` suffixes.**
-*   `board.fit_outline`: Requires exact key `margin` (in mm). Automatically shrink-wraps the board around all placed components with the specified safety margin radius at the corners.
-
-**Grid-Snap Placement (Automatic):**
-All `footprint.place` and `footprint.move` coordinates are automatically quantized to a **0.5mm grid** before reaching `SetPosition()`. This eliminates micro-overlap decimal noise and produces cleaner, more professional layouts.
-*   **Default grid:** 0.5mm (works well for mixed-size components from 0402 passives to QFP-48 ICs).
-*   **Per-op override:** Add `"grid": 0.25` to use a finer grid, or `"grid": 0` to disable snapping for that specific op (e.g., for precision pad-anchored placement).
-*   Example: `{"op": "footprint.place", "ref": "C1", "x": 132.37, "y": 84.12, ...}` → snapped to `(132.5, 84.0)`.
-
-#### ⚠️ Anti-Reinvention Rules (MANDATORY)
-
-1. **Need board state?** → `--state summary`, NOT a custom `pcbnew` script.
-2. **Need to move/place/rotate footprints?** → `--json-ops` with `footprint.place`, NOT raw `SetPosition()`.
-3. **Need to clear tracks?** → `board.prep_for_route` op, NOT a custom `board.Remove(t)` loop.
-4. **Need board outline?** → `board.fit_outline` op, NOT drawing `PCB_SHAPE` manually.
-5. **Need overlap check?** → Read `placement_report.overlaps` from `--state summary`, NOT custom math.
-6. **Need to add a zone?** → **STOP.** Do not use `zone.add` or raw scripts. Ground pouring is a manual human task.
-7. **Need to run DRC?** → `board.drc_check` op, NOT a custom `kicad-cli` subprocess.
-
-### 🛑 RULE 1 — Environment & initialization
-
-1. Never guess paths. Configuration lives in `kicad_paths.json` only.
-2. Never create `.kicad_pro`. If `<PROJECT_DIR>` has none, **stop** and ask the user to create the project in the KiCad UI.
-3. One `.kicad_pro` per folder. The project **stem** — not the folder name — is the identity used everywhere downstream.
-4. Initialize libraries:
-
-```powershell
-python "<PLUGIN_DIR>\kicad_lib_init.py" "<PROJECT_DIR>" -n kaibridge
-```
-
-### 📥 RULE 2 — Component acquisition
-
-Split the BOM into **LCSC** (download) and **Native** (`Device:R`, `Device:C`, … — do nothing).
-
-Preflight once: `easyeda2kicad --version`. If missing, ask the user to `pip install easyeda2kicad` and stop.
-
-One component per command. CWD **must** be `<PROJECT_DIR>` or `--project-relative` fails with *"is not in the subpath of"*:
-
-```powershell
-Push-Location "<PROJECT_DIR>"
-easyeda2kicad --lcsc_id <LCSC_ID> --full --output "$PWD/libs/kaibridge" --overwrite --project-relative
-Pop-Location
-```
-
-- `handshake operation timed out` / `Failed to fetch data` = network, not a bad ID. Retry that one ID at most twice, then report it and continue with the rest. **Never substitute a different component.**
-
-### 🔎 RULE 3 — Pin verification (MANDATORY GATE)
-
-```powershell
-python "<PLUGIN_DIR>\kicad_pins.py" "<PROJECT_DIR>\libs\kaibridge.kicad_sym" --verify
-```
-
-Exit code 1 = broken part. `FAIL` and `SKIP` are both blocking — a library you cannot reach is a library `Update PCB from Schematic` will silently skip.
-
-Then extract exact data for each symbol you will use:
-
-```powershell
-python "<PLUGIN_DIR>\kicad_pins.py" "<PROJECT_DIR>\libs\kaibridge.kicad_sym" -s <SYMBOL_NAME> --json
-python "<PLUGIN_DIR>\kicad_pins.py" --native <LIBRARY_NAME> -s <SYMBOL_NAME> --json
-```
-
-<aside>
-📌
-The JSON contains a `footprint` field. **Copy it verbatim** into `design.json`. Do not reconstruct it from the package name — `easyeda2kicad` names footprints after the LCSC package and the string will not match anything you invent.
-</aside>
-
-### 📐 RULE 4 — `design.json`
-
-Always build `design.json` by strictly following the schema, keys, and structure defined in `<PLUGIN_DIR>\design_template.json`. 
-Do not guess the structure or make up your own keys. Read the `design_template.json` file first if you are unsure how to structure the output.
-
-Rules:
-
-1. Pin references are `"<REF>.<PIN_NUMBER>"` and come **only** from `kicad_pins.py --json`. Never guess a pin number.
-2. Name every junction (`LED_A`, `EN`, `IO0`). Never `Net-(D1_Pad1)` — the compiler rejects it.
-3. Label style is derived, not declared. Rails (`GND`, `+3V3`, `VBUS`, `VIN`, anything in `power_flags`) become global labels automatically. A net that touches two sheets becomes a hierarchical label plus a sheet pin automatically. Only set `nets[].style` when you need to override that, which is almost never.
-   * **ERC Trap Warning:** Only assign `power_flags` to strictly passive nets (like raw connector inputs or diode outputs). Never assign `power_flags` to nets actively driven by regulators (like LDO or DC-DC output pins), or KiCad ERC will throw a `[pin_to_pin]` collision error.
-4. Every unconnected `power_in` pin is a hard error. Wire it or list it in `no_connect`.
-5. If the design has more than ~40 parts, declare `sheets`. One sheet per functional block. Never split a group across sheets.
-
-Save to `<PROJECT_DIR>\design.json`. Schema reference: `design_template.json`.
-
-**The first command after writing `design.json` is always the dry run.** Writing the schematic before exit code 0 is forbidden:
-
-```powershell
-python "<PLUGIN_DIR>\json2sch.py" "<PROJECT_DIR>" --dry-run
-```
-
-Always read the dry-run report: it lists every sheet with its part count, net count and paper size, plus every warning.
-
-**Automated ERC Verification & Generation (MANDATORY):**
-Then, with **KiCad closed** (it will overwrite files on exit otherwise), you must generate the schematic, apply netclasses, and verify it is electrically sound in one command using the `--erc` flag:
-
-```powershell
-python "<PLUGIN_DIR>\json2sch.py" "<PROJECT_DIR>" --apply-netclasses --erc
-```
-
-Read the console output. If you see severe violations (like `[ERROR] Pin not connected (Symbol R11 Pin 1)`), it means you have a typo in your `design.json` net labels. Fix the `design.json` and re-run the command. Only proceed to the human handoff when the schematic is clean.
-
-Generated outputs:
-- `<project>.kicad_sch` — root schematic
-- One `<sheet_id>.kicad_sch` per declared sheet (multi-sheet only)
-- `kaibridge_build.json` — resolved design sidecar
-- Timestamped `.bak` files for anything replaced
-
-Generated files target KiCad 7 and newer (default KiCad 9; use `--kicad-version` flag to override).
-
-*(Note: While the schematic generator supports targeting KiCad 7+, the Kaibridge PCB plugin and bridge itself requires KiCad 10.)*
-
-### 🔧 RULE 5 — Schematic → PCB (Human Handoff)
-
-1. 🧍 **HUMAN**: open the project in KiCad. Tools → Annotate (keep existing) → ERC.
-2. 🧍 **HUMAN**: PCB Editor → **F8** (Update PCB from Schematic) → **Ctrl+S**.
-    - There is **no** headless or scripted equivalent of F8. Do not attempt one. Stop and wait.
-3. 🧍 **HUMAN**: Tools → External Plugins → **Kaibridge** (starts the bridge HTTP REST API server).
-4. Agent confirms bridge is alive: `python "<PLUGIN_DIR>\Autoplacer\kicad_agent_bridge.py" --state summary`
-    - If `--- KICAD NOT CONNECTED ---` → ask user to open Kaibridge and retry once.
-
-### 🧠 RULE 6 — Autonomous Placement → Visual Critique → Routing → DRC (The Closed-Loop Vision Protocol)
-
-**Placement principle:**
-The agent provides spatial intent through `ops.json`.
-Never assume the LLM's coordinates are geometrically valid.
-All placement must pass the Geometry Gate.
-(See `.agents/agentic-placement.md` for the full conceptual architecture).
-
-#### Step-by-Step Execution Protocol
-
-**Step 1 — Dynamic Circuit Cognition & Vision-Driven Implementation Plan:**
-```powershell
-python "<PLUGIN_DIR>\Autoplacer\kicad_agent_bridge.py" --state summary
-```
-1. Read `<PROJECT_DIR>\pcb_brain\ai_context_summary.json` and `design.json`.
-2. **Activate Multimodal Visual Critique Sense:** Dynamically reason across the circuit's functional topology (Sensors, MCU, Power, or Connectors).
-3. Draft a comprehensive `implementation_plan.md` outlining proposed board outline, connector positions, companion passive groupings, and spatial flow.
-
-**Step 2 — Human Alignment Gate (Top Priority Rule):**
-1. Ask the user if the proposed design matches their intended physical layout.
-2. **STRICT PRIORITY RULE:** If the user provides specific guidelines, reference pictures, symmetry rules (e.g., `[Resistor_Left] [Sensor] [Resistor_Right]`), connector orientations, or form-factor constraints, the agent **MUST** prioritize the user's instructions over all generic heuristics.
-3. If no specific user override is given, proceed according to the approved plan.
-
-**Step 3 — Generate & Apply `ops.json` with In-Memory Geometry Gate:**
-1. Translate the aligned spatial architecture into `<PROJECT_DIR>\ops.json` with exact non-overlapping coordinates.
-2. Apply via bridge:
-```powershell
-python "<PLUGIN_DIR>\Autoplacer\kicad_agent_bridge.py" --json-ops ops.json --commit
-```
-The Kaibridge Geometry Gate (`gatekeeper.py`) verifies zero courtyard collisions and closes `Edge.Cuts`.
-
-**Step 4 — Visual Snapshot Export:**
-```powershell
-python "<PLUGIN_DIR>\Autoplacer\pcb_snapshot.py" "<PROJECT_DIR>"
-```
-Generates `<project>_board.svg` vector render of the physical board.
-
-**Step 5 — 🧍 Human Checkpoint 1 (Placement Approval & Iterative Critique Loop):**
-1. Present the snapshot SVG and detailed spatial critique table to the user.
-2. Explicitly ask: *"Is the component placement approved to proceed to routing?"*
-3. **If Approved (YES):** Proceed immediately to Step 6 (`board.prep_for_route`) and Step 7 (`freerouting_runner.py`).
-4. **If Feedback / Rejected (NO):**
-   - **Do NOT proceed to routing.**
-   - Capture the current SVG snapshot using `pcb_snapshot.py`.
-   - Re-analyze the board using the agent's spatial critique brain in conjunction with the user's specific feedback.
-   - Generate adjustment `ops.json`, apply with `--commit`, export new snapshot SVG, and present back to the user in the same iterative review loop until approved.
-
-##### 🧠 Spatial Critique Framework (Used during Step 5):
-
-The agent evaluates the board visual render by **synchronizing canonical engineering rules** ([pcb_placement_rules.md](skillset/pcb_placement_rules.md) and [trackwidth_clearence_viasize.md](skillset/trackwidth_clearence_viasize.md)) with its **Multimodal Spatial Reasoning Brain**.
-
-###### 📊 Structured Visual Feedback Format:
-The agent MUST output its findings in this structured critique table before executing adjustments:
-
-| Ref | Current Visual Observation | Engineering / Skillset Rule Reference | Severity | Corrective Action | Target Coordinate / Rotation |
-|---|---|---|---|---|---|
-| `C1` | Placed 5.2mm away from MCU VDD pin | Decoupling Hierarchy (`pcb_placement_rules.md` §2.C) | High | Nudge closer to pin 18 | `x: 132.5, y: 84.0, rot: 90` |
-| `Y1` | Wide loop area between crystal & OSC pins | EMI / Oscillator Loop Area | Medium | Move directly above pins 7-8 | `x: 125.0, y: 78.0, rot: 0` |
-| `U2` | Heatsink tab pointing inward toward MCU | Thermal Dissipation (`pcb_placement_rules.md` §2.B) | High | Rotate 180° so tab faces board edge | `x: 140.0, y: 65.0, rot: 270` |
-| `R1, R2` | Staggered irregularly | Visual Symmetry & Alignment | Low | Align Y coordinate to 92.0mm | `x: 118.0, y: 92.0, rot: 0` |
-
-###### 🔄 Critique-to-Ops Translation:
-Convert the corrective actions directly into an adjustment `ops.json`:
-```json
-[
-  {"op": "footprint.place", "anchor": "centre", "ref": "C1", "x": 132.5, "y": 84.0, "rotation": 90},
-  {"op": "footprint.place", "anchor": "centre", "ref": "Y1", "x": 125.0, "y": 78.0, "rotation": 0},
-  {"op": "footprint.place", "anchor": "centre", "ref": "U2", "x": 140.0, "y": 65.0, "rotation": 270},
-  {"op": "footprint.place", "anchor": "centre", "ref": "R1", "x": 118.0, "y": 92.0, "rotation": 0},
-  {"op": "footprint.place", "anchor": "centre", "ref": "R2", "x": 122.0, "y": 92.0, "rotation": 0}
-]
-```
-Apply the adjustment via `python Autoplacer/kicad_agent_bridge.py --json-ops ops.json --commit` and re-verify.
-
-
-**Step 6 — Prepare for Routing:**
-```json
-[{"op": "board.prep_for_route"}]
-```
-Purges existing stray tracks and markers, verifying outline closure and route readiness.
-
-
-**Step 7 — Headless Auto-Routing (File-Lock Safe):**
-> [!WARNING]
-> **File-Lock Contention:** `freerouting_runner.py` edits the `.kicad_pcb` file directly on disk. You MUST ask the user to save their board (`Ctrl+S`) before running this command, and Revert to Saved after it finishes.
-
-1. **Ask User:** "Please press `Ctrl+S` to save your board and do not make any edits. I am starting the auto-router."
-2. **Execute:** 
-```powershell
-python "<PLUGIN_DIR>\Autoplacer\freerouting_runner.py" "<PROJECT_DIR>"
-```
-3. **Ask User:** "Routing is complete! Please go to **File → Revert to Saved** in KiCad to load the routed tracks."
-
-**Step 8 — 🧍 Human Checkpoint (Ground Copper Pour):**
-Ground pouring via JSON is deprecated due to KiCad thread-lock crashes. 
-Instruct the user to manually draw the GND copper zones:
-1. Ask the user: "Please use the 'Add a filled zone' tool in KiCad to draw a GND zone on `F.Cu` and `B.Cu` around the board outline, and press **`B`** to fill them. Save the board (`Ctrl+S`) when done."
-2. Wait for the user to confirm they have filled the zones and saved before proceeding to DRC.
-
-**Step 9 — DRC Verification:**
-```json
-[{"op": "board.drc_check"}]
-```
-Runs `kicad-cli pcb drc` to verify 0 errors and 0 unrouted nets.
-
-**Step 10 — Final Production Snapshot:**
-```powershell
-python "<PLUGIN_DIR>\Autoplacer\pcb_snapshot.py" "<PROJECT_DIR>"
-```
-Save and present the final board SVG/render artifact to the user.
-
-**Step 11 — JLCPCB Production Export:**
-When the user asks to prepare files for manufacturing or JLCPCB ordering, ALWAYS read the `skillset/jlcpcb_production.md` instruction file first. 
-```powershell
-python "<PLUGIN_DIR>\export_jlcpcb.py" "<PROJECT_DIR>"
-```
-This generates a clean `Gerber_<project>.zip`, `BOM_<project>.csv`, and `CPL_<project>.csv` inside `<PROJECT_DIR>\jlcpcb_production\`. Present the final summary to the user.
-
-
-### 🔮 RULE 7 — Custom `pcbnew` scripting & API Grounding Protocol
+| `kaibridge/core/paths.py` | Centralized path resolver: `load_cli()`, `load_kicad_python()`, `find_easyeda_db()`, `env_dirs()` | Core module |
+| `kaibridge/core/oracle.py` | Live SWIG signature, class, constant, and architectural rules oracle | `kaibridge.core` |
+| `kaibridge/oracle/swig_oracle.py` | Live SWIG signature, class, constant & rules oracle alias | `kaibridge.oracle` |
+| `kaibridge/sourcing/parts_db.py` | Offline parts database: SQLite query on `easyeda-std.elib`, Golden Cache, `recommend_kicad_part()` | `kaibridge.sourcing` |
+| `kaibridge/sourcing/lcsc_runner.py` | EasyEDA API runner for downloading active IC symbols and footprints | `kaibridge.sourcing` |
+| `kaibridge/schematic/compiler.py` | `design.json` -> `.kicad_sch` compiler with netclasses, hierarchical sheets & headless ERC | `kaibridge.schematic` |
+| `kaibridge/pcb/sync.py` | Headless F8 netlist and footprint binder directly into `.kicad_pcb` | `kaibridge.pcb` |
+| `kaibridge/pcb/layout.py` | Board state engine: 16 layout ops, geometry gate, 0.5mm grid snap, physics relaxation | `kaibridge.pcb` |
+| `kaibridge/pcb/router.py` | Specctra DSN export -> Java Freerouting 2.4.1 -> SES import + automatic zone refilling | `kaibridge.pcb` |
+| `kaibridge/pcb/export.py` | Gerber ZIP, Excellon drill, JLCPCB BOM CSV (with auto-healing), and CPL CSV export | `kaibridge.pcb` |
+| `kaibridge/pcb/snapshot.py` | Timestamped `.kicad_pcb` backups, deterministic rollback, and structural diffing | `kaibridge.pcb` |
+| `references/pcb_placement_rules.md` | 80-rule comprehensive PCB floorplanning rulebook | Reference documentation |
+| `references/trackwidth_clearence_viasize.md` | Netclasses specifications and trace current guidelines | Reference documentation |
+| `references/failure_recovery_matrix.md` | Exhaustive ERC/DRC/Freerouting/SWIG deterministic recovery matrix | Reference documentation |
+| `server.py` | STDIO JSON-RPC 2.0 MCP server exposing all 22 tools | Standalone process |
+
+---
+
+### RULE 3 — Component Sourcing, Native IPC Footprints & Upfront LCSC BOM Binding (Zero ERC Guarantee)
+
+1. **Two-Tier Sourcing Doctrine**:
+   - **Generic Passives (Resistors, Capacitors, Inductors, LEDs, Diodes, Headers):**
+     - **Symbols:** ALWAYS use native KiCad symbols:
+       - Resistors: `Device:R`
+       - Capacitors: `Device:C` (ceramic/unpolarized) or `Device:C_Polarized` (electrolytic/tantalum)
+       - LEDs: `Device:LED`
+       - Diodes: `Device:D` or `Device:D_Schottky`
+       - Inductors: `Device:L`
+       - Pin Headers: `Connector_Generic:Conn_01x<N>`
+       *(NEVER use raw EasyEDA passive symbols that declare pins as "Input", which trigger `[pin_not_driven]` ERC errors).*
+     - **Footprints:** ALWAYS use native KiCad official IPC-7351 footprints (`Resistor_SMD:R_0805_2012Metric`, `Capacitor_SMD:C_0805_2012Metric`, `LED_SMD:LED_0805_2012Metric`, `Diode_SMD:D_SOD-123`, `Connector_PinHeader_2.54mm:PinHeader_1x*`). **NEVER download passive footprints from EasyEDA!** KiCad IPC footprints guarantee zero silkscreen overlaps, correct courtyards, and 100% JLCPCB SMT compatibility.
+     - ** UPFRONT LCSC ID BINDING (MANDATORY BEFORE SCHEMATIC COMPILATION):**
+       You MUST attach the JLCPCB LCSC C-Part ID directly during `design.json` synthesis inside `fields: {"LCSC": "Cxxxx", "JLCPCB_Class": "Basic Part"}` for EVERY component. Do NOT wait until BOM export! Sourcing the LCSC ID upfront ensures it travels automatically into the schematic, netlist, PCB footprint fields, and exports a 100% populated JLCPCB BOM CSV without missing part numbers.
+     - **Instant Resolution & Reference Catalog:**
+       - Use `kaibridge_lookup_lcsc_part` (<1ms) to query any part dynamically.
+       -  **Complete Basic Parts Directory:** See [`references/jlcpcb_basic_parts.md`](references/jlcpcb_basic_parts.md) for the verified catalog of JLCPCB Basic Parts (resistors, capacitors, LEDs, diodes, transistors, MOSFETs, LDOs) with exact LCSC IDs and KiCad IPC footprint mappings.
+   - **Active ICs, Sensors, Microcontrollers, USB Sockets:**
+     - Download via `kaibridge_fetch_lcsc_component`.
+     - Query exact pin numbers, pin names, and electrical types via `kaibridge_query_symbol_pins`.
+     - Copy exact pin numbers (`"1"`, `"2"`, `"A4"`, `"B1"`, `"SH"`, `"EP"`) verbatim into `design.json`. Never invent or assume pin numbers.
+
+---
+
+### RULE 4 — `design.json` Specification & Schematic Compilation
+
+1. Build `design.json` inside `<PROJECT_DIR>/kaibridge_dump/design.json`.
+2. **Canonical Schema Rules:**
+   - **Net Names:** Name every junction explicitly (`VBUS`, `+3V3`, `GND`, `PWM_OUT`, `RESET`). Never use auto-generated names like `Net-(D1_Pad1)`.
+   - **Net Structure:** Each net in `nets` contains a `connections` array: `"<NET_NAME>": { "connections": ["U1.1", "C1.1"] }`.
+   - **Power Flags & Switched Rail Ingest Rule (Zero [pin_not_driven] Guarantee):**
+     - KiCad ERC requires every power net feeding active IC `power_in` pins to have a driving source (`power_out` pin or `PWR_FLAG`).
+     - **External Power Ingest Nets (Unregulated Inputs):** Any power rail entering the board from an external source (e.g. USB `VBUS`, DC barrel jack `VIN` / `DC_IN`, battery terminal `VBAT`, industrial `+12V` / `+24V`) and circuit reference ground (`GND`) must be declared in `"power_flags": ["<INPUT_RAIL>", "GND"]`.
+     - **Passive-Interrupted Power Rails:** Any power rail downstream of purely passive inline elements (e.g. Schottky protection diodes, PTC fuses, toggle/push switches, LC filter inductors, current-sense shunts) that feeds an active IC's `power_in` pin lacks an active driver. You **MUST** declare all such interrupted rails in `"power_flags"` (e.g. `["DC_IN", "VBUS_SW", "VIN_PROT", "VBAT_FUSED", "GND"]`). Failure to do so triggers `[pin_not_driven]` ERC errors.
+     - **Active Regulator Outputs (Do NOT flag):** Regulators (LDOs, buck/boost converters, charge pumps) have output pins internally typed as `power_out`. Never assign `power_flags` to active regulator output nets (e.g. `+3V3`, `+5V`, `VOUT`), as doing so creates a `[pin_to_pin]` driver collision error.
+   - **Unconnected Pins:** Unconnected `power_in` or bidirectional pins must be wired or declared in `no_connect`: `["U1.5", "J1.A6", "J1.A7"]`.
+   - **Stacked Pins Warning (`stacked_pins_fix.md`):** If a symbol has multiple stacked identical pins sharing the exact same coordinate (e.g. multiple GND pins on MCU or USB-C), **only list the single visible pin** in `design.json`. KiCad internally connects the stacked pins; listing all of them creates an illegible label ladder in the schematic.
+   - **Netclasses Configuration (`trackwidth_clearence_viasize.md`):** Declare `netclasses` at the root of `design.json` tailored to the specific board's current and signal requirements:
+     ```json
+     "netclasses": {
+       "Default": { "track_width": 0.25, "clearance": 0.2, "via_diameter": 0.6, "via_drill": 0.3 },
+       "Power": {
+         "track_width": 0.6,
+         "clearance": 0.25,
+         "via_diameter": 0.8,
+         "via_drill": 0.4,
+         "nets": ["<POWER_RAILS_AND_HIGH_CURRENT_NETS>"]
+       }
+     }
+     ```
+     *Note:* The `"nets"` array in `"Power"` should enumerate the power rails and ground returns for this specific design (e.g. `["+12V", "MOTOR_PWR", "GND"]`, `["VBAT", "VDD", "GND"]`, or `["VBUS", "VBUS_SW", "+3V3", "GND"]`). Additional custom netclasses (e.g. `High_Current`, `RF_50R`, `Analog_Sensitive`) can be declared similarly. The compiler and router automatically synthesize `netclass_patterns` to `.kicad_pro`, ensuring Freerouting and `ExportSpecctraDSN` route power nets at their wide width and signals at standard width.
+3. Compile schematic with `kaibridge_build_schematic` (with `run_erc_check=True`). Ensure **0 errors** before proceeding.
+
+---
+
+### RULE 5 — Schematic Visual Verification (Vector Render Gate)
+
+After `kaibridge_build_schematic` passes with 0 ERC errors, call `kaibridge_render_schematic_preview` to generate vector renders of the compiled schematic:
+
+1. **Export:** Call `kaibridge_render_schematic_preview` with `format: "svg"` and `exclude_drawing_sheet: true`.
+2. **Output:** Clean vector SVG files are saved into `<PROJECT_DIR>/kaibridge_dump/schematic_svg/`.
+3. **AI Visual Review:** Verify:
+   - All symbols are cleanly placed without wire overlaps.
+   - Net labels, hierarchical labels, and power flags connect to their target pins.
+   - No dangling stubs or floating unconnected pins exist.
+4. **HITL Deliverable:** Present the schematic preview path to the user before moving to PCB synchronization.
+
+---
+
+### RULE 6 — Headless Schematic-to-PCB Synchronization (F8 Net Binding)
+
+* **Headless Execution (Automated):** Call `kaibridge_sync_to_pcb` to instantiate footprints in `.kicad_pcb` and bind nets/ratsnest directly.
+* **Manual / GUI Execution:** If KiCad GUI is open, user presses **F8** (Update PCB from Schematic) -> **Ctrl+S**.
+
+---
+
+### RULE 7 — Component Placement, Geometry Gate & Spatial Critique
+
+1. **The Precedence Ladder (`pcb_placement_rules.md` §0.3):**
+   When placing components or resolving layout conflicts, follow this strict hierarchy:
+   - `Tier 0`: **Human Directives** (Explicit user requests, layout constraints, symmetry preferences)
+   - `Tier 1`: **Safety & High-Voltage Isolation**
+   - `Tier 2`: **Mechanical Datums** (Connectors on outer edges facing outward, mounting holes)
+   - `Tier 3`: **Electrical Proximity** (Decoupling caps < 2mm from IC power pins, crystal adjacent to OSC pins, feedback resistors < 5mm from FB pin)
+   - `Tier 4`: **Thermal Survival** (Linear regulator heatsink tab facing board edge, distributed hot components)
+   - `Tier 5`: **EMC Margin** (Switching nodes isolated from sensitive analog/clocks)
+   - `Tier 6`: **Manufacturability / DFM**
+   - `Tier 7`: **Aesthetics & Visual Symmetry**
+
+2. **Multimodal Closed-Loop Visual Placement & Rotational Intent:**
+   - Call `kaibridge_render_pcb_preview` to export `<project>_board.svg` and `<project>_top.png` for multimodal AI critique.
+   - **UNIVERSAL ROTATIONAL DOCTRINE (DO NOT JUST TRANSLATE X/Y!):**
+     Component placement is fundamentally rotational. Moving $(X, Y)$ without setting proper angular orientations produces tangled ratsnests, reverse connectors, and thermal traps:
+     - **Perimeter Connectors & Headers (All Types: USB, Barrel Jacks, Terminal Blocks, Pin Headers):**
+       Connector openings, plug insertion corridors, or wire terminals MUST face outward toward the nearest board edge:
+       - Placed near Left edge: `"rot": 180` (receptacle opens Left)
+       - Placed near Bottom edge: `"rot": 270` (receptacle opens Down)
+       - Placed near Right edge: `"rot": 0` (receptacle opens Right)
+       - Placed near Top edge: `"rot": 90` (receptacle opens Up)
+     - **Thermal Dissipation Devices (LDOs, Buck Converters, Power MOSFETs, Motor Drivers):**
+       The primary heatsink tab or exposed thermal slug (e.g. SOT-223, DPAK, TO-220, SOIC-EP) MUST face outward toward the board edge or broad copper ground pour areas. Never orient high-heat tabs inward toward sensitive MCUs, analog sensors, or crystals.
+     - **Core ICs & Processing Units (MCUs, SOCs, Op-Amps, Driver ICs):**
+       Rotate the IC ($0^\circ, 90^\circ, 180^\circ, 270^\circ$) so that its primary peripheral pin groups face their functional companion blocks (e.g. power pins towards power stage, high-speed buses toward headers/sensors), minimizing trace crossings and ratsnest tangle.
+     - **Decoupling Capacitors & Filtering Passives (0805 / 0603):**
+       Rotate 90° or 0° to orient GND and power pads directly inline with their companion IC supply pins. This creates direct, straight-line routing channels and reduces via counts to near zero.
+     - **RF Antennas & Transceivers:**
+       Antenna radiating elements, trace antennas, or chip antennas must face outward toward an outer edge, with recommended manufacturer keep-out clearance free of copper and traces.
+
+3. **Execute Placement via `kaibridge_apply_ops_layout` (`ops.json`):**
+   - 16 built-in layout ops: `footprint.place`, `footprint.move`, `footprint.rotate`, `footprint.lock`, `footprint.unlock`, `footprint.set_field`, `track.add`, `track.set_width`, `via.add`, `item.delete`, `net.delete_routing`, `zone.refill`, `zone.delete`, `board.set_size`, `board.fit_outline`, `board.prep_for_route`.
+   - **Op Schema Reference:** Refer to `ops_template.json` for full examples.
+   - **Sample `ops.json` Template with Explicit Rotations:**
+     ```json
+     [
+       {"op": "board.set_size", "width": 50.0, "height": 40.0, "origin_x": 0.0, "origin_y": 0.0},
+       {"op": "footprint.place", "ref": "J1", "x": 5.0, "y": 20.0, "rot": 180, "locked": true},
+       {"op": "footprint.place", "ref": "U1", "x": 25.0, "y": 20.0, "rot": 0},
+       {"op": "footprint.place", "ref": "C1", "x": 20.0, "y": 16.0, "rot": 90},
+       {"op": "footprint.rotate", "ref": "R1", "rot": 90, "relative": false}
+     ]
+     ```
+   - All $(X, Y)$ coordinates are automatically quantized to a clean **0.5mm grid** by the Geometry Gate.
+   - Preserves existing rotation if `"rot"` is omitted during fine coordinate nudging (`footprint.move`).
+   - **Safe Simulation Mode (`"dry_run": true`):** Pass `"dry_run": true` to `kaibridge_apply_ops_layout` to simulate placement, rotation, and geometry collision checks in memory with a 100% zero-disk-write guarantee before committing.
+
+4. **Visual & Structural Critique:**
+   - Call `kaibridge_render_pcb_preview` to export `<project>_board.svg` and inspect `board_analysis`.
+   - Audit placement against the 80-rule floorplanning doctrine in [`references/pcb_placement_rules.md`](references/pcb_placement_rules.md) (Decoupling Proximity `< 2.5mm`, Clock/RF Loops `< 5mm`, Thermal Dissipation Tabs facing outward, Symmetry & Axis Alignment).
+   - Formulate corrective `ops.json` layout operations with explicit rotations and coordinates before re-rendering.
+
+---
+
+### RULE 8 — Spatial Symmetry, Alignment & Silkscreen Hygiene
+
+1. **Universal 4-Zone Hardware Floorplan:**
+   Arrange components in clean, functional clusters aligned to a 0.5mm / 1.0mm grid following natural signal and power flow:
+   - **Zone 1: Power Ingest & Conditioning:** Input connectors, reverse-polarity protection diodes, fuses, input filter capacitors, and voltage regulators positioned along the outer edge.
+   - **Zone 2: Core Processing / Main Active Stage:** Central IC (MCU, FPGA, DSP, main analog stage, or motor driver) centrally placed with clean perimeter routing channels.
+   - **Zone 3: High-Frequency & Precision Ancillary Circuits:** Bypass capacitors, crystal oscillators, feedback dividers, and filtering inductors placed tightly adjacent ($< 2.5\text{mm}$) to their respective IC pins.
+   - **Zone 4: User Interfaces, Output Drivers & External Ports:** Status LEDs, push buttons, switches, output headers, and terminal blocks placed along accessible board perimeters.
+2. **Silkscreen Hygiene & Zero Overlap Rule:**
+   - Reference designators (`R1`, `C1`, `U1`, `SW1`, `D1`) must be visible, sized $1.0\text{mm} \times 1.0\text{mm}$ (thickness $0.15\text{mm}$), and positioned cleanly outside component courtyards.
+   - **Hide bulky value text** from the silkscreen layer (`F.SilkS`) to prevent text overlapping with tracks, pads, or neighboring components.
+3. **Trace Routing Elegance & Minimal Via Rule:**
+   - Prefer clean 45-degree trace angles and parallel bus routing over erratic zig-zags.
+   - Align component pin orientations to face their net companions directly, minimizing layer changes and reducing via counts to 0–2 for simple boards.
+
+---
+
+### RULE 9 — Headless Routing & Freerouting Engine
+
+1. **Prepare:** Run `kaibridge_unroute_pcb` or `{"op": "board.prep_for_route"}` to purge orphaned tracks. Ensure `Edge.Cuts` boundary is closed.
+2. **0.15mm JLCPCB Copper Edge Clearance Standard:**
+   - KiCad 10's internal default copper edge clearance is `0.50mm`, which causes false DRC errors on USB-C, micro-USB, and edge-mounted connectors whose pads or mounting tabs sit `0.20–0.30mm` from the board edge.
+   - Kaibridge automatically writes JLCPCB production rules into `.kicad_pro` (`min_copper_edge_clearance: 0.15mm`, `min_clearance: 0.15mm`, `min_track_width: 0.15mm`). Never permit `.kicad_pro` to omit these design settings.
+3. **Route:** Call `kaibridge_route_pcb`:
+   - **Pre-flight Specctra DSN Audit (`audit_dsn`):** Exports Specctra DSN and audits rules in < 2ms before launching Java. Catches zero/negative track widths, negative clearances, and missing nets to prevent Freerouting from hanging or silently routing 0 tracks.
+   - **Freerouting 2.4.1 Decoupled Universal Pipeline:** Runs Java Freerouting 2.4.1 headlessly without AWT/Swing dependencies.
+   - **Automatic Copper-to-Edge Keepout (`--router.copperToEdgeClearanceUm=150`):** Enforces JLCPCB 150µm board outline keepout, solving KiCad DSN board outline omission (#558).
+   - **Strict Geometric DRC (`--router.strictDrc=true`):** Prevents micro-clearance approximations during maze expansion.
+   - **Deterministic Optimization Passes (`max_passes` / `-mp`):** Optionally caps auto-routing passes to guarantee bounded execution time.
+   - Imports SES file with clean copper tracks into `.kicad_pcb`.
+   - **Mandatory Post-SES Zone Refill:** Automatically executes `pcbnew.ZONE_FILLER(board).Fill(board.Zones())` and `board.BuildConnectivity()` to recalculate copper clearances around newly placed tracks and vias, preventing copper zone track shorts.
+4. **Re-routing / Rip-up:** Use `kaibridge_unroute_pcb` to strip tracks (entire board, per net, or per layer) when iterating.
+
+---
+
+### RULE 10 — Ground Copper Pour & Plane Management
+
+1. Call `kaibridge_add_ground_plane` to add and fill a GND copper zone across `B.Cu` and/or `F.Cu` with 0.3mm clearance.
+2. **Exact Board Outline Boundary:** The engine automatically sets `zone.SetOutline(poly)` from the closed `Edge.Cuts` polygon (`board.GetBoardPolygonOutlines(poly, True)`), ensuring 0 outline overflow beyond the board perimeter and eliminating negative space overflow errors.
+3. **Solid Thermal Reliefs (`ZONE_CONNECTION_FULL`):** Ground copper planes use solid pad connections (`zone.SetPadConnection(pcbnew.ZONE_CONNECTION_FULL)`) with `0.2mm` minimum thickness to eliminate starved thermal relief spoke errors (`[starved_thermal]`) on dense SMT footprints.
+4. The engine automatically replaces duplicate zones on the same layer to prevent `zones_intersect` DRC errors.
+5. To remove/clear ground zones, use `kaibridge_unroute_pcb(remove_zones=True)` or `{"op": "zone.delete"}`.
+
+---
+
+### RULE 11 — DRC Audit & JLCPCB Production Export
+
+1. **DRC Check:** Call `kaibridge_run_drc` (or `kicad-cli pcb drc`). Must achieve **0 clearance violations** and **0 unrouted nets**.
+2. **JLCPCB Export:** Call `kaibridge_export_production`:
+   - Generates `Gerber_*.zip`, Drill files, `BOM_*.csv`, and `CPL_*.csv` inside `<PROJECT_DIR>/jlcpcb_production/`.
+   - **Auto-Healing BOM:** If any standard passive part omitted an explicit `LCSC` field, the exporter automatically resolves the JLCPCB Basic Part number from the local database.
+
+---
+
+### RULE 12 — Universal Error Recovery & Failure Matrix
+
+1. **Mandatory Matrix Consultation (`failure_recovery_matrix.md`):**
+   - Whenever an ERC violation, DRC error, Freerouting issue, Python SWIG memory exception, or file lock occurs, the agent **MUST** immediately read and consult [`references/failure_recovery_matrix.md`](references/failure_recovery_matrix.md).
+   - Follow the exact deterministic remedy prescribed in the matrix. Never invent ad-hoc, unverified workarounds.
+2. **Two-Strike Algorithmic Dead-End Policy:**
+   - If the exact same error persists across **two consecutive automated attempts** after applying the prescribed fix, **HALT** execution immediately.
+   - Report the failing command, exact error output, and current board state to the user and request human feedback. Never loop blindly.
+
+---
+
+### RULE 13 — Cognitive Engineering Reasoning & User Intent Primacy
+
+1. **Multimodal Engineering Sense:**
+   - The AI Agent must actively use its vision capabilities and domain knowledge to inspect generated schematics and PCB layout previews.
+   - If a layout looks scattered, cramped, or unaligned, the agent must proactively propose or execute clean geometric alignments.
+2. **User Directives Are Supreme (Tier 0):**
+   - If the user provides specific guidelines, reference pictures, symmetry rules (e.g. *"Place resistor left, sensor center, resistor right"*), connector orientations, or form-factor constraints, the agent **MUST** prioritize the user's instructions over all generic heuristics.
+   - Never overwrite or discard user-specified component coordinates without explicit confirmation.
+
+---
+
+### RULE 14 — Live KiCad SWIG API Oracle & Memory Safety Protocol
 
 **STRICT MANDATE:** Zero-hallucination policy for KiCad `pcbnew` Python scripting. Never write a single line of `pcbnew` code based on memory or assumptions.
 
-#### 📊 Universal Decision Tree for `pcbnew` API Methods
+1. **Multi-Mode Oracle Resolution (`kaibridge_api_oracle`):**
+   - **Method Signature Query:** `kaibridge_api_oracle(query="<method_name>", class_name="<CLASS>")` (e.g. `query="ExportSpecctraDSN"`, `query="Delete", class_name="BOARD"`).
+   - **Class Inspection Query:** `kaibridge_api_oracle(query="<CLASS>")` (e.g. `query="ZONE_FILLER"` or `query="BOARD"`) returns constructor signatures, docstrings, and complete lists of public methods.
+   - **Constants & Enums Query:** `kaibridge_api_oracle(query="<CONSTANT>")` (e.g. `query="ZONE_CONNECTION_FULL"`, `query="Edge_Cuts"`, `query="F_Cu"`) returns exact assignment and type.
+   - **Production Rules Query:** `kaibridge_api_oracle(query="drc_rules")`, `query="swig_memory"`, `query="zone_filling"`, or `query="power_flags"` returns grounded JLCPCB specifications and code patterns.
 
-```mermaid
-graph TD
-    A["Need to use a pcbnew method on Class C (e.g. BOARD, FOOTPRINT)"] --> B["Step 1: Cheap Existence Check<br/>Search legacyboardengine/all_functionName.md or kicad10_api_map.md"]
-    B -->|Candidate method M found| C["Step 2: Live Oracle Query<br/>Run --oracle 'C M'"]
-    B -->|Not found in map| D["Search map for keywords to find candidate M"] --> C
-    C -->|Oracle Output: EXACT SWIG OUTPUT| E["Step 3: Code Generation<br/>Use EXACT method signature returned by Oracle"]
-    C -->|Oracle Output: NOT FOUND + 'did you mean'| F["Pick candidate M' from 'did you mean:' list"] --> C
-    E --> G["Step 4: Execute via Bridge<br/>python kicad_agent_bridge.py script.py"]
-```
+2. **SWIG Memory Safety & Pointer Lifecycle Doctrine:**
+   - **Garbage Collection:** Always run `gc.collect()` before and after calling `pcbnew.LoadBoard()` to clean up dead SWIG wrappers.
+   - **Explicit Pointer Teardown:** Always call `del board` at the conclusion of board operations. Never retain a module-level `board` reference across multiple tool calls.
+   - **Subprocess Isolation:** When executing outside KiCad's bundled Python 3.11 environment (e.g. system Python 3.14), backend tools automatically execute board mutations in an isolated subprocess using `load_kicad_python()` to guarantee 100% OS-level memory reclamation.
+3. **Execute Verbatim:** Use only Oracle-confirmed method signatures. Never guess method names or parameter orders.
 
-#### 📜 Step-by-Step Protocol
+---
 
-1. **Step 1 — Existence & Candidate Lookup (What to ask):**
-   - Search `<PLUGIN_DIR>\Autoplacer\legacyboardengine\all_functionName.md` or `<PLUGIN_DIR>\Autoplacer\legacyboardengine\kicad10_api_map.md` using `grep_search`.
-   - Identify the target class (`BOARD`, `FOOTPRINT`, `PAD`, `PCB_SHAPE`, etc.) and candidate method name `M`.
-2. **Step 2 — Live Oracle Grounding (Asking Oracle):**
-   - Query the Oracle against the running KiCad instance:
-     ```powershell
-     python "<PLUGIN_DIR>\Autoplacer\kicad_agent_bridge.py" --oracle "<CLASS> <METHOD>"
-     ```
-     *(Example: `python Autoplacer\kicad_agent_bridge.py --oracle "BOARD GetTracks"`, or `--oracle "GLOBAL ImportSpecctraSES"`)*
-3. **Step 3 — Handle Oracle Response:**
-   - **If EXACT SWIG OUTPUT returned:** Use the verified method signature verbatim in your Python code.
-   - **If NOT FOUND returned:** Read the `did you mean: [...]` candidates printed by Oracle. Pick a candidate from that list and re-run Step 2. **NEVER invent or guess a third spelling.**
-4. **Step 4 — Code Generation & Execution:**
-   - Write the script using ONLY Oracle-confirmed methods.
-   - Save to scratch and execute via `python "<PLUGIN_DIR>\Autoplacer\kicad_agent_bridge.py" <script.py>`.
-   - Pass `--timeout` generously for heavy operations (zone fills, imports).
+### RULE 15 — Board State Introspection, Geometry Gate & Snapshot/Diff Protocol
 
-### 🛡️ RULE 8 — Ground Planes, Copper Pour & Routing Safety
-
-#### 1. Ground Copper Pour Protocol (Manual):
-- Ground pouring is a manual human task. NEVER invoke `pcbnew.ZONE_FILLER` or use `zone.add` via JSON.
-- Instruct the user to draw and fill zones natively in KiCad PCB Editor and press **`B`** to refill.
-
-#### 2. Auto-Routing Core Protocols & File Lock Safety:
-- **Prerequisite:** Always ensure `Edge.Cuts` rectangle is closed and drawn before invoking `freerouting_runner.py`.
-- **Preparation:** Always execute `{"op": "board.prep_for_route"}` prior to routing to purge orphaned tracks and validate netclass readiness.
-- **GUI vs File Contention Rule:** While KiCad PCB Editor GUI is open, it holds an active memory copy of the board and a file lock (`~*.kicad_pcb.lck`). Standalone scripts MUST NEVER attempt to directly overwrite `.kicad_pcb` on disk while KiCad is running. All board updates must go through `kicad_agent_bridge.py`.
-- **Exception (Freerouting):** `freerouting_runner.py` is the *only* exception to the file-lock rule. Because it overwrites the file directly, you MUST coordinate with the user: instruct them to Save before routing, and use **File → Revert to Saved** immediately after.
-
-### 🚨 RULE 9 — Failure Recovery
-
-**If bridge reports KICAD NOT CONNECTED:**
-- ask user to open the Kaibridge plugin.
-- retry exactly once.
-- do not start another bridge.
-
-**If geometry gate fails:**
-- do not bypass the gate.
-- inspect `placement_report`.
-- generate corrective `ops.json`.
-
-**If DRC fails:**
-- do not declare success.
-- classify violations.
-- correct through supported operations.
-- rerun DRC.
-
-**If component download fails:**
-- retry the same component at most twice.
-- never silently substitute another component.
-
-**If pin verification fails:**
-- do not proceed.
-- do not invent pin mappings.
-- inform the user and stop.
-
-**If `SwigPyObject` corruption occurs:**
-- ask user to manually save (`Ctrl+S`).
-- ask user to close KiCad and reopen.
-- do not use `taskkill` unless user confirms KiCad is frozen.
-
-**If `.kicad_pcb` becomes 0 bytes:**
-- restore latest working copy from `backups/` using `Copy-Item`.
-- never start from scratch.
-
-**If `Edge.Cuts` is missing before Freerouting:**
-- redraw it before running Freerouting.
-
-**If the same error text appears twice:**
-- stop.
-- report the exact command and error.
-- ask the user.
-
-### 👁️ RULE 10 — Visual/Aesthetic Feedback Loop
-
-1. If the routing or placement is mathematically correct (DRC=0) but requires human-like aesthetic review (e.g., checking for ugly routing patterns, overly dense trace areas, or weird component alignment), generate a visual snapshot.
-2. Run `python "<PLUGIN_DIR>\Autoplacer\pcb_snapshot.py" "<PROJECT_DIR>"`. This forces a live save and uses `kicad-cli` to export a `.svg` vector image of the board.
-3. The AI agent (using its Vision capabilities) or a human user can review this SVG image to provide intuitive, high-level feedback on the overall design aesthetics.
-4. If the design feels "off" visually, adjust the `ops.json` coordinates accordingly and re-run the Autoroute + DRC loop.
-
-### 🧍 Human checkpoints — no automation exists for these
-
-| # | Action | Why it cannot be scripted |
-| --- | --- | --- |
-| 1 | Create the `.kicad_pro` | `${KIPRJMOD}` needs a real project |
-| 2 | Reopen the project after `json2sch` writes | KiCad caches the schematic in memory |
-| 3 | **F8** — Update PCB from Schematic | No CLI and no Python API exposes it |
-| 4 | **Ctrl+S** after F8 | `pcb_snapshot` and `kicad-cli` read from disk |
-| 5 | Open **Kaibridge** | The bridge HTTP REST API server only exists while the window is open |
-| 6 | Open KiCad after automated close | Windows Session 0 isolation hides agent-spawned GUI apps |
-| 7 | **Design Alignment Gate (Checkpoint 0)** | Confirm layout strategy and prioritize user-specific placement / symmetry directives |
-| 8 | **Placement Approval (Checkpoint 1)** | Human engineer validates physical layout, spacing, and connector orientation before triggering router |
-| 9 | **Routing Approval & Ground Pour (Checkpoint 2)** | Human engineer inspects trace topologies and manually draws/fills GND copper zones (automated zone fills crash KiCad's OpenMP thread) |
-
-> [!TIP]
-> **Semi-Automation Rule (Safe Closing):** To save the user from the hassle of dealing with frozen windows, the agent is authorized to force-close KiCad using `taskkill /IM kicad.exe /F` ONLY if the user explicitly confirms they have saved their work (`Ctrl+S`) or if the application is completely unresponsive. 
-> The agent must always ask first: *"Please save your work. May I close KiCad for you?"*
+1. **Introspection:** Call `kaibridge_inspect_board(mode="summary")` for high-level board statistics or `mode="full"` for complete coordinate trees.
+2. **Geometry Gate Audit:** Call `kaibridge_audit_placement` to verify:
+   - `overlaps == 0` (no courtyard collisions)
+   - `outside_boundary == 0` (all components inside `Edge.Cuts`)
+   - `route_ready == True`
+3. **Snapshot Diffing:**
+   - Before major layout changes or routing, call `kaibridge_snapshot_board(tag="pre_action")`.
+   - After execution, call `kaibridge_diff_board(tag_a="pre_action")` to inspect exact structural changes (tracks added, components moved, nets routed).
+   - If routing fails or layout regresses, call `kaibridge_restore_snapshot(tag="pre_action")` to instantly roll back safely.

@@ -1,0 +1,13 @@
+Comment,Designator,Footprint,LCSC Part #
+1.2k,R3,R_0805_2012Metric,
+10uF,"C1,C2,C3",C_0805_2012Metric,
+1k,"R4,R5,R6",R_0805_2012Metric,
+5.1k,"R1,R2",R_0805_2012Metric,
+AMS1117-3.3,U2,SOT-223-3_L6.5-W3.4-P2.30-LS7.0-BR,
+CHRG_RED,D1,LED_0805_2012Metric,
+LiPo_BAT,J2,PinHeader_1x02_P2.54mm_Vertical,
+PWR_3V3_BLU,D3,LED_0805_2012Metric,
+Power_Out,J3,PinHeader_1x04_P2.54mm_Vertical,
+STDBY_GRN,D2,LED_0805_2012Metric,
+TP4056,U1,ESOP-8_L4.9-W3.9-P1.27-LS6.0-BL-EP,
+USB_C_16P,J1,USB_C_Receptacle_HRO_TYPE-C-31-M-12,

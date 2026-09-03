@@ -1,32 +1,68 @@
-# Kaibridge Specific Agent Rules
+#Kaibridge 2.0 Autonomous Agent Rules & Fast-Path Protocol
 
-The following rules MUST be followed by all agents working on this project. These were discovered through painful trial and error:
+The following core rules MUST be followed by all AI agents operating within this repository:
 
-### 1. STRICT ADHERENCE TO SKILL.md
-Never reinvent KiCad operations. Always read the root `SKILL.md` before doing any PCB manipulations. Do NOT write custom Python scripts (like `autoplace.py` or `headless_place.py`) to manipulate KiCad directly. Use the REST API bridge (`kicad_agent_bridge.py`) with `ops.json` following the **Semantic Placement Protocol** exactly as documented in `SKILL.md`.
+---
 
-### 2. SwigPyObject Corruption Error & Unsaved Work
-If you ever encounter the error:
-`RuntimeError: BOARD proxy is corrupt (SwigPyObject). Close and reopen the Kaibridge window.`
-Or `AttributeError: 'SwigPyObject' object has no attribute...`
-**DO NOT** repeatedly try to run the bridge. This means the KiCad internal Python state is corrupted. 
-**CRITICAL:** Do NOT immediately use `taskkill`, as this will destroy the user's unsaved work! First, politely inform the user that a memory corruption occurred and ask them to manually save their work (`Ctrl+S`), close KiCad, and reopen it. Only use `taskkill /IM kicad.exe /F` if the user explicitly confirms that KiCad is completely frozen and they cannot close it manually.
+###0.  FAST BOOTSTRAP & ZERO EXPLORATORY PROBES (CRITICAL)
+- **Active Engine:** The canonical engine is **Kaibridge 2.0**.
+- **Do NOT read internal backend code upfront:** `SKILL.md` is the complete, canonical specification. Agents MUST NOT spend time reading or analyzing backend implementation files (`server.py`, `layout.py`, `sync.py`, `oracle.py`, etc.) during startup.
+- **Do NOT run exploratory environment probes:** KiCad 10, `kicad-cli`, Python `pcbnew`, Java (Freerouting), and local databases are pre-configured. Do NOT run exploratory `Get-ChildItem`, dummy version checks, or test scripts before delivering the plan.
+- **Immediate Planning on Turn 1:** On receiving a new PCB design prompt, immediately synthesize the component list, netlist, and floorplan, write `implementation_plan.md` on the very first turn, and request user approval without delay.
 
-### 3. Edge.Cuts & Board Outline: Automated by Default (with Corrupted Footprint Fallback)
-- **Standard Automated Path:** Always automate the board outline using `board.set_size` or `board.fit_outline` in `ops.json`. The engine automatically draws 4 clean `Edge.Cuts` segments and verifies closure with `GetBoardPolygonOutlines()`.
-- **Corrupted Footprint Fallback:** In rare cases, if a 3rd-party footprint (e.g., some imported USB-C sockets) contains an illegal graphic line on the `Edge.Cuts` layer inside the footprint itself, KiCad will fail polygon closure with:
-  `OpError: Edge.Cuts written but KiCad still will not close it. Usual cause: a stray Edge.Cuts graphic inside a footprint.`
-  **Action:** If this specific error occurs, do not loop. Explain to the user that a footprint has an internal `Edge.Cuts` line, draw the outline manually in KiCad PCB Editor once, save, and proceed with the rest of the automated pipeline.
+---
 
-### 4. NO FILES IN PLUGIN DIRECTORY (STRICT)
-Under NO circumstances should you create, generate, or save ANY files (like custom python scripts, temporary files, `ops.json`, or text files) inside the main plugin folder (`Kaibridge-main` or any of its subdirectories). All project-related files (like `ops.json` or `design.json`) MUST be created inside the user's specific `<PROJECT_DIR>` (e.g., the `hotdog` folder). Polluting the plugin's source code tree is strictly forbidden.
+###1.  STRICT ADHERENCE TO SKILL.md & 22-TOOL MCP MAP
+Use the 22 dedicated Kaibridge 2.0 MCP tools (or their exact Python APIs in `kaibridge`) for all hardware synthesis steps. Follow the master rules in `SKILL.md`.
 
-### 5. Ground Pouring & Crash-Proof Zone Handling (MANUAL)
-- **NEVER** invoke `pcbnew.ZONE_FILLER` in Python scripts or plugins. In KiCad 10, executing zone fills from Python threads triggers C++ OpenMP / thread-lock access violation crashes (`kimathLogOverflow` or GUI freeze).
-- **Ground Pouring is a Manual Task:** Do not use `zone.add` via JSON. Instruct the user to manually draw the GND copper zones (F.Cu and B.Cu) in the KiCad GUI using the 'Add a filled zone' tool and press **`B`** to fill them.
-- **File Lock Contention:** **NEVER** write or overwrite `.kicad_pcb` from standalone background scripts while KiCad PCB Editor GUI has the project open (with the sole exception of `freerouting_runner.py`, which requires strict Save/Revert coordination). Always perform standard board operations via `kicad_agent_bridge.py` with `ops.json` on the live in-memory board.
+---
 
-### 6. Zero-Byte File Auto-Recovery Trigger
-If `.kicad_pcb` ever becomes 0 bytes due to a crashed process or save interruption, **DO NOT START FROM SCRATCH**. Immediately restore the latest valid board file from `<PROJECT_DIR>/pcb_brain/backups/` using `Copy-Item`.
-**Trigger:** Before running ANY heavy operation via `--json-ops` or `--state summary`, always verify the file size of `<PROJECT_DIR>\<project_stem>.kicad_pcb` using `Get-Item`. If the size is 0 bytes, halt and recover immediately.
+###2.  Clean Workspace & Intermediate Hygiene (`kaibridge_dump/`)
+- Under NO circumstances should you pollute the KiCad project root folder or plugin directory with scratch files.
+- Store all intermediate compiler specifications (`design.json`, `ops.json`, `erc_report.json`, `drc_report.json`, `board.dsn`, `board.ses`, schematic SVGs, board state dumps) inside `<PROJECT_DIR>/kaibridge_dump/`.
+- The Kaibridge compiler and tooling natively resolve `<PROJECT_DIR>/kaibridge_dump/design.json`.
 
+---
+
+###3.  Sourcing, Native IPC Footprints & Upfront LCSC BOM Binding (Zero ERC Guarantee)
+- **Generic Passives (Resistors, Capacitors, Inductors, LEDs, Diodes, Headers):**
+  - **Symbols:** ALWAYS use native KiCad symbols (`Device:R`, `Device:C`, `Device:LED`, `Device:D`, `Device:L`, `Connector_Generic:*`). NEVER use raw EasyEDA passive symbols (which declare pins as `"Input"` and trigger `[pin_not_driven]` ERC errors).
+  - **Footprints:** ALWAYS use native KiCad official IPC-7351 footprints (`Resistor_SMD:R_0805_2012Metric`, `Capacitor_SMD:C_0805_2012Metric`, `LED_SMD:LED_0805_2012Metric`, `Diode_SMD:D_SOD-123`, `Connector_PinHeader_2.54mm:PinHeader_1x*`). **NEVER download passive footprints from EasyEDA!** KiCad IPC footprints guarantee zero silkscreen overlaps, correct courtyards, and 100% JLCPCB SMT compatibility.
+  - ** UPFRONT LCSC ID BINDING (MANDATORY BEFORE SCHEMATIC COMPILATION):**
+    You MUST attach the JLCPCB LCSC C-Part ID directly during `design.json` synthesis inside `fields: {"LCSC": "Cxxxx", "JLCPCB_Class": "Basic Part"}` for EVERY component. Do NOT wait until BOM export! Sourcing the LCSC ID upfront ensures it travels automatically into the schematic, netlist, PCB footprint fields, and exports a 100% populated JLCPCB BOM CSV without missing part numbers.
+  - **Instant Offline Resolution & Reference Catalog:**
+    - Use `kaibridge_lookup_lcsc_part` (<1ms) to query parts dynamically from local SQLite DB.
+    -  **Verified Basic Parts Catalog:** Refer to `references/jlcpcb_basic_parts.md` for the complete catalog of verified JLCPCB Basic Parts (resistors, capacitors, LEDs, diodes, transistors, LDOs) with exact LCSC IDs and KiCad IPC footprint mappings.
+- **Active ICs (Regulators, MCUs, Sensors, Specialized Drivers):**
+  - Download symbol and footprint via `kaibridge_fetch_lcsc_component`.
+  - Query pin names using `kaibridge_query_symbol_pins` to ensure 100% pin matching.
+
+---
+
+###4.  Geometry Gate, In-Memory Simulation & Placement Protocol
+- Execute component placement using `kaibridge_apply_ops_layout` with `ops.json`.
+- The Geometry Gate automatically quantizes all placement coordinates to a clean **0.5mm grid** and prevents courtyard collisions.
+- Use `"dry_run": true` to simulate placement moves and verify courtyard collisions in memory with a zero-disk-write guarantee before committing.
+- Maintain logical functional flow: Power Ingest & Bypass Caps -> Core IC -> Analog/Timing Networks -> User Controls & Status LEDs.
+- Silkscreen reference designators must be clean ($1.0\text{mm} \times 1.0\text{mm}$, thickness $0.15\text{mm}$) and positioned outside courtyards; hide bulky value text from silkscreen to avoid text overlaps.
+
+---
+
+###5.  Headless Ground Pouring & Zone Management
+- Use `kaibridge_add_ground_plane` to add and fill `GND` copper pour zones across `B.Cu` and/or `F.Cu` with 0.3mm clearance and solid thermal pad connections (`ZONE_CONNECTION_FULL`).
+- The engine automatically clips zones to exact `Edge.Cuts` boundaries, preventing isolated copper errors.
+
+---
+
+###6.  Headless Routing & Freerouting 2.4.1 (Java 25 LTS)
+- Pre-flight DSN audit: `route_board` automatically validates track widths, clearances, and netclasses in < 2ms before starting Java.
+- Execute headless routing via `kaibridge_route_pcb` (Freerouting 2.4.1).
+- Automatic 150µm board edge keepout via `--router.copperToEdgeClearanceUm=150` prevents tracks from hugging `Edge.Cuts`.
+- Run `kaibridge_run_drc` and ensure **0 Clearance Violations** and **0 Unconnected Items** before generating manufacturing files.
+- Export 100% factory-ready JLCPCB bundles via `kaibridge_export_production` (`Gerber_*.zip`, Drill, `BOM_*.csv`, `CPL_*.csv`).
+
+---
+
+###7.  Human-in-the-Loop (HITL) & User Intent Primacy (Tier 0)
+- Always create an `implementation_plan.md` artifact and obtain user approval before modifying files on a new design task.
+- Once approved, execute sequentially through Checkpoints 1, 2, 3, and 4 without restarting or re-inspecting working files.

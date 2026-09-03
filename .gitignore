@@ -1,17 +1,33 @@
+# Byte-compiled / optimized / DLL files
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
-*.log
-*.jar
-*.port
-kicad_paths.json
-Autoplacer/all_functionNameWithDetailedUsecase.py
-ops.json
-ops_batch*.json
-!ops_template.json
-board.ses
-*_board.svg
+*.py[cod]
+*$py.class
+
+# Kaibridge intermediate dumps & caches
+kaibridge_dump/
+**/kaibridge_dump/
+temp_ops_*.json
 *.bak
-auditreporttobedoublecheck.md
+*.kicad_prl
+*.kicad_pcb-bak
+*.kicad_sch-bak
+
+# VS Code / IDE history
+.history/
+**/.history/
 .vscode/
+
+# Heavy binary databases (>100MB)
+data/*.elib
+
+# Benchmark results and test outputs
+bench/
+**/bench/
+tests/test_project_*/
+**/tests/test_project_*/
+
+# OS generated
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
