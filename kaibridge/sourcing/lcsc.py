@@ -5,6 +5,7 @@ import os
 import re
 import sys
 import json
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Dict, Any
@@ -60,13 +61,12 @@ def fetch_lcsc(project_dir: str | Path, lcsc_id: str, lib_name: str = "kaibridge
                 new_text = text[:idx_close] + f'\n  (lib (name "{lib_name}")(type "KiCad")(uri "${{KIPRJMOD}}/libs/{lib_name}.pretty")(options "")(descr ""))\n)'
                 fp_table_file.write_text(new_text, encoding="utf-8")
 
-    # 2. Run easyeda2kicad with unblocked mirror runner
-    kicad_python = load_kicad_python()
-    runner_script = os.path.join(_SOURCING_DIR, "lcsc_runner.py")
-    output_target = str(libs_dir / lib_name)
+    # 2. Run clean easyeda2kicad directly without lceda.cn detour
+    easyeda_exe = shutil.which("easyeda2kicad")
+    base_cmd = [easyeda_exe] if easyeda_exe else [sys.executable, "-m", "easyeda2kicad"]
+    output_target = str((libs_dir / lib_name).resolve())
 
-    cmd = [
-        kicad_python, runner_script,
+    cmd_full = base_cmd + [
         "--lcsc_id", lcsc_id,
         "--full",
         "--output", output_target,
@@ -74,12 +74,29 @@ def fetch_lcsc(project_dir: str | Path, lcsc_id: str, lib_name: str = "kaibridge
         "--project-relative"
     ]
 
+    cmd_fast = base_cmd + [
+        "--lcsc_id", lcsc_id,
+        "--symbol", "--footprint",
+        "--output", output_target,
+        "--overwrite",
+        "--project-relative"
+    ]
+
+    res = None
     try:
-        res = subprocess.run(cmd, cwd=str(proj_path), capture_output=True, text=True, timeout=35)
-    except subprocess.TimeoutExpired:
-        return {"success": False, "error": f"LCSC download for {lcsc_id} timed out after 35s. EasyEDA server unresponsive."}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
+        res = subprocess.run(cmd_full, cwd=str(proj_path), capture_output=True, text=True, timeout=30)
+    except (subprocess.TimeoutExpired, Exception):
+        pass
+
+    # If full failed or timed out (common when EasyEDA 3D STEP server stalls), fall back to symbol+footprint
+    if res is None or res.returncode != 0:
+        try:
+            res = subprocess.run(cmd_fast, cwd=str(proj_path), capture_output=True, text=True, timeout=25)
+        except subprocess.TimeoutExpired:
+            return {"success": False, "error": f"LCSC download for {lcsc_id} timed out. EasyEDA server unresponsive."}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
     combined = (res.stdout or "") + "\n" + (res.stderr or "")
 
     sym_name_match = re.search(r"Symbol name\s*:\s*([^\r\n]+)", combined)
@@ -87,6 +104,30 @@ def fetch_lcsc(project_dir: str | Path, lcsc_id: str, lib_name: str = "kaibridge
 
     created_sym = sym_name_match.group(1).strip() if sym_name_match else None
     created_fp = fp_name_match.group(1).strip() if fp_name_match else None
+
+    # Sanitize EasyEDA footprint: convert unnumbered 0-annular mechanical post pads to np_thru_hole
+    if created_fp:
+        fp_path = libs_dir / f"{lib_name}.pretty" / f"{created_fp}.kicad_mod"
+        if fp_path.exists():
+            try:
+                mod_text = fp_path.read_text(encoding="utf-8")
+                def _sanitize_pad(match):
+                    pad_chunk = match.group(0)
+                    sz = re.search(r"\(size\s+([0-9.]+)\s+([0-9.]+)\)", pad_chunk)
+                    dr = re.search(r"\(drill\s+([0-9.]+)\)", pad_chunk)
+                    if sz and dr:
+                        w, h = float(sz.group(1)), float(sz.group(2))
+                        d = float(dr.group(1))
+                        if abs(w - d) < 0.05 and abs(h - d) < 0.05:
+                            cleaned = pad_chunk.replace("thru_hole", "np_thru_hole")
+                            cleaned = re.sub(r"\(layers\s+[^)]+\)", '(layers "*.Mask")', cleaned)
+                            return cleaned
+                    return pad_chunk
+                new_mod_text = re.sub(r'\(pad\s+""\s+thru_hole[^\n)]*(?:\n[^\n)]*)*\)', _sanitize_pad, mod_text)
+                if new_mod_text != mod_text:
+                    fp_path.write_text(new_mod_text, encoding="utf-8")
+            except Exception:
+                pass
 
     shapes_dir = libs_dir / f"{lib_name}.3dshapes"
     has_3d = shapes_dir.exists() and len(list(shapes_dir.glob("*.*"))) > 0

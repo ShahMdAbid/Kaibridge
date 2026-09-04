@@ -13,13 +13,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from ..sourcing.klib import SymbolDef
+from typing import Dict, List, Optional
 
 class DesignError(ValueError):
     """A problem in design.json that a human has to fix."""
+
+class LibError(ValueError):
+    """Anything wrong with a library, a symbol or a footprint reference."""
 
 RAIL_NAMES = {"GND", "GNDA", "GNDD", "AGND", "DGND", "PGND", "VBUS", "VIN",
               "VSS", "VDD", "VCC", "VEE", "VDDA", "VCCA", "VREF"}
@@ -158,15 +158,17 @@ def resolve_pin(part, token, where):
 def _read_parts(raw, lib):
     parts: Dict[str, Part] = {}
     specs = raw.get("parts") or {}
+    if not specs and "components" in raw and isinstance(raw["components"], list):
+        specs = {c["ref"]: c for c in raw["components"] if isinstance(c, dict) and c.get("ref")}
     if not isinstance(specs, dict) or not specs:
-        raise DesignError("design.json needs a non-empty 'parts' object")
+        raise DesignError("design.json needs a non-empty 'parts' object or 'components' list")
     for ref, spec in specs.items():
         ref = str(ref)
         if not isinstance(spec, dict):
             raise DesignError(f"parts.{ref} must be an object")
-        lib_id = _text(spec.get("lib_id"))
+        lib_id = _text(spec.get("lib_id") or spec.get("symbol"))
         if not lib_id:
-            raise DesignError(f"parts.{ref}: 'lib_id' is required, e.g. Device:R")
+            raise DesignError(f"parts.{ref}: 'lib_id' (or 'symbol') is required, e.g. Device:R")
         try:
             symbol = lib.symbol(lib_id)
         except LibError as e:
@@ -174,8 +176,8 @@ def _read_parts(raw, lib):
         parts[ref] = Part(
             ref=ref,
             lib_id=lib_id,
-            value=_text(spec.get("value")) or ref,
-            footprint=_text(spec.get("footprint")),
+            value=_text(spec.get("value") or spec.get("val")) or ref,
+            footprint=_text(spec.get("footprint") or spec.get("fp") or spec.get("package")),
             group=_text(spec.get("group")),
             near=_text(spec.get("near")),
             fields={str(k): _text(v) for k, v in (spec.get("fields") or {}).items()},

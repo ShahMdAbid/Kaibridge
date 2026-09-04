@@ -98,16 +98,37 @@ Pass `"dry_run": true` to simulate layout operations in memory and detect courty
 All tools are natively accessible in Python or via MCP server:
 
 ```python
-from kaibridge.pcb import apply_ops, route_board, add_ground_plane, export_production_files
-from kaibridge.schematic import build_schematic
-from kaibridge.sourcing import lookup_parts, fetch_lcsc_component
+from kaibridge.pcb import apply_ops, route_board, add_ground_plane, export_production_files, sync_schematic_to_pcb
+from kaibridge.schematic import compile_schematic
+from kaibridge.sourcing import lookup_by_lcsc, fetch_lcsc
 
-#Build schematic
-res = build_schematic(project_dir="C:/projects/demo", design_data=design_json)
+# 1. Compile schematic
+res = compile_schematic(project_dir="C:/projects/demo", apply_netclasses=True, run_erc=True)
 
-#Layout operations with simulation
-res = apply_ops(pcb_path="C:/projects/demo/demo.kicad_pcb", ops=ops_list, dry_run=True)
+# 2. Sync to PCB (headless F8)
+res = sync_schematic_to_pcb(project_dir="C:/projects/demo")
 
-#Headless routing (Freerouting 2.4.1)
+# 3. Layout operations with in-memory simulation
+res = apply_ops(project_dir="C:/projects/demo", ops_data=ops_list, dry_run=True)
+
+# 4. Headless routing (Freerouting 2.4.1) & ground pour
 res = route_board(project_dir="C:/projects/demo")
+res = add_ground_plane(project_dir="C:/projects/demo", net="GND", layer="B.Cu", clearance_mm=0.3)
 ```
+
+---
+
+##4. Canonical Root CLI Tools
+
+Alongside the MCP interface, the repository provides 8 standalone root CLI tools:
+
+| CLI Command | Purpose |
+|---|---|
+| `python kicad_lib_init.py "projects/<NAME>" -n kaibridge` | Instant project bootstrap & library plumbing (< 0.2s) |
+| `python kicad_pins.py "projects/<NAME>\libs\kaibridge.kicad_sym" -s <SYM> --json` | Zero-hallucinated pinout and footprint extraction (< 0.1s) |
+| `python json2sch.py "projects/<NAME>" --apply-netclasses --erc` | Declarative schematic compilation & automated ERC gate |
+| `python kicad_pcb_sync.py "projects/<NAME>"` | Headless F8 netlist and footprint synchronization |
+| `python kicad_layout.py "projects/<NAME>" [ops.json] [--dry-run]` | Declarative layout placement & in-memory collision check |
+| `python pcb_snapshot.py "projects/<NAME>"` | Vector SVG layout snapshot export for visual review |
+| `python kicad_route.py "projects/<NAME>" --pour-gnd --drc` | Headless Freerouting, ground copper pour & DRC verification |
+| `python export_jlcpcb.py "projects/<NAME>"` | 100% factory-ready JLCPCB production bundle export |

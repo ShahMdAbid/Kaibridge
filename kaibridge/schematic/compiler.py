@@ -20,7 +20,8 @@ def compile_schematic(
     design_file: Optional[str | Path] = None,
     output_name: Optional[str] = None,
     apply_netclasses: bool = True,
-    run_erc: bool = True
+    run_erc: bool = True,
+    dry_run: bool = False
 ) -> Dict[str, Any]:
     """Compiles design.json into full hierarchical .kicad_sch schematics in-process."""
     folder = Path(project_dir).resolve()
@@ -53,19 +54,40 @@ def compile_schematic(
         return {"success": False, "error": f"Library resolution error: {e}"}
 
     try:
-        raw_data = json.loads(design_path.read_text(encoding="utf-8"))
+        raw_data = json.loads(design_path.read_text(encoding="utf-8-sig"))
         design = load(raw_data, lib)
     except DesignError as e:
         return {"success": False, "error": f"Design error: {e}"}
     except Exception as e:
         return {"success": False, "error": f"Invalid JSON file: {e}"}
 
-    # 3. Layout & Build S-expression files in-process
+    # 3. Layout & Build S-expression files in-process (supports multi-sheet / multipage automatically)
     try:
         layout = plan(design)
         files = build(design, layout, lib, project_name, root_out.stem, version=VERSION)
     except Exception as e:
         return {"success": False, "error": f"Compilation error: {e}"}
+
+    if dry_run:
+        sheet_info = [
+            {
+                "id": s.id,
+                "parts": len(design.sheet_parts(s.id)),
+                "nets": len([n for n in design.nets.values() if s.id in n.sheets]),
+                "paper": s.paper
+            }
+            for s in design.sheets
+        ]
+        return {
+            "success": True,
+            "dry_run": True,
+            "project_name": project_name,
+            "schematic_files": list(files.keys()),
+            "sheets": sheet_info,
+            "total_parts": len(design.parts),
+            "total_nets": len(design.nets),
+            "warnings": design.warnings
+        }
 
     # 4. Write schematics to disk
     written, orphaned = write(files, folder, backup=False)
@@ -73,7 +95,9 @@ def compile_schematic(
     # 5. Write sidecar build metadata
     try:
         sc = sidecar(design, lib)
-        dump_dir = folder / "kaibridge_dump"; dump_dir.mkdir(parents=True, exist_ok=True); (dump_dir / "kaibridge_build.json").write_text(json.dumps(sc, indent=2), encoding="utf-8")
+        dump_dir = folder / "kaibridge_dump"
+        dump_dir.mkdir(parents=True, exist_ok=True)
+        (dump_dir / "kaibridge_build.json").write_text(json.dumps(sc, indent=2), encoding="utf-8")
     except Exception:
         pass
 
@@ -82,7 +106,7 @@ def compile_schematic(
         _update_netclasses_in_pro(pro_path, design.netclasses or {}, design=design)
 
     # 7. Run ERC verification if requested
-    erc_summary = {"errors": 0, "warnings": 0}
+    erc_summary = {"errors": 0, "warnings": 0, "violations": []}
     if run_erc:
         erc_summary = _execute_erc(root_out, folder)
 
@@ -92,13 +116,15 @@ def compile_schematic(
         "project_name": project_name,
         "erc": erc_summary,
         "erc_errors": erc_summary.get("errors", 0),
-        "erc_warnings": erc_summary.get("warnings", 0)
+        "erc_warnings": erc_summary.get("warnings", 0),
+        "violations": erc_summary.get("violations", []),
+        "warnings": design.warnings
     }
 
 
 def _update_netclasses_in_pro(pro_path: Path, netclasses: Dict[str, Any], design: Any = None):
     try:
-        pro_data = json.loads(pro_path.read_text(encoding="utf-8"))
+        pro_data = json.loads(pro_path.read_text(encoding="utf-8-sig"))
         ns = pro_data.setdefault("net_settings", {})
         classes = ns.setdefault("classes", [])
         existing = {c.get("name"): c for c in classes if isinstance(c, dict) and "name" in c}
@@ -199,16 +225,27 @@ def _execute_erc(sch_path: Path, project_dir: Path) -> Dict[str, int]:
         subprocess.run(cmd, capture_output=True, text=True, check=False)
         if not report_path.exists():
             return {"errors": 0, "warnings": 0}
-        data = json.loads(report_path.read_text(encoding="utf-8"))
+        data = json.loads(report_path.read_text(encoding="utf-8-sig"))
         errors = 0
         warnings = 0
+        violations_list = []
         for s in data.get("sheets", []):
+            sheet_name = s.get("name") or "Root"
             for v in s.get("violations", []):
-                if v.get("severity") == "error":
+                sev = v.get("severity")
+                desc = v.get("description")
+                t = v.get("type")
+                items = v.get("items", [])
+                item_desc = " <-> ".join([i.get("description", "") for i in items]) if items else ""
+                msg = f"[{t}] {sheet_name}: {desc}"
+                if item_desc:
+                    msg += f" ({item_desc})"
+                violations_list.append(msg)
+                if sev == "error":
                     errors += 1
                 else:
                     warnings += 1
-        return {"errors": errors, "warnings": warnings}
+        return {"errors": errors, "warnings": warnings, "violations": violations_list}
     except Exception:
-        return {"errors": 0, "warnings": 0}
+        return {"errors": 0, "warnings": 0, "violations": []}
 

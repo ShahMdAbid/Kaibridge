@@ -1,6 +1,9 @@
 {
-  "kicad_config_dir": "C:/Users/HP/AppData/Roaming/kicad/10.0",
-  "kicad_symbol_dir": "C:/Program Files/KiCad/10.0/share/kicad/symbols",
-  "kicad_footprint_dir": "C:/Program Files/KiCad/10.0/share/kicad/footprints"
+  "kicad_config_dir": "%APPDATA%/kicad/10.0",
+  "kicad_symbol_dir": "%PROGRAMFILES%/KiCad/10.0/share/kicad/symbols",
+  "kicad_footprint_dir": "%PROGRAMFILES%/KiCad/10.0/share/kicad/footprints",
+  "kicad_cli_path": "%PROGRAMFILES%/KiCad/10.0/bin/kicad-cli.exe",
+  "kicad_python_path": "%PROGRAMFILES%/KiCad/10.0/bin/python.exe",
+  "freerouting_jar": "freerouting-2.4.1.jar",
+  "easyeda_db_path": "data/easyeda-std.elib"
 }
-

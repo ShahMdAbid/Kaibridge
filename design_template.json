@@ -101,7 +101,7 @@
     "IO0":     { "connections": ["U2.25", "R2.1", "SW1.1"] }
   },
 
-  "power_flags": ["GND", "+3V3", "VIN"],
+  "power_flags": ["GND", "VBUS", "VIN"],
 
   "no_connect": ["J1.SHIELD", "U2.38"],
 

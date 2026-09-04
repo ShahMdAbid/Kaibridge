@@ -103,13 +103,31 @@ def find_pcbnew_source() -> Optional[Path]:
     except Exception:
         pass
 
-    # 2. Try standard KiCad 10 / 9 / 8 Windows paths
+    # 2. Derive from load_kicad_python()
+    try:
+        from .paths import load_kicad_python
+        kpython = load_kicad_python()
+        if kpython and kpython != "python":
+            py_path = Path(kpython)
+            for sub in (py_path.parent / "Lib" / "site-packages" / "pcbnew.py",
+                        py_path.parent.parent / "share" / "kicad" / "plugins" / "pcbnew.py",
+                        py_path.parent / "pcbnew.py"):
+                if sub.is_file():
+                    _PCBNEW_SOURCE_PATH = sub
+                    return sub
+    except Exception:
+        pass
+
+    # 3. Try standard KiCad 10 / 9 / 8 Windows paths across drives
+    prog_files = os.environ.get("PROGRAMFILES", r"C:\Program Files")
     candidates = [
-        Path(r"C:\Program Files\KiCad\10.0\bin\Lib\site-packages\pcbnew.py"),
-        Path(r"C:\Program Files\KiCad\9.0\bin\Lib\site-packages\pcbnew.py"),
-        Path(r"C:\Program Files\KiCad\8.0\bin\Lib\site-packages\pcbnew.py"),
-        Path(r"C:\Program Files\KiCad\10.0\lib\python3\dist-packages\pcbnew.py"),
-        Path(r"C:\Program Files\KiCad\10.0\bin\pcbnew.py"),
+        Path(f"{prog_files}/KiCad/10.0/bin/Lib/site-packages/pcbnew.py"),
+        Path(f"{prog_files}/KiCad/9.0/bin/Lib/site-packages/pcbnew.py"),
+        Path(f"{prog_files}/KiCad/8.0/bin/Lib/site-packages/pcbnew.py"),
+        Path(r"D:\Program Files\KiCad\10.0\bin\Lib\site-packages\pcbnew.py"),
+        Path(r"D:\Program Files\KiCad\9.0\bin\Lib\site-packages\pcbnew.py"),
+        Path(f"{prog_files}/KiCad/10.0/lib/python3/dist-packages/pcbnew.py"),
+        Path(f"{prog_files}/KiCad/10.0/bin/pcbnew.py"),
     ]
     for cand in candidates:
         if cand.is_file():

@@ -178,6 +178,50 @@ class PartsDatabase:
         except Exception:
             return None
 
+    def search_by_query(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Search parts by fuzzy generic keyword (e.g. 'TCRT5000', 'AMS1117', 'CH340') in local SQLite DB."""
+        conn = self._get_connection()
+        if not conn or not query:
+            return []
+
+        clean_q = f"%{query.strip()}%"
+        sql = """
+            SELECT d.uuid, d.title, d.display_title, d.description,
+                   a_part.value as lcsc_id,
+                   a_class.value as part_class,
+                   a_fp.value as footprint,
+                   a_mfr.value as manufacturer,
+                   a_mpn.value as mpn
+            FROM attributes a_part
+            JOIN devices d ON a_part.device_uuid = d.uuid
+            LEFT JOIN attributes a_class ON a_class.device_uuid = d.uuid AND a_class.key = 'JLCPCB Part Class'
+            LEFT JOIN attributes a_fp ON a_fp.device_uuid = d.uuid AND a_fp.key = 'Supplier Footprint'
+            LEFT JOIN attributes a_mfr ON a_mfr.device_uuid = d.uuid AND a_mfr.key = 'Manufacturer'
+            LEFT JOIN attributes a_mpn ON a_mpn.device_uuid = d.uuid AND a_mpn.key = 'Manufacturer Part'
+            WHERE a_part.key = 'Supplier Part' AND (d.title LIKE ? OR d.display_title LIKE ? OR a_mpn.value LIKE ?)
+            LIMIT ?
+        """
+        try:
+            c = conn.cursor()
+            rows = c.execute(sql, (clean_q, clean_q, clean_q, limit)).fetchall()
+            results = []
+            for r in rows:
+                uuid, title, display_title, desc, lid, part_class, pkg, mfr, mpn = r
+                results.append({
+                    "lcsc_id": lid,
+                    "title": title or "",
+                    "display_title": display_title or title or "",
+                    "manufacturer": mfr or "",
+                    "mpn": mpn or display_title or "",
+                    "part_class": part_class or "Extended Part",
+                    "package": pkg or "",
+                    "description": desc or "",
+                    "source": "local_elib"
+                })
+            return results
+        except Exception:
+            return []
+
     def search_passives(
         self,
         component_type: str,
@@ -348,6 +392,11 @@ def recommend_kicad_part(
 def lookup_by_lcsc(lcsc_id: str) -> Optional[Dict[str, Any]]:
     """Direct lookup wrapper."""
     return get_parts_db().lookup_by_lcsc(lcsc_id)
+
+
+def search_by_query(query: str, limit: int = 10) -> List[Dict[str, Any]]:
+    """Fuzzy keyword search wrapper for parts in local SQLite DB."""
+    return get_parts_db().search_by_query(query, limit=limit)
 
 
 def search_basic_passives(component_type: str, value: str, package: str = "0805") -> List[Dict[str, Any]]:

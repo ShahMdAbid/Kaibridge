@@ -98,7 +98,7 @@ board = pcbnew.LoadBoard(pcb_file)
 design_parts = {{}}
 if os.path.exists(design_file):
     try:
-        with open(design_file, 'r', encoding='utf-8') as f:
+        with open(design_file, 'r', encoding='utf-8-sig') as f:
             d = json.load(f)
             design_parts = d.get('parts', {{}})
             if not design_parts and 'components' in d:
@@ -200,12 +200,15 @@ print("BOM_CPL_OK")
 """
     res_bom = subprocess.run([kicad_python, "-c", bom_cpl_script], capture_output=True, text=True)
 
+    bom_count = len(list(csv.reader(open(out_dir / f"{stem}_bom_jlcpcb.csv", encoding="utf-8")))) if (out_dir / f"{stem}_bom_jlcpcb.csv").exists() else 0
     return {
         "success": zip_path.exists() and "BOM_CPL_OK" in res_bom.stdout,
         "output_directory": str(out_dir),
         "gerber_zip": str(zip_path),
+        "gerbers_zip": str(zip_path),
         "bom_csv": str(out_dir / f"{stem}_bom_jlcpcb.csv"),
         "cpl_csv": str(out_dir / f"{stem}_cpl_jlcpcb.csv"),
-        "bom_rows": len(list(csv.reader(open(out_dir / f"{stem}_bom_jlcpcb.csv", encoding="utf-8")))) if (out_dir / f"{stem}_bom_jlcpcb.csv").exists() else 0
+        "bom_rows": bom_count,
+        "total_bom_items": bom_count
     }
 

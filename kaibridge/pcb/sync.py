@@ -88,7 +88,7 @@ def _execute_pcbnew_sync(proj_path_str: str, pcb_file_str: str, design_file_str:
     if not design_file.exists():
         return {"success": False, "error": f"design.json missing at {design_file}"}
 
-    with open(design_file, "r", encoding="utf-8") as f:
+    with open(design_file, "r", encoding="utf-8-sig") as f:
         data = json.load(f)
 
     parts_dict = {}
@@ -124,7 +124,7 @@ def _execute_pcbnew_sync(proj_path_str: str, pcb_file_str: str, design_file_str:
                     if fp:
                         fp.SetReference(ref)
                         fp.SetValue(str(val))
-                        fp.SetPosition(pcbnew.VECTOR2I(pcbnew.FromMM(25 + col * 20), pcbnew.FromMM(25 + row * 20)))
+                        fp.SetPosition(pcbnew.VECTOR2I(pcbnew.FromMM(30 + col * 40), pcbnew.FromMM(30 + row * 30)))
                         board.Add(fp)
                         existing_fps[ref] = fp
                         added_count += 1

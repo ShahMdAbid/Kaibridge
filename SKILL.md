@@ -13,15 +13,141 @@ STRICT instructions. Zero hallucination. If a rule and your instinct disagree, t
 
 1. **Project Directory Handling:**
    - If the user provides `<PROJECT_DIR>` or points to an existing KiCad project folder, use that path directly.
-   - If the user has **NOT** specified a project directory: The agent **MUST NOT** make silent assumptions. Propose creating a dedicated project directory (e.g. `<workspace>/<Project_Name>`) and confirm before initializing files.
-2. **Headless New Project Bootstrapping (`kaibridge_init_project`):**
-   - If starting a brand-new project from scratch, call `kaibridge_init_project` with `project_dir` and `project_name`.
-   - This automatically creates the project directory, `<name>.kicad_pro` (KiCad 10 JSON format), empty `<name>.kicad_pcb`, `sym-lib-table`, `fp-lib-table`, and `kaibridge_dump/` folder in one step without requiring KiCad GUI.
-3. `<LIB_NAME>` is `kaibridge` everywhere. `kicad_lib_init.py -n kaibridge` and `easyeda2kicad --output "$PWD/libs/kaibridge"` must use the same library nickname.
-4. Confirm `kicad_paths.json` exists in the plugin directory and points to valid KiCad 10 binaries and libraries.
-5. **Intermediate Artifacts & Clean Workspace Rule (`kaibridge_dump/`):**
+   - If the user has **NOT** specified a project directory: The agent **MUST NOT** make silent assumptions. Propose creating a dedicated project directory (e.g. `projects/<Project_Name>`) and confirm before initializing files.
+2. `<LIB_NAME>` is `kaibridge` everywhere. `kicad_lib_init.py -n kaibridge` and `easyeda2kicad --output "$PWD/libs/kaibridge"` must use the same library nickname.
+3. Confirm `kicad_paths.json` exists in the plugin directory and points to valid KiCad 10 binaries and libraries.
+4. **Intermediate Artifacts & Clean Workspace Rule (`kaibridge_dump/`):**
    - Store all intermediate compiler specifications (`design.json`, `ops.json`, `erc_report.json`, `drc_report.json`, `board.dsn`, `board.ses`, schematic SVGs, board state dumps) inside `<PROJECT_DIR>/kaibridge_dump/`.
    - The Kaibridge compiler and tooling natively resolve `<PROJECT_DIR>/kaibridge_dump/design.json`.
+5. **Python Runtime & Zero-Raw-Script Protocol (`pcbnew` Execution Policy):**
+   - **Zero Raw Scripts for Board Mutations:** Never write manual Python scratch scripts to mutate `.kicad_pcb` directly. Always dispatch board mutations through Kaibridge's 22 dedicated MCP tools, primarily `kaibridge_apply_ops_layout` with declarative operations (e.g. `{"op": "item.delete", "ref": "..."}`).
+   - **Bundled KiCad Python Requirement:** KiCad's C++ SWIG wrapper (`pcbnew`) exists inside KiCad's bundled Python environment (resolved dynamically via `kaibridge.core.paths.load_kicad_python()`). Standard system Python (e.g. Python 3.14) lacks `pcbnew` and will immediately crash with `ModuleNotFoundError: No module named 'pcbnew'`. If any standalone diagnostic script is ever strictly necessary, it MUST be executed using `load_kicad_python()`.
+
+---
+
+### HARDWARE DESIGN & EXECUTION PLAYBOOK
+
+When starting any new PCB design or executing a hardware prompt, follow this sequential execution playbook. Do not write scratch scripts, probe the environment, or guess pinouts.
+
+```
++--------------------------------------------------------------------------------------------------------------------------------+
+|  HARDWARE DESIGN & MANUFACTURING PIPELINE                                                                                      |
+|                                                                                                                                |
+|  [Step 1] Bootstrap                   python kicad_lib_init.py "projects/<NAME>" -n kaibridge                                  |
+|  [Step 2] Sourcing (Local DB / CLI)   PartsDatabase().lookup_by_lcsc / easyeda2kicad --lcsc_id <ID> --symbol --footprint       |
+|  [Step 3] Pin Verification            python kicad_pins.py "projects/<NAME>\libs\kaibridge.kicad_sym" -s <SYM> --json          |
+|  [Step 4] Circuit Spec (design.json)  Write <PROJECT_DIR>/kaibridge_dump/design.json (LCSC IDs & power_flags)                  |
+|  [Step 5] Compile & Automated ERC     python json2sch.py "projects/<NAME>" --apply-netclasses --erc                            |
+|  [Step 6] Headless PCB Sync (F8)      python kicad_pcb_sync.py "projects/<NAME>"                                               |
+|  [Step 7] Layout Placement            python kicad_layout.py "projects/<NAME>" [ops.json] [--dry-run]                          |
+|  [Step 8] Route, Ground Pour & DRC    python kicad_route.py "projects/<NAME>" --pour-gnd --drc                                 |
+|  [Step 9] JLCPCB Production Export    python export_jlcpcb.py "projects/<NAME>"                                                |
++--------------------------------------------------------------------------------------------------------------------------------+
+```
+
+#### Step 1: 1-Line Instant Project Bootstrap (< 0.2s)
+Run the root bootstrapper tool directly from the Kaibridge repository root:
+```powershell
+python kicad_lib_init.py "projects/<Project_Name>" -n kaibridge
+```
+**What this automatically creates in one shot:**
+- `projects/<Project_Name>/` project root directory
+- `projects/<Project_Name>/kaibridge_dump/` intermediate scratch directory
+- `projects/<Project_Name>/<Project_Name>.kicad_pro` (native KiCad 10 project file with default netclasses & JLCPCB DRC rules)
+- `projects/<Project_Name>/<Project_Name>.kicad_pcb` (native KiCad 10 empty PCB header: version 20260206, generator_version "10.0", standard layer stack)
+- `projects/<Project_Name>/sym-lib-table` (version 7, mapping library nickname `kaibridge` to `${KIPRJMOD}/libs/kaibridge.kicad_sym`)
+- `projects/<Project_Name>/fp-lib-table` (version 7, mapping library nickname `kaibridge` to `${KIPRJMOD}/libs/kaibridge.pretty`)
+- `projects/<Project_Name>/libs/kaibridge.kicad_sym` (empty KiCad 10 symbol library header)
+- `projects/<Project_Name>/libs/kaibridge.pretty/` (footprint directory)
+- `projects/<Project_Name>/libs/kaibridge.3dshapes/` (3D model directory)
+
+#### Step 2: Component Sourcing (Local SQLite DB + Active IC CLI)
+**A. Generic Passives & Connectors:**
+- Query local parts cache & SQLite database (< 1ms):
+  ```powershell
+  python -c "from kaibridge.sourcing.parts_db import lookup_by_lcsc; print(lookup_by_lcsc('C17513'))"
+  ```
+- Or consult `references/jlcpcb_basic_parts.md` for pre-verified 0-fee Basic Parts.
+- ALWAYS use native KiCad symbols (`Device:R`, `Device:C`, `Device:LED`, `Device:D`, `Connector_Generic:Conn_01x<N>`) and official IPC-7351 footprints (`Resistor_SMD:R_0805_2012Metric`, etc.).
+
+**B. Active ICs & Modules (LCSC Downloads via `easyeda2kicad`):**
+```powershell
+Push-Location "projects/<Project_Name>"
+easyeda2kicad --lcsc_id <LCSC_ID> --symbol --footprint --output "$PWD/libs/kaibridge" --overwrite --project-relative
+Pop-Location
+```
+
+#### Step 3: Zero-Hallucinated Pin & Footprint Extraction (< 0.1s)
+**NEVER guess pin numbers, pin names, or footprint strings from memory!**
+Extract them directly from the symbol file:
+```powershell
+# For downloaded active ICs in project library:
+python kicad_pins.py "projects/<Project_Name>\libs\kaibridge.kicad_sym" -s <SYMBOL_NAME> --json
+
+# For stock KiCad symbols (e.g. Logic, Regulators, Connectors):
+python kicad_pins.py --native <LIBRARY_NAME> -s <SYMBOL_NAME> --json
+```
+- **Footprint Rule:** Copy the `"footprint"` field from the JSON output verbatim into `design.json` (e.g. `"kaibridge:ESOP-8_..."`).
+- **Pins Rule:** Pin connections (`"<REF>.<PIN_NUMBER>"`, e.g. `"U1.1"`, `"U1.8"`) must match the JSON output exactly.
+
+#### Step 4: Upfront BOM Sourcing & `design.json` Synthesis
+Write the complete schematic specification to `projects/<Project_Name>/kaibridge_dump/design.json`:
+- Supports both `"parts": { ... }` dict and `"components": [ ... ]` list format.
+- Attach the LCSC C-Part ID upfront inside `"fields": {"LCSC": "Cxxxx", "JLCPCB_Class": "Basic Part"}` on EVERY part.
+- Put external unregulated inputs (`VBUS`, `VIN`, `VBAT`, `GND`) in `"power_flags": ["VBUS", "GND"]`.
+- Do NOT put active regulator outputs (`+3V3`, `+5V`) in `power_flags` (regulators already output power).
+- Define netclasses with widths/clearances in `"netclasses"`.
+
+#### Step 5: Dry-Run Preflight & Automated Schematic Compilation + ERC
+```powershell
+# 1. Preflight dry-run check:
+python json2sch.py "projects/<Project_Name>" --dry-run
+
+# 2. Compile schematic, write netclasses into .kicad_pro, and run KiCad ERC:
+python json2sch.py "projects/<Project_Name>" --apply-netclasses --erc
+```
+**Gate Requirement:** Total ERC Errors must be 0 (`Status: PASSED (0 Errors)`).
+
+#### Step 6: Export Vector Schematic Preview (Checkpoint 1)
+```powershell
+# Export vector SVG preview dynamically via kicad_paths.json or load_cli():
+python -c "from kaibridge.pcb import render_schematic_preview; render_schematic_preview('projects/<Project_Name>')"
+# Or compile with --svg flag: python json2sch.py "projects/<Project_Name>" --apply-netclasses --erc --svg
+```
+Presents clean SVG preview path in `kaibridge_dump/` to user as Checkpoint 1.
+
+#### Step 7: Headless PCB Synchronization (Programmatic F8)
+```powershell
+python kicad_pcb_sync.py "projects/<Project_Name>"
+```
+Automatically instantiates footprints, sets references/values, and attaches net ratsnest to `.kicad_pcb`.
+
+#### Step 8: Declarative Component Placement & Layout (Checkpoint 2)
+```powershell
+# 1. In-memory dry-run collision check:
+python kicad_layout.py "projects/<Project_Name>" "projects/<Project_Name>/kaibridge_dump/ops.json" --dry-run
+
+# 2. Commit placement to .kicad_pcb:
+python kicad_layout.py "projects/<Project_Name>" "projects/<Project_Name>/kaibridge_dump/ops.json"
+
+# 3. Export vector placement snapshot for visual critique:
+python pcb_snapshot.py "projects/<Project_Name>"
+```
+
+#### Step 9: Headless Routing, Solid Ground Pour & Automated DRC (Checkpoint 3)
+```powershell
+python kicad_route.py "projects/<Project_Name>" --pour-gnd --drc
+```
+Runs DSN track width audit, executes Freerouting 2.4.1 headlessly, imports SES, pours solid GND copper plane on `B.Cu` (0.3mm clearance), and validates 0 clearance violations via KiCad DRC.
+
+#### Step 10: 100% Populated JLCPCB Production & BOM Export
+```powershell
+python export_jlcpcb.py "projects/<Project_Name>"
+```
+Generates 100% factory-ready JLCPCB files in `production_output/`:
+- `<Project_Name>_bom_jlcpcb.csv`: Groups identical parts with columns `Comment,Designator,Footprint,LCSC Part #` completely populated with zero missing IDs.
+- `<Project_Name>_cpl_jlcpcb.csv`: Centroid SMT placement table (`Designator,Val,Package,Mid X,Mid Y,Rotation,Layer`).
+- `<Project_Name>_gerbers.zip`: Gerber & Excellon drill files ready for fabrication.
 
 ---
 
@@ -60,13 +186,13 @@ When operating via MCP (e.g. Antigravity IDE), use these 22 dedicated Kaibridge 
 | # | MCP Tool Name | Purpose | Key Parameters |
 |---|---|---|---|
 | 1 | `kaibridge_init_project` | **Headless Bootstrapper:** Create project folder, `.kicad_pro`, empty `.kicad_pcb`, library tables, and `kaibridge_dump/` | `project_dir`, `project_name` |
-| 2 | `kaibridge_lookup_lcsc_part` | **Instant Offline DB Sourcing:** Query local `easyeda-std.elib` & Golden Cache in < 1ms for MPN, basic/extended class, and footprint mapping | `lcsc_id`, `component_type`, `value`, `package` |
-| 3 | `kaibridge_fetch_lcsc_component` | Download symbol (.kicad_sym), footprint (.kicad_mod), and 3D model from LCSC with sequential pacing & retry | `project_dir`, `lcsc_id`, `lib_name`, `delay_sec` |
+| 2 | `kaibridge_lookup_lcsc_part` | **Instant Offline DB Sourcing:** Query local `easyeda-std.elib` & Golden Cache in < 1ms for MPN, basic/extended class, or fuzzy search by keyword (e.g. 'TCRT5000', 'AMS1117') | `query`, `lcsc_id`, `component_type`, `value`, `package` |
+| 3 | `kaibridge_fetch_lcsc_component` | Download symbol (.kicad_sym), footprint (.kicad_mod), and 3D model from LCSC with sequential pacing & retry (auto-sanitizes 0-annular pads to `np_thru_hole`) | `project_dir`, `lcsc_id`, `lib_name`, `delay_sec` |
 | 4 | `kaibridge_query_symbol_pins` | Extract pin numbers, names, electrical types, and footprint from `.kicad_sym` (smart fuzzy & case fallback) | `project_dir`, `lib_id` |
 | 5 | `kaibridge_build_schematic` | Compile `design.json` into hierarchical `.kicad_sch` and run ERC validation (handles UTF-8 BOM) | `project_dir`, `apply_netclasses`, `run_erc_check` |
 | 6 | `kaibridge_render_schematic_preview` | Export high-resolution vector SVG or multi-page PDF of compiled schematic for AI visual verification | `project_dir`, `format`, `pages`, `exclude_drawing_sheet` |
 | 7 | `kaibridge_sync_to_pcb` | **Headless F8:** Instantiate footprints on `.kicad_pcb` and bind nets/ratsnest | `project_dir` |
-| 8 | `kaibridge_apply_ops_layout` | Execute `ops.json` layout payload (place, move, rotate, lock, unlock, add tracks, vias, delete, edge cuts) in <100ms with 0.5mm grid snap | `project_dir`, `ops` |
+| 8 | `kaibridge_apply_ops_layout` | Execute `ops.json` layout payload (place, array.place, move, rotate, lock, unlock, tracks, vias, delete, edge cuts) in <100ms with deterministic 0.5mm grid snap | `project_dir`, `ops`, `dry_run` |
 | 9 | `kaibridge_autoplace_pcb` | Smart Geometric Autoplacer with collision avoidance and automatic Edge.Cuts board generation | `project_dir`, `board_width_mm`, `board_height_mm`, `pitch_mm` |
 | 10 | `kaibridge_render_pcb_preview` | Export vector SVG snapshot, top PNG render, and structural board analytics (dimensions, positions, track/via count) | `project_dir` |
 | 11 | `kaibridge_route_pcb` | Headless Freerouting 2.4.1 autorouter with 150um edge clearance & strict DRC + automatic zone refilling | `project_dir`, `track_width_mm`, `timeout_sec`, `copper_edge_clearance_um`, `strict_drc`, `max_passes` |
@@ -84,18 +210,43 @@ When operating via MCP (e.g. Antigravity IDE), use these 22 dedicated Kaibridge 
 
 ---
 
+### Canonical CLI Playbook & Masterpiece Tools (Zero-Scripting Protocol)
+
+Alongside the 22 MCP tools in `server.py`, the repository provides 8 dedicated, lightning-fast root CLI tools. **NEVER write custom Python scratch scripts in `brain/.../scratch/`** to extract pins, mutate boards, or test layouts. Always use these canonical tools:
+
+| Tool | Invocation | Purpose & Capability | Execution Time |
+|---|---|---|---|
+| **`kicad_lib_init.py`** | `python kicad_lib_init.py <PROJECT_DIR> -n kaibridge` | **Dynamic Library Initializer:** Dynamically detects host KiCad version and creates `libs/`, `kaibridge.kicad_sym`, `kaibridge.pretty/`, `kaibridge.3dshapes/`, and upserts `sym-lib-table` & `fp-lib-table` with `.bak` backups. | **< 0.5s** |
+| **`kicad_pins.py`** | `python kicad_pins.py <sym_path> -s <SYM> --json`<br/>`python kicad_pins.py --native <LIB> -s <SYM> --json`<br/>`python kicad_pins.py <sym_path> --verify` | **The Pin & Footprint Oracle:** Extracts exact pin numbers, pin names, electrical types, datasheets, and default footprints from project `.kicad_sym` or stock KiCad libraries. With `--verify`, checks that pad counts in `.kicad_mod` match symbol pin counts. | **< 0.1s** |
+| **`json2sch.py`** | `python json2sch.py <PROJECT_DIR> --dry-run`<br/>`python json2sch.py <PROJECT_DIR> --apply-netclasses --erc` | **Schematic Compiler & Automated ERC:** Compiles `design.json` into `.kicad_sch`, writes netclasses into `.kicad_pro`, and runs automated `kicad-cli sch erc` with structured pass/fail reporting. | **~ 1.5s** |
+| **`kicad_pcb_sync.py`** | `python kicad_pcb_sync.py <PROJECT_DIR>` | **Headless PCB Synchronizer (F8):** Instantiates footprints on `.kicad_pcb`, sets values, and binds all electrical net ratsnest directly. | **< 0.5s** |
+| **`kicad_layout.py`** | `python kicad_layout.py <PROJECT_DIR> [ops.json] [--dry-run]` | **Declarative Layout Engine:** Executes `ops.json` component placement, rotation, array placement, and locking with 0.5mm grid snap and in-memory collision detection. | **< 0.3s** |
+| **`pcb_snapshot.py`** | `python pcb_snapshot.py <PROJECT_DIR>` | **Vector Snapshot Exporter:** Exports clean vector SVG render of the board layout for multimodal visual critique. | **~ 1.0s** |
+| **`kicad_route.py`** | `python kicad_route.py <PROJECT_DIR> [--pour-gnd] [--drc]` | **Headless Autorouter & Quality Gate:** Executes pre-flight DSN audit, headless Freerouting 2.4.1 with 150µm edge keepout, pours solid GND plane on `B.Cu`, and runs KiCad DRC. | **~ 5.0s** |
+| **`export_jlcpcb.py`** | `python export_jlcpcb.py <PROJECT_DIR>` | **Production Exporter:** Generates 100% factory-ready JLCPCB bundle (`Gerber_*.zip`, Excellon Drill, `BOM_*.csv`, `CPL_*.csv`). | **~ 2.0s** |
+
+---
+
 ### File Map & Core Modular Engines
 
 | File | Purpose | Invocation / Import |
 |---|---|---|
+| `kicad_lib_init.py` | Standalone project library initialization & table upsert CLI | `python kicad_lib_init.py` |
+| `kicad_pins.py` | Standalone pin, symbol, default footprint & pad-count extraction CLI | `python kicad_pins.py` |
+| `json2sch.py` | Standalone schematic compilation & automated ERC CLI | `python json2sch.py` |
+| `kicad_pcb_sync.py` | Standalone headless F8 netlist and footprint synchronizer CLI | `python kicad_pcb_sync.py` |
+| `kicad_layout.py` | Standalone declarative layout placement & collision simulation CLI | `python kicad_layout.py` |
+| `pcb_snapshot.py` | Standalone PCB vector SVG preview snapshot exporter CLI | `python pcb_snapshot.py` |
+| `kicad_route.py` | Standalone headless autorouter, ground pour & DRC gate CLI | `python kicad_route.py` |
+| `export_jlcpcb.py` | Standalone JLCPCB production bundle export CLI | `python export_jlcpcb.py` |
 | `kaibridge/core/paths.py` | Centralized path resolver: `load_cli()`, `load_kicad_python()`, `find_easyeda_db()`, `env_dirs()` | Core module |
 | `kaibridge/core/oracle.py` | Live SWIG signature, class, constant, and architectural rules oracle | `kaibridge.core` |
 | `kaibridge/oracle/swig_oracle.py` | Live SWIG signature, class, constant & rules oracle alias | `kaibridge.oracle` |
-| `kaibridge/sourcing/parts_db.py` | Offline parts database: SQLite query on `easyeda-std.elib`, Golden Cache, `recommend_kicad_part()` | `kaibridge.sourcing` |
-| `kaibridge/sourcing/lcsc_runner.py` | EasyEDA API runner for downloading active IC symbols and footprints | `kaibridge.sourcing` |
+| `kaibridge/sourcing/parts_db.py` | Offline parts database: SQLite query on `easyeda-std.elib`, Golden Cache, `lookup_by_lcsc()` | `kaibridge.sourcing` |
+| `kaibridge/sourcing/lcsc.py` | EasyEDA API runner & direct LCSC component fetcher with pad auto-sanitization | `kaibridge.sourcing` |
 | `kaibridge/schematic/compiler.py` | `design.json` -> `.kicad_sch` compiler with netclasses, hierarchical sheets & headless ERC | `kaibridge.schematic` |
 | `kaibridge/pcb/sync.py` | Headless F8 netlist and footprint binder directly into `.kicad_pcb` | `kaibridge.pcb` |
-| `kaibridge/pcb/layout.py` | Board state engine: 16 layout ops, geometry gate, 0.5mm grid snap, physics relaxation | `kaibridge.pcb` |
+| `kaibridge/pcb/layout.py` | Board state engine: 17 layout ops, geometry gate, 0.5mm grid snap, physics relaxation | `kaibridge.pcb` |
 | `kaibridge/pcb/router.py` | Specctra DSN export -> Java Freerouting 2.4.1 -> SES import + automatic zone refilling | `kaibridge.pcb` |
 | `kaibridge/pcb/export.py` | Gerber ZIP, Excellon drill, JLCPCB BOM CSV (with auto-healing), and CPL CSV export | `kaibridge.pcb` |
 | `kaibridge/pcb/snapshot.py` | Timestamped `.kicad_pcb` backups, deterministic rollback, and structural diffing | `kaibridge.pcb` |
@@ -106,63 +257,126 @@ When operating via MCP (e.g. Antigravity IDE), use these 22 dedicated Kaibridge 
 
 ---
 
-### RULE 3 — Component Sourcing, Native IPC Footprints & Upfront LCSC BOM Binding (Zero ERC Guarantee)
+---
 
-1. **Two-Tier Sourcing Doctrine**:
-   - **Generic Passives (Resistors, Capacitors, Inductors, LEDs, Diodes, Headers):**
-     - **Symbols:** ALWAYS use native KiCad symbols:
-       - Resistors: `Device:R`
-       - Capacitors: `Device:C` (ceramic/unpolarized) or `Device:C_Polarized` (electrolytic/tantalum)
-       - LEDs: `Device:LED`
-       - Diodes: `Device:D` or `Device:D_Schottky`
-       - Inductors: `Device:L`
-       - Pin Headers: `Connector_Generic:Conn_01x<N>`
-       *(NEVER use raw EasyEDA passive symbols that declare pins as "Input", which trigger `[pin_not_driven]` ERC errors).*
-     - **Footprints:** ALWAYS use native KiCad official IPC-7351 footprints (`Resistor_SMD:R_0805_2012Metric`, `Capacitor_SMD:C_0805_2012Metric`, `LED_SMD:LED_0805_2012Metric`, `Diode_SMD:D_SOD-123`, `Connector_PinHeader_2.54mm:PinHeader_1x*`). **NEVER download passive footprints from EasyEDA!** KiCad IPC footprints guarantee zero silkscreen overlaps, correct courtyards, and 100% JLCPCB SMT compatibility.
-     - ** UPFRONT LCSC ID BINDING (MANDATORY BEFORE SCHEMATIC COMPILATION):**
-       You MUST attach the JLCPCB LCSC C-Part ID directly during `design.json` synthesis inside `fields: {"LCSC": "Cxxxx", "JLCPCB_Class": "Basic Part"}` for EVERY component. Do NOT wait until BOM export! Sourcing the LCSC ID upfront ensures it travels automatically into the schematic, netlist, PCB footprint fields, and exports a 100% populated JLCPCB BOM CSV without missing part numbers.
-     - **Instant Resolution & Reference Catalog:**
-       - Use `kaibridge_lookup_lcsc_part` (<1ms) to query any part dynamically.
-       -  **Complete Basic Parts Directory:** See [`references/jlcpcb_basic_parts.md`](references/jlcpcb_basic_parts.md) for the verified catalog of JLCPCB Basic Parts (resistors, capacitors, LEDs, diodes, transistors, MOSFETs, LDOs) with exact LCSC IDs and KiCad IPC footprint mappings.
-   - **Active ICs, Sensors, Microcontrollers, USB Sockets:**
-     - Download via `kaibridge_fetch_lcsc_component`.
-     - Query exact pin numbers, pin names, and electrical types via `kaibridge_query_symbol_pins`.
-     - Copy exact pin numbers (`"1"`, `"2"`, `"A4"`, `"B1"`, `"SH"`, `"EP"`) verbatim into `design.json`. Never invent or assume pin numbers.
+### RULE 3 — Component Sourcing, Pin Verification & Upfront LCSC Binding (Zero ERC Gate)
+
+The agent MUST follow this exact, sequential pipeline from BOM definition to pin verification. **Never skip pin verification or guess pin numbers.**
+
+#### Step 1: Two-Tier Sourcing Separation
+Split the proposed BOM into two distinct categories:
+
+1. **Generic Passives & Standard Connectors (Native KiCad Symbols):**
+   - **Symbols:** ALWAYS use native KiCad symbols:
+     - Resistors: `Device:R`
+     - Capacitors: `Device:C` (ceramic/unpolarized) or `Device:C_Polarized` (electrolytic/tantalum)
+     - LEDs: `Device:LED`
+     - Diodes: `Device:D` or `Device:D_Schottky`
+     - Inductors: `Device:L`
+     - Pin Headers / Terminal Blocks: `Connector_Generic:Conn_01x<N>`
+     *(NEVER use EasyEDA passive symbols that declare pins as "Input", which trigger `[pin_not_driven]` ERC errors).*
+   - **Footprints:** ALWAYS use native KiCad official IPC-7351 footprints (`Resistor_SMD:R_0805_2012Metric`, `Capacitor_SMD:C_0805_2012Metric`, `LED_SMD:LED_0805_2012Metric`, `Diode_SMD:D_SOD-123`, `Connector_PinHeader_2.54mm:PinHeader_1x*`). **NEVER download passive footprints from EasyEDA!**
+   - **Upfront LCSC Basic Part ID Binding:**
+     Attach the JLCPCB LCSC C-Part ID directly during `design.json` synthesis inside `fields: {"LCSC": "Cxxxx", "JLCPCB_Class": "Basic Part"}`. Sourcing the LCSC ID upfront ensures it travels automatically into the schematic, netlist, PCB footprint fields, and exports a 100% populated JLCPCB BOM CSV without missing part numbers.
+     - Query local parts (<1ms): `kaibridge_lookup_lcsc_part`
+     - Reference directory: [`references/jlcpcb_basic_parts.md`](references/jlcpcb_basic_parts.md)
+
+2. **Active ICs, Modules, Sensors & Specialized Connectors (LCSC Downloads):**
+   - Download directly via CLI or MCP:
+     - **CLI:**
+       ```powershell
+       Push-Location "<PROJECT_DIR>"
+       easyeda2kicad --lcsc_id <LCSC_ID> --full --output "$PWD/libs/kaibridge" --overwrite --project-relative
+       Pop-Location
+       ```
+       *(Note: If EasyEDA 3D STEP server stalls, run with `--symbol --footprint` for instant 2s download).*
+     - **MCP:** `kaibridge_fetch_lcsc_component(project_dir="<PROJECT_DIR>", lcsc_id="<LCSC_ID>")`
+
+#### Step 2: Pin Verification & Default Footprint Extraction (MANDATORY GATE)
+**STRICT MANDATE:** Active IC pinouts and footprint names are **NEVER** assumed or guessed from training data. You MUST extract them directly from the symbol file:
+
+```powershell
+# Verify downloaded parts (pad count in .kicad_mod == pin count in .kicad_sym):
+python kicad_pins.py "<PROJECT_DIR>\libs\kaibridge.kicad_sym" --verify
+
+# Extract exact pins, types, and footprint for downloaded LCSC parts:
+python kicad_pins.py "<PROJECT_DIR>\libs\kaibridge.kicad_sym" -s <SYMBOL_NAME> --json
+
+# Extract exact pins, types, and footprint for native KiCad stock symbols:
+python kicad_pins.py --native <LIBRARY_NAME> -s <SYMBOL_NAME> --json
+```
+*(Or via MCP: `kaibridge_query_symbol_pins(project_dir, lib_id)`).*
+
+**The Golden Rules of Pin Binding:**
+- The JSON output contains a `"footprint"` field (e.g. `"kaibridge:SOIC-8_..."` or `"Converter_ACDC:..."`). **Copy it verbatim into `design.json`**. Do NOT invent package strings.
+- Pin references are `"<REF>.<PIN_NUMBER>"` and come **ONLY** from `kicad_pins.py --json`. Never guess a pin number or pin name.
 
 ---
 
-### RULE 4 — `design.json` Specification & Schematic Compilation
+### RULE 4 — `design.json` Synthesis, Multi-Page Schematics & Automated ERC Gate
 
-1. Build `design.json` inside `<PROJECT_DIR>/kaibridge_dump/design.json`.
-2. **Canonical Schema Rules:**
-   - **Net Names:** Name every junction explicitly (`VBUS`, `+3V3`, `GND`, `PWM_OUT`, `RESET`). Never use auto-generated names like `Net-(D1_Pad1)`.
-   - **Net Structure:** Each net in `nets` contains a `connections` array: `"<NET_NAME>": { "connections": ["U1.1", "C1.1"] }`.
-   - **Power Flags & Switched Rail Ingest Rule (Zero [pin_not_driven] Guarantee):**
-     - KiCad ERC requires every power net feeding active IC `power_in` pins to have a driving source (`power_out` pin or `PWR_FLAG`).
-     - **External Power Ingest Nets (Unregulated Inputs):** Any power rail entering the board from an external source (e.g. USB `VBUS`, DC barrel jack `VIN` / `DC_IN`, battery terminal `VBAT`, industrial `+12V` / `+24V`) and circuit reference ground (`GND`) must be declared in `"power_flags": ["<INPUT_RAIL>", "GND"]`.
-     - **Passive-Interrupted Power Rails:** Any power rail downstream of purely passive inline elements (e.g. Schottky protection diodes, PTC fuses, toggle/push switches, LC filter inductors, current-sense shunts) that feeds an active IC's `power_in` pin lacks an active driver. You **MUST** declare all such interrupted rails in `"power_flags"` (e.g. `["DC_IN", "VBUS_SW", "VIN_PROT", "VBAT_FUSED", "GND"]`). Failure to do so triggers `[pin_not_driven]` ERC errors.
-     - **Active Regulator Outputs (Do NOT flag):** Regulators (LDOs, buck/boost converters, charge pumps) have output pins internally typed as `power_out`. Never assign `power_flags` to active regulator output nets (e.g. `+3V3`, `+5V`, `VOUT`), as doing so creates a `[pin_to_pin]` driver collision error.
-   - **Unconnected Pins:** Unconnected `power_in` or bidirectional pins must be wired or declared in `no_connect`: `["U1.5", "J1.A6", "J1.A7"]`.
-   - **Stacked Pins Warning (`stacked_pins_fix.md`):** If a symbol has multiple stacked identical pins sharing the exact same coordinate (e.g. multiple GND pins on MCU or USB-C), **only list the single visible pin** in `design.json`. KiCad internally connects the stacked pins; listing all of them creates an illegible label ladder in the schematic.
-   - **Netclasses Configuration (`trackwidth_clearence_viasize.md`):** Declare `netclasses` at the root of `design.json` tailored to the specific board's current and signal requirements:
-     ```json
-     "netclasses": {
-       "Default": { "track_width": 0.25, "clearance": 0.2, "via_diameter": 0.6, "via_drill": 0.3 },
-       "Power": {
-         "track_width": 0.6,
-         "clearance": 0.25,
-         "via_diameter": 0.8,
-         "via_drill": 0.4,
-         "nets": ["<POWER_RAILS_AND_HIGH_CURRENT_NETS>"]
-       }
-     }
-     ```
-     *Note:* The `"nets"` array in `"Power"` should enumerate the power rails and ground returns for this specific design (e.g. `["+12V", "MOTOR_PWR", "GND"]`, `["VBAT", "VDD", "GND"]`, or `["VBUS", "VBUS_SW", "+3V3", "GND"]`). Additional custom netclasses (e.g. `High_Current`, `RF_50R`, `Analog_Sensitive`) can be declared similarly. The compiler and router automatically synthesize `netclass_patterns` to `.kicad_pro`, ensuring Freerouting and `ExportSpecctraDSN` route power nets at their wide width and signals at standard width.
-3. Compile schematic with `kaibridge_build_schematic` (with `run_erc_check=True`). Ensure **0 errors** before proceeding.
+Follow `<PLUGIN_DIR>/design_template.json` strictly. Save the specification to `<PROJECT_DIR>/kaibridge_dump/design.json`.
+
+#### 1. Schema & Electrical Soundness Rules
+- **Explicit Junction Naming:** Name every functional net explicitly (`VBUS`, `+3V3`, `GND`, `PWM_OUT`, `RESET`, `SDA`, `SCL`). Never allow compiler-generated names like `Net-(D1_Pad1)`.
+- **Connections Array:** Structure nets cleanly: `"<NET_NAME>": { "connections": ["U1.1", "C1.1", "R1.2"] }`.
+- **Power Flags & Driver Rules (Zero [pin_not_driven] Guarantee):**
+  - External unregulated power inputs (USB `VBUS`, DC barrel `VIN`, battery `VBAT`) and board ground (`GND`) MUST be declared in `"power_flags": ["<INPUT_RAIL>", "GND"]`.
+  - Passive-interrupted rails (downstream of protection diodes, PTC fuses, switches, or inductors that feed IC `power_in` pins) MUST be declared in `"power_flags"` (e.g. `["DC_IN", "VBUS_SW", "VIN_PROT", "VBAT_FUSED", "GND"]`).
+  - Active regulator outputs (`+3V3`, `+5V`, `VOUT`) internally have `power_out` driver pins. **NEVER** put active regulator output nets in `power_flags` (causes `[pin_to_pin]` driver collision).
+- **Unconnected Pins:** Any unused `power_in` or bidirectional pins must be tied to ground/rail or declared in `"no_connect": ["U1.5", "J1.A6", "J1.A7"]`.
+- **Stacked Pins Rule (`references/stacked_pins_fix.md`):** If a symbol has multiple stacked identical pins sharing the exact same coordinate (e.g. multiple GND pins on MCU or USB-C), list only the single visible pin in `design.json`.
+- **Netclasses Configuration (`references/trackwidth_clearence_viasize.md`):**
+  Declare netclasses in `design.json` tailored to current requirements:
+  ```json
+  "netclasses": {
+    "Default": { "track_width": 0.25, "clearance": 0.2, "via_diameter": 0.6, "via_drill": 0.3 },
+    "Power": {
+      "track_width": 0.6,
+      "clearance": 0.25,
+      "via_diameter": 0.8,
+      "via_drill": 0.4,
+      "nets": ["+3V3", "VIN", "GND"]
+    }
+  }
+  ```
+
+#### 2. Multi-Page / Hierarchical Schematics
+For modular designs (> 25 components) or distinct sub-circuits, declare `sheets` in `design.json`:
+```json
+"sheets": [
+  {"id": "power", "title": "Power Regulation & Protection", "paper": "A4"},
+  {"id": "mcu", "title": "Microcontroller & Clocks", "paper": "A4"},
+  {"id": "sensors", "title": "Analog Front-End & Sensors", "paper": "A4"}
+]
+```
+Assign parts to sheets via `"sheet": "<sheet_id>"`. The compiler automatically:
+- Generates the root schematic (`<project>.kicad_sch`) with hierarchical sheet boxes and sheet pins.
+- Generates dedicated sub-schematic files (`power.kicad_sch`, `mcu.kicad_sch`, etc.).
+- Resolves cross-sheet net connections into hierarchical labels automatically.
+
+#### 3. Step A — Dry Run Preflight (Zero-Disk-Write Guarantee)
+Before generating files, execute the dry run to verify part counts, net counts, and paper sizes:
+```powershell
+python json2sch.py "<PROJECT_DIR>" --dry-run
+```
+Inspect the console report. If any warnings or errors appear, resolve them in `design.json` first.
+
+#### 4. Step B — Schematic Compilation, Netclasses & Automated ERC
+Compile the schematic, apply netclass rules to `.kicad_pro`, and run automated KiCad Electrical Rules Check in one command:
+```powershell
+python json2sch.py "<PROJECT_DIR>" --apply-netclasses --erc
+```
+*(Or via MCP: `kaibridge_build_schematic(project_dir, apply_netclasses=True, run_erc_check=True)`).*
+
+**The ERC Gate:**
+- The report MUST show: **Total Errors: 0, Status: PASSED (0 Errors)**.
+- If errors exist (e.g. `[pin_not_driven]` or unconnected nets), diagnose the exact violation message, fix `design.json`, and re-run.
+- **NEVER proceed to PCB layout if ERC errors > 0.**
 
 ---
 
-### RULE 5 — Schematic Visual Verification (Vector Render Gate)
+### RULE 5 — Checkpoint 1: Schematic Vector Render & Visual Review Gate
 
 After `kaibridge_build_schematic` passes with 0 ERC errors, call `kaibridge_render_schematic_preview` to generate vector renders of the compiled schematic:
 
@@ -216,26 +430,29 @@ After `kaibridge_build_schematic` passes with 0 ERC errors, call `kaibridge_rend
        Antenna radiating elements, trace antennas, or chip antennas must face outward toward an outer edge, with recommended manufacturer keep-out clearance free of copper and traces.
 
 3. **Execute Placement via `kaibridge_apply_ops_layout` (`ops.json`):**
-   - 16 built-in layout ops: `footprint.place`, `footprint.move`, `footprint.rotate`, `footprint.lock`, `footprint.unlock`, `footprint.set_field`, `track.add`, `track.set_width`, `via.add`, `item.delete`, `net.delete_routing`, `zone.refill`, `zone.delete`, `board.set_size`, `board.fit_outline`, `board.prep_for_route`.
+   - 17 built-in layout ops: `footprint.place`, `array.place`, `footprint.move`, `footprint.rotate`, `footprint.lock`, `footprint.unlock`, `footprint.set_field`, `track.add`, `track.set_width`, `via.add`, `item.delete`, `net.delete_routing`, `zone.refill`, `zone.delete`, `board.set_size`, `board.fit_outline`, `board.prep_for_route`.
    - **Op Schema Reference:** Refer to `ops_template.json` for full examples.
-   - **Sample `ops.json` Template with Explicit Rotations:**
+   - **Sample `ops.json` Template with Linear Arrays & Explicit Rotations:**
      ```json
      [
-       {"op": "board.set_size", "width": 50.0, "height": 40.0, "origin_x": 0.0, "origin_y": 0.0},
-       {"op": "footprint.place", "ref": "J1", "x": 5.0, "y": 20.0, "rot": 180, "locked": true},
-       {"op": "footprint.place", "ref": "U1", "x": 25.0, "y": 20.0, "rot": 0},
-       {"op": "footprint.place", "ref": "C1", "x": 20.0, "y": 16.0, "rot": 90},
+       {"op": "board.set_size", "width": 100.0, "height": 50.0, "origin_x": 0.0, "origin_y": 0.0},
+       {"op": "footprint.place", "ref": "J1", "x": 5.0, "y": 25.0, "rot": 180, "locked": true},
+       {"op": "array.place", "refs": ["U1", "U2", "U3", "U4", "U5", "U6", "U7", "U8"], "start_x": 20.0, "start_y": 35.0, "pitch_x": 10.0, "rot": 90},
+       {"op": "array.place", "refs": ["D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8"], "start_x": 20.0, "start_y": 20.0, "pitch_x": 10.0, "rot": 0},
        {"op": "footprint.rotate", "ref": "R1", "rot": 90, "relative": false}
      ]
      ```
    - All $(X, Y)$ coordinates are automatically quantized to a clean **0.5mm grid** by the Geometry Gate.
-   - Preserves existing rotation if `"rot"` is omitted during fine coordinate nudging (`footprint.move`).
    - **Safe Simulation Mode (`"dry_run": true`):** Pass `"dry_run": true` to `kaibridge_apply_ops_layout` to simulate placement, rotation, and geometry collision checks in memory with a 100% zero-disk-write guarantee before committing.
 
 4. **Visual & Structural Critique:**
    - Call `kaibridge_render_pcb_preview` to export `<project>_board.svg` and inspect `board_analysis`.
    - Audit placement against the 80-rule floorplanning doctrine in [`references/pcb_placement_rules.md`](references/pcb_placement_rules.md) (Decoupling Proximity `< 2.5mm`, Clock/RF Loops `< 5mm`, Thermal Dissipation Tabs facing outward, Symmetry & Axis Alignment).
    - Formulate corrective `ops.json` layout operations with explicit rotations and coordinates before re-rendering.
+
+5. **Critical Component & RF/Crystal Locking Protocol (`LCK-01`):**
+   - Immediately after placing crystal oscillators (`OSC-01`), RF matching networks/antennas, sensitive analog nodes, and perimeter connectors (`CON-01`), the agent MUST lock their positions using `{"op": "footprint.lock", "ref": "<REF>"}` or `"locked": true` in `footprint.place`.
+   - **Autorouter & Relaxation Protection:** Locked footprints (`fp.SetLocked(True)`) are completely immune to displacement during `kaibridge_auto_relax_layout` and cannot be moved or perturbed during Freerouting operations. This ensures that sensitive high-frequency and analog geometries remain pristine while standard power and digital buses are auto-routed.
 
 ---
 
@@ -288,7 +505,7 @@ After `kaibridge_build_schematic` passes with 0 ERC errors, call `kaibridge_rend
 
 1. **DRC Check:** Call `kaibridge_run_drc` (or `kicad-cli pcb drc`). Must achieve **0 clearance violations** and **0 unrouted nets**.
 2. **JLCPCB Export:** Call `kaibridge_export_production`:
-   - Generates `Gerber_*.zip`, Drill files, `BOM_*.csv`, and `CPL_*.csv` inside `<PROJECT_DIR>/jlcpcb_production/`.
+   - Generates `Gerber_*.zip`, Drill files, `BOM_*.csv`, and `CPL_*.csv` inside `<PROJECT_DIR>/production_output/`.
    - **Auto-Healing BOM:** If any standard passive part omitted an explicit `LCSC` field, the exporter automatically resolves the JLCPCB Basic Part number from the local database.
 
 ---

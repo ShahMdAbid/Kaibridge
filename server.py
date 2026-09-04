@@ -9,6 +9,7 @@ import os
 import sys
 import json
 import time
+import re
 import traceback
 from pathlib import Path
 from typing import Dict, Any, Optional, List
@@ -19,7 +20,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from kaibridge.core import load_paths, load_cli, load_kicad_python, find_freerouting_jar, query_oracle
-from kaibridge.sourcing import fetch_lcsc, LibIndex, lookup_by_lcsc, search_basic_passives, recommend_kicad_part
+from kaibridge.sourcing import fetch_lcsc, LibIndex, lookup_by_lcsc, search_by_query, search_basic_passives, recommend_kicad_part
 from kaibridge.schematic import compile_schematic
 from kaibridge.pcb import (
     sync_schematic_to_pcb,
@@ -42,7 +43,7 @@ from kaibridge.pcb import (
 
 SERVER_INFO = {
     "name": "kaibridge-mcp-server",
-    "version": "2.0.0"
+    "version": "2.0.1"
 }
 
 TOOLS_LIST = [
@@ -77,6 +78,7 @@ TOOLS_LIST = [
         "inputSchema": {
             "type": "object",
             "properties": {
+                "query": {"type": "string", "description": "Fuzzy search keyword (e.g. 'TCRT5000', 'AMS1117', 'CH340', 'ESP32', 'MOSFET') in local offline database (<1ms)."},
                 "lcsc_id": {"type": "string", "description": "Optional LCSC Part Number (e.g. 'C17513', 'C6186') for exact lookup."},
                 "component_type": {"type": "string", "description": "Component type ('R', 'C', 'LED', 'D', 'REG')."},
                 "value": {"type": "string", "description": "Component value (e.g. '10k', '100nF', 'Green')."},
@@ -168,20 +170,6 @@ TOOLS_LIST = [
                 "board_width_mm": {"type": "number", "description": "Target board width in mm (default: 50.0)."},
                 "board_height_mm": {"type": "number", "description": "Target board height in mm (default: 40.0)."},
                 "pitch_mm": {"type": "number", "description": "Pitch between components in mm (default: 8.0)."}
-            },
-            "required": ["project_dir"]
-        }
-    },
-    {
-        "name": "kaibridge_auto_relax_layout",
-        "description": "Auto-resolves component overlaps using physics-based 2D repulsion relaxation solver. Pushes colliding footprints apart until courtyard clearance rules are met.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "project_dir": {"type": "string", "description": "Absolute path to the KiCad project directory."},
-                "locked_refs": {"type": "array", "items": {"type": "string"}, "description": "List of references to lock (e.g. ['J1', 'U1'])."},
-                "passes": {"type": "integer", "description": "Solver passes (default: 300)."},
-                "margin": {"type": "number", "description": "Board edge margin in mm (default: 0.5)."}
             },
             "required": ["project_dir"]
         }
@@ -372,84 +360,21 @@ def _init_project(project_dir: str | Path, project_name: Optional[str] = None) -
     proj_path = Path(project_dir).resolve()
     proj_path.mkdir(parents=True, exist_ok=True)
     stem = project_name.strip() if project_name and project_name.strip() else proj_path.name
-    
-    dump_dir = proj_path / "kaibridge_dump"
-    dump_dir.mkdir(parents=True, exist_ok=True)
-    libs_dir = proj_path / "libs"
-    libs_dir.mkdir(parents=True, exist_ok=True)
-    
+
+    from kicad_lib_init import init_libraries
+    init_res = init_libraries(proj_path, "kaibridge")
+
     pro_file = proj_path / f"{stem}.kicad_pro"
     pcb_file = proj_path / f"{stem}.kicad_pcb"
-    
-    jlcpcb_rules = {
-        "max_error": 0.005,
-        "min_clearance": 0.15,
-        "min_connection": 0.0,
-        "min_copper_edge_clearance": 0.15,
-        "min_groove_width": 0.0,
-        "min_hole_clearance": 0.25,
-        "min_hole_to_hole": 0.25,
-        "min_microvia_diameter": 0.2,
-        "min_microvia_drill": 0.1,
-        "min_resolved_spokes": 2,
-        "min_silk_clearance": 0.0,
-        "min_text_height": 0.8,
-        "min_text_thickness": 0.08,
-        "min_through_hole_clearance": 0.2,
-        "min_through_hole_diameter": 0.3,
-        "min_track_width": 0.15,
-        "min_via_annular_width": 0.1,
-        "min_via_diameter": 0.5,
-        "solder_mask_to_copper_clearance": 0.0,
-        "use_height_for_length_calcs": true
-    }
 
-    if not pro_file.exists():
-        pro_content = {
-            "meta": {"filename": f"{stem}.kicad_pro", "version": 1},
-            "net_settings": {"classes": [{"name": "Default", "clearance": 0.2, "track_width": 0.25, "via_diameter": 0.6, "via_drill": 0.3}]},
-            "board": {
-                "design_settings": {
-                    "rules": jlcpcb_rules
-                }
-            },
-            "sheets": [["", ""]]
-        }
-        pro_file.write_text(json.dumps(pro_content, indent=2), encoding="utf-8")
-    else:
-        try:
-            pdata = json.loads(pro_file.read_text(encoding="utf-8"))
-            rules = pdata.setdefault("board", {}).setdefault("design_settings", {}).setdefault("rules", {})
-            updated = False
-            for k, v in jlcpcb_rules.items():
-                if k not in rules:
-                    rules[k] = v
-                    updated = True
-                elif k == "min_copper_edge_clearance" and rules[k] > 0.15:
-                    rules[k] = 0.15
-                    updated = True
-            if updated:
-                pro_file.write_text(json.dumps(pdata, indent=2), encoding="utf-8")
-        except Exception:
-            pass
-        
-    if not pcb_file.exists():
-        pcb_file.write_text(f'(kicad_pcb (version 20240108) (generator "kaibridge") (generator_version "3.0")\n  (general (thickness 1.6))\n  (paper "A4")\n  (layers\n    (0 "F.Cu" signal)\n    (31 "B.Cu" signal)\n    (32 "B.Adhes" user "B.Adhesive")\n    (33 "F.Adhes" user "F.Adhesive")\n    (34 "B.Paste" user)\n    (35 "F.Paste" user)\n    (36 "B.SilkS" user "B.Silkscreen")\n    (37 "F.SilkS" user "F.Silkscreen")\n    (38 "B.Mask" user)\n    (39 "F.Mask" user)\n    (40 "Dwgs.User" user "User.Drawings")\n    (41 "Cmts.User" user "User.Comments")\n    (42 "Eco1.User" user "User.Eco1")\n    (43 "Eco2.User" user "User.Eco2")\n    (44 "Edge.Cuts" user)\n    (45 "Margin" user)\n    (46 "B.CrtYd" user "B.Courtyard")\n    (47 "F.CrtYd" user "F.Courtyard")\n    (48 "B.Fab" user)\n    (49 "F.Fab" user)\n  )\n)\n', encoding="utf-8")
-        
-    sym_table = proj_path / "sym-lib-table"
-    if not sym_table.exists():
-        sym_table.write_text('(sym_lib_table\n  (lib (name "kaibridge")(type "KiCad")(uri "${KIPRJMOD}/libs/kaibridge.kicad_sym")(options "")(descr "Kaibridge LCSC Library"))\n)\n', encoding="utf-8")
-        
-    fp_table = proj_path / "fp-lib-table"
-    if not fp_table.exists():
-        fp_table.write_text('(fp_lib_table\n  (lib (name "kaibridge")(type "KiCad")(uri "${KIPRJMOD}/libs/kaibridge.pretty")(options "")(descr "Kaibridge LCSC Footprints"))\n)\n', encoding="utf-8")
-        
     return {
-        "success": True,
+        "success": init_res.get("success", True),
         "project_dir": str(proj_path),
         "project_name": stem,
         "pro_file": str(pro_file),
-        "pcb_file": str(pcb_file)
+        "pcb_file": str(pcb_file),
+        "symbol_file": init_res.get("symbol_file"),
+        "pretty_dir": init_res.get("pretty_dir")
     }
 
 
@@ -467,21 +392,51 @@ def handle_tool_call(name: str, args: dict) -> dict:
             raw_ids = args.get("lcsc_id", "")
             lib_name = args.get("lib_name", "kaibridge")
             part_list = [p.strip() for p in raw_ids.split(",") if p.strip()] if isinstance(raw_ids, str) else list(raw_ids)
+            delay_sec = float(args.get("delay_sec", 2.0))
             results = []
-            for part_id in part_list:
+            for i, part_id in enumerate(part_list):
+                if i > 0 and delay_sec > 0:
+                    time.sleep(delay_sec)
                 results.append(fetch_lcsc(proj_path, part_id, lib_name))
             return {"success": all(r.get("success", False) for r in results), "results": results}
 
         elif name == "kaibridge_lookup_lcsc_part":
+            query = args.get("query") or args.get("search") or args.get("q")
             lcsc_id = args.get("lcsc_id")
             c_type = args.get("component_type")
             val = args.get("value")
             pkg = args.get("package", "0805")
             basic_only = args.get("basic_only", True)
 
+            # 1. Direct fuzzy query search (e.g. 'TCRT5000', 'AMS1117', 'CH340')
+            if query:
+                results = search_by_query(query, limit=10)
+                return {
+                    "success": True,
+                    "query": query,
+                    "count": len(results),
+                    "results": results
+                }
+
+            # 2. If lcsc_id is not a standard C-number (e.g. user passed 'TCRT5000' as lcsc_id), fallback to fuzzy query
+            if lcsc_id and not re.match(r"^C\d+$", str(lcsc_id).strip(), re.IGNORECASE):
+                results = search_by_query(str(lcsc_id).strip(), limit=10)
+                if results:
+                    return {
+                        "success": True,
+                        "query": lcsc_id,
+                        "count": len(results),
+                        "results": results
+                    }
+
+            # 3. Exact LCSC ID lookup
             if lcsc_id and not c_type:
                 part_info = lookup_by_lcsc(lcsc_id)
                 if not part_info:
+                    # Try fuzzy fallback
+                    fuzzy = search_by_query(str(lcsc_id).strip(), limit=5)
+                    if fuzzy:
+                        return {"success": True, "part": fuzzy[0], "alternatives": fuzzy}
                     return {"success": False, "error": f"Part {lcsc_id} not found in local database."}
                 return {"success": True, "part": part_info}
 
@@ -499,7 +454,7 @@ def handle_tool_call(name: str, args: dict) -> dict:
                 part_info = lookup_by_lcsc(lcsc_id)
                 return {"success": bool(part_info), "part": part_info}
 
-            return {"success": False, "error": "Please provide either 'lcsc_id' or ('component_type' and 'value')."}
+            return {"success": False, "error": "Please provide either 'query', 'lcsc_id' or ('component_type' and 'value')."}
 
         elif name == "kaibridge_query_symbol_pins":
             lib_id = args.get("lib_id", "")
@@ -572,12 +527,6 @@ def handle_tool_call(name: str, args: dict) -> dict:
             h = float(args.get("board_height_mm", 40.0))
             pitch = float(args.get("pitch_mm", 8.0))
             return autoplace_board(proj_path, board_width_mm=w, board_height_mm=h, pitch_mm=pitch)
-
-        elif name == "kaibridge_auto_relax_layout":
-            locked = args.get("locked_refs", [])
-            passes = int(args.get("passes", 300))
-            margin = float(args.get("margin", 0.5))
-            return relax_board(proj_path, locked_refs=locked, passes=passes, margin=margin)
 
         elif name == "kaibridge_render_pcb_preview":
             return render_pcb_preview(proj_path)

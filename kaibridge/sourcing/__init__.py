@@ -4,6 +4,7 @@ from .parts_db import (
     PartsDatabase,
     get_parts_db,
     lookup_by_lcsc,
+    search_by_query,
     search_basic_passives,
     recommend_kicad_part
 )
@@ -17,6 +18,7 @@ __all__ = [
     "PartsDatabase",
     "get_parts_db",
     "lookup_by_lcsc",
+    "search_by_query",
     "search_basic_passives",
     "recommend_kicad_part"
 ]

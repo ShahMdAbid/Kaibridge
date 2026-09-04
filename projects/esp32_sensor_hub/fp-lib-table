@@ -1,3 +1,0 @@
-(fp_lib_table
-  (lib (name "kaibridge")(type "KiCad")(uri "${KIPRJMOD}/libs/kaibridge.pretty")(options "")(descr "Kaibridge LCSC Footprints"))
-)

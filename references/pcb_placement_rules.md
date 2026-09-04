@@ -96,6 +96,11 @@ When two rules collide, resolve strictly in this order. Higher tiers are never s
 * `FBK-02` Current limiting / pull-ups: Place in-line with the signal path (e.g., right next to the LED).
 * `ANA-01` Analog and Digital zones MUST be physically partitioned. Group them in entirely separate board areas to prevent the auto-router from mixing their traces.
 
+###G. Critical Component & RF/Crystal Locking Protocol (`LCK`)
+* `LCK-01` **Mandatory Pre-Route Locking:** Immediately after verified placement of crystal oscillators (`OSC-01`), RF matching networks/antennas, sensitive analog front-ends, and immovable edge connectors (`CON-01`), the AI agent MUST invoke `{"op": "footprint.lock", "ref": "<REF>"}` in `ops.json`.
+* `LCK-02` **Autorouter Immunity:** Locked footprints (`fp.SetLocked(True)`) cannot be moved, ripped up, or perturbed during Specctra DSN export and Freerouting operations.
+* `LCK-03` **RF/Crystal Integrity Guarantee:** RF matching components (pi-filters, baluns, antenna matching networks) and crystal load capacitors MUST be placed with minimal trace length and locked in place. This ensures the autorouter handles standard power and digital buses without interfering with mission-critical high-frequency or high-impedance analog geometries.
+
 ---
 
 ## 3. Symmetry & Multi-Channel Design (`SYM`)
@@ -117,12 +122,12 @@ When two rules collide, resolve strictly in this order. Higher tiers are never s
 
 When an AI agent executes component placement:
 1. **Coordinate Synthesis:** The AI calculates nominal coordinates based on functional flow (Power -> MCU -> Analog -> Headers), injecting exact symmetry (`SYM-01`) and semantic alignment.
-2. **Operations Specification (`ops.json`):** The AI synthesizes placement operations using `{"op": "footprint.place", "ref": "...", "x": ..., "y": ..., "rot": ...}`.
-3. **Grid-Snap:** The bridge automatically quantizes all `footprint.place` and `footprint.move` coordinates to a **0.5mm grid** before applying them, eliminating decimal noise without unpredictable drift.
+2. **Operations Specification (`ops.json`):** The AI synthesizes placement operations using `{"op": "footprint.place", "ref": "...", "x": ..., "y": ..., "rot": ...}` or linear arrays via `{"op": "array.place", "refs": [...], "start_x": ..., "start_y": ..., "pitch_x": ..., "rot": ...}`.
+3. **Grid-Snap:** The bridge automatically quantizes all coordinates to a clean **0.5mm grid** before applying them, eliminating decimal noise without unpredictable drift.
 4. **In-Memory Simulation (`dry_run: true`):** The AI invokes `kaibridge_apply_ops_layout` with `"dry_run": true`. The Geometry Gate simulates the operations entirely in memory, checking for courtyard collisions and boundary violations with a zero-disk-write guarantee.
-5. **Physics-Based Relaxation (Optional):** If courtyard overlaps are detected, invoke `kaibridge_auto_relax_layout` to apply a 2D spring repulsion solver that smoothly separates colliding parts.
-6. **Commit (`dry_run: false`):** Once simulated cleanly, the AI calls `kaibridge_apply_ops_layout` to write the verified positions into `.kicad_pcb`.
-7. **The Vision Gate:** The AI renders visual previews via `kaibridge_render_pcb_preview` (SVG and PNG) and evaluates the layout against the Vision QA Rubric, citing rule IDs (e.g., `DEC-02`, `THM-02`) in its critique table if adjustments are needed.
+5. **Deterministic Collision Resolution:** If courtyard overlaps are detected during in-memory simulation, widen board dimensions using `{"op": "board.set_size", ...}` or increase array pitch/spacing. Never rely on random fractional nudges—maintain strict 0.5mm grid alignment.
+6. **Commit (`dry_run: false`) & Critical Locking (`LCK-01`):** Once simulated cleanly, the AI calls `kaibridge_apply_ops_layout` to write the verified positions into `.kicad_pcb`. The agent MUST issue `{"op": "footprint.lock", "ref": "..."}` for all crystals, RF matching circuits, and edge connectors to lock their coordinates prior to auto-routing.
+7. **The Vision Gate:** The AI renders visual previews via `kaibridge_render_pcb_preview` (SVG and PNG) and evaluates the layout against the Vision QA Rubric, citing rule IDs (e.g., `DEC-02`, `THM-02`, `LCK-01`) in its critique table if adjustments are needed.
 
 ---
 
@@ -135,6 +140,7 @@ When an AI agent executes component placement:
 | SMPS input cap to VIN/PGND | Courtyards touching | `PDN-02` |
 | Feedback divider net length | ≤ 5 mm | `FBK-01` |
 | Crystal to XTAL pins | ≤ 5 mm | `OSC-01` |
+| Critical component lock (Crystal/RF/Edge) | Locked via `footprint.lock` | `LCK-01` |
 | TVS/ESD device to connector pin | ≤ 5 mm | `PRO-02` |
 | Courtyard to courtyard (SMD) | Breathing room | `DFM-01` |
 | Component body to outline | 1.0 mm | `MECH-03` |

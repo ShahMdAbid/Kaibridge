@@ -22,7 +22,7 @@ Alternatively, add Kaibridge directly to your `mcp_config.json`:
     "kaibridge": {
       "command": "python",
       "args": [
-        "Kaibridge/server.py"
+        "server.py"
       ]
     }
   }
@@ -30,6 +30,12 @@ Alternatively, add Kaibridge directly to your `mcp_config.json`:
 ```
 
 Ensure KiCad 10, Java 17+ (or Java 25 LTS), and Python 3.10+ are installed.
+
+### Download & Release Assets
+For users downloading the release package directly from GitHub:
+- **Kaibridge Source Code Suite:** Download [Kaibridge_v2.1.0.zip](https://github.com/ShahMdAbid/Kaibridge/releases/download/v2.1.0/Kaibridge_v2.1.0.zip) (~59 MB) and extract to your project location.
+- **Offline Component Database (Optional):** Download [easyeda-std.elib.zip](https://github.com/ShahMdAbid/Kaibridge/releases/download/v2.1.0/easyeda-std.elib.zip) (~142 MB) and extract `easyeda-std.elib` directly into `Kaibridge/data/easyeda-std.elib` for sub-millisecond offline lookup across 16,600+ JLCPCB parts.
+*(Note: If the offline database is not installed, Kaibridge automatically uses its embedded Golden Master cache and on-demand EasyEDA API).*
 
 ---
 
@@ -66,7 +72,7 @@ When designing a board, the AI agent and the human engineer interact through fou
   2. Runs Java Freerouting headlessly with a 150µm board edge keepout.
   3. Pours and fills ground planes on `B.Cu` / `F.Cu`.
   4. Runs `kicad-cli` DRC to ensure 0 clearance violations and 0 unrouted airwires.
-  5. Packages factory-ready JLCPCB bundles into `<project_dir>/production/`.
+  5. Packages factory-ready JLCPCB bundles into `<project_dir>/production_output/`.
 
 ---
 

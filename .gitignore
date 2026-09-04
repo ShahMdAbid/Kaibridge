@@ -17,8 +17,10 @@ temp_ops_*.json
 **/.history/
 .vscode/
 
-# Heavy binary databases (>100MB)
+# Heavy binary databases (>100MB) & release archives
 data/*.elib
+*.zip
+**/*.zip
 
 # Benchmark results and test outputs
 bench/
@@ -31,3 +33,7 @@ Thumbs.db
 ehthumbs.db
 Desktop.ini
 $RECYCLE.BIN/
+
+# Private notes / architectural analysis
+references/architectural_landscape_and_contributions.md
+

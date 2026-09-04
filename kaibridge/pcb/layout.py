@@ -62,13 +62,18 @@ def apply_ops(
         temp_ops.write_text(json.dumps({"ops": ops_list, "board": board_meta, "dry_run": is_dry}), encoding="utf-8")
         
         runner = f"""
-import sys, json
+import sys, json, os, traceback
 sys.path.insert(0, r"{str(Path(__file__).resolve().parents[2])}")
 from kaibridge.pcb.layout import _execute_in_process
-with open(r"{str(temp_ops)}", "r", encoding="utf-8") as f:
-    d = json.load(f)
-res = _execute_in_process(r"{str(pcb_file)}", d.get("ops", []), d.get("board", {{}}), dry_run=d.get("dry_run", False))
-print("APPLY_OPS_RESULT:" + json.dumps(res))
+try:
+    with open(r"{str(temp_ops)}", "r", encoding="utf-8") as f:
+        d = json.load(f)
+    res = _execute_in_process(r"{str(pcb_file)}", d.get("ops", []), d.get("board", {{}}), dry_run=d.get("dry_run", False))
+    print("APPLY_OPS_RESULT:" + json.dumps(res), flush=True)
+except Exception as e:
+    print("APPLY_OPS_ERROR:" + traceback.format_exc(), flush=True)
+finally:
+    os._exit(0)
 """
         res_sub = subprocess.run([kicad_python, "-c", runner], capture_output=True, text=True)
         if temp_ops.exists():
@@ -79,6 +84,8 @@ print("APPLY_OPS_RESULT:" + json.dumps(res))
         for line in res_sub.stdout.splitlines():
             if line.startswith("APPLY_OPS_RESULT:"):
                 return json.loads(line.replace("APPLY_OPS_RESULT:", ""))
+            if line.startswith("APPLY_OPS_ERROR:"):
+                return {"success": False, "error": line.replace("APPLY_OPS_ERROR:", "")}
         return {"success": False, "error": res_sub.stderr.strip() or res_sub.stdout.strip()}
 
 
@@ -112,8 +119,12 @@ def _execute_in_process(
         if action in ("footprint.place", "place", "fp_place", "footprint.move", "move"):
             fp = fps.get(ref)
             if fp:
-                x = float(op.get("x", op.get("x_mm", 0.0)))
-                y = float(op.get("y", op.get("y_mm", 0.0)))
+                if "pos" in op and isinstance(op["pos"], (list, tuple)) and len(op["pos"]) >= 2:
+                    x = float(op["pos"][0])
+                    y = float(op["pos"][1])
+                else:
+                    x = float(op.get("x", op.get("x_mm", 0.0)))
+                    y = float(op.get("y", op.get("y_mm", 0.0)))
                 # 0.5mm clean quantization
                 x = round(x * 2.0) / 2.0
                 y = round(y * 2.0) / 2.0
@@ -135,6 +146,37 @@ def _execute_in_process(
                 applied += 1
             else:
                 errors.append(f"Footprint {ref} not found on board")
+
+        # 1.5. Array Placement (Linear sequence of footprints along X or Y axis)
+        elif action in ("array.place", "footprint.array", "place_array", "array"):
+            refs = op.get("refs", [])
+            start_x = float(op.get("start_x", op.get("x", 0.0)))
+            start_y = float(op.get("start_y", op.get("y", 0.0)))
+            pitch_x = float(op.get("pitch_x", 0.0))
+            pitch_y = float(op.get("pitch_y", 0.0))
+            axis = str(op.get("axis", "X")).upper()
+            pitch = float(op.get("pitch", 0.0))
+            if pitch != 0.0:
+                if axis == "X":
+                    pitch_x = pitch
+                else:
+                    pitch_y = pitch
+            rot = float(op.get("rot", op.get("rotation", op.get("angle", 0.0)))) if ("rot" in op or "rotation" in op or "angle" in op) else None
+            locked = bool(op.get("locked", False))
+
+            for i, r in enumerate(refs):
+                fp = fps.get(r)
+                if fp:
+                    cur_x = round((start_x + i * pitch_x) * 2.0) / 2.0
+                    cur_y = round((start_y + i * pitch_y) * 2.0) / 2.0
+                    fp.SetPosition(pcbnew.VECTOR2I(pcbnew.FromMM(cur_x), pcbnew.FromMM(cur_y)))
+                    if rot is not None:
+                        fp.SetOrientationDegrees(rot)
+                    if "locked" in op:
+                        fp.SetLocked(locked)
+                    applied += 1
+                else:
+                    errors.append(f"Footprint {r} not found on board")
 
         # 2. Rotate Footprint
         elif action in ("footprint.rotate", "rotate", "fp_rotate"):
@@ -366,14 +408,24 @@ def _execute_in_process(
 
     overlaps = []
     if dry_run:
-        # Check component collisions in memory without writing to disk
+        # Check component collisions using true physical courtyards in memory without writing to disk
         fps_list = list(b.GetFootprints())
+        def _get_crt_bbox(fp):
+            for l in (pcbnew.F_CrtYd, pcbnew.B_CrtYd):
+                try:
+                    c = fp.GetCourtyard(l)
+                    if c and not c.IsEmpty():
+                        return c.BBox()
+                except Exception:
+                    pass
+            return fp.GetBoundingBox()
+
         for i in range(len(fps_list)):
             for j in range(i + 1, len(fps_list)):
                 fp_a = fps_list[i]
                 fp_b = fps_list[j]
-                bb_a = fp_a.GetBoundingBox()
-                bb_b = fp_b.GetBoundingBox()
+                bb_a = _get_crt_bbox(fp_a)
+                bb_b = _get_crt_bbox(fp_b)
                 if bb_a.Intersects(bb_b):
                     overlaps.append(f"{fp_a.GetReference()} <-> {fp_b.GetReference()}")
     else:
