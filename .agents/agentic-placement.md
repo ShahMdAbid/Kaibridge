@@ -1,34 +1,37 @@
-# Agentic Placement Architecture
+# Agentic Placement Architecture & Spatial Intent Pipeline
 
-**The Core Architecture (Vision-Guided Semantic Placer):**
-To solve the problem of LLMs lacking sub-millimeter geometry awareness, you **MUST** strictly act as the **Lead Hardware Architect**. You provide the *Spatial Intent* via `ops.json`, and the Kaibridge Geometry Gate (`kaibridge/pcb/layout.py` + `gatekeeper.py`) acts as the deterministic *Mason* to perform micro-separation courtyard collision relaxation (`kaibridge_auto_relax_layout`). The AI dictates *what* goes where; the Geometry Gate handles the *exact math*.
+## The Core Concept: Vision-Guided Semantic Placement
 
-> [!IMPORTANT]
-> **Reference Rules Loading (MANDATORY):** Before making ANY engineering decisions regarding component placement, trace widths, clearances, or CLI commands, you MUST consult the canonical rules inside the `references/` directory (e.g., `pcb_placement_rules.md`, `trackwidth_clearence_viasize.md`, `command_help.md`). Do not rely on generic KiCad knowledge.
-
-This is the complete closed-loop agentic pipeline from raw F8/sync import to a production-grade, beautifully placed, fully routed, DRC-clean PCB.
+LLMs lack continuous sub-millimeter geometric awareness. To overcome this limitation, Kaibridge operates on a two-tier division of responsibility:
+- **The AI Agent (Lead Hardware Architect):** Dictates semantic and spatial intent via `ops.json` (functional clustering, perimeter outward connector orientation, heatsink tab facing, and IC pin alignment).
+- **The Kaibridge Geometry Gate (Deterministic Mason):** Enforces strict 0.5mm grid quantization, verifies non-overlapping courtyards, and executes physics-based micro-relaxation (`kaibridge_auto_relax_layout`).
 
 ```mermaid
 graph TD
-    A["1. Dynamic Circuit Cognition<br/>Read inspection / design.json"] --> B["2. AI Vision-Driven Plan<br/>Multimodal critique sense & spatial architecture"]
-    B --> H0["🧍 Human Alignment Checkpoint:<br/>Confirm Design & Placement Intent"]
-    H0 -->|User Directives| B2["Adopt User Symmetry / Directives"]
-    B2 --> C["3. Generate & Apply ops.json<br/>kaibridge_apply_ops_layout"]
-    H0 -->|Approved Default Plan| C
-    C -->|Geometry Gate PASS| D["4. Visual Snapshot<br/>render_pcb_preview (Export SVG/PNG)"]
-    C -->|Geometry Gate FAIL| B2
-    D --> E["5. Multimodal Spatial Critique<br/>Agent inspects SVG: spacing, corridors, symmetry"]
-    E --> H1["🧍 Human Checkpoint 1:<br/>Placement Approval"]
-    H1 -->|Approved| G["6. Prep for Route<br/>Netclass validation & unroute orphaned tracks"]
-    H1 -->|Feedback| F["Analyze SVG with AI Critique Brain + User Input<br/>Generate Adjustment ops.json"]
+    A["1. Circuit Intent & Pin Data<br/>kicad_pins.py --json / design.json"] --> B["2. Spatial Floorplan Architecture<br/>4-Zone Partitioning & Rotational Intent"]
+    B --> H0["📋 Plan Alignment Gate:<br/>User Approves 4-Part Plan"]
+    H0 --> C["3. Declarative Placement<br/>kicad_layout.py (ops.json) --dry-run"]
+    C -->|Geometry Gate PASS| D["4. Vector Layout Snapshot<br/>pcb_snapshot.py"]
+    C -->|Courtyard Collision| B2["Adjust Spacing / Relax Layout"]
+    B2 --> C
+    D --> E["5. Spatial Critique & Verification<br/>Inspect spacing, symmetry, corridors"]
+    E --> H2["🧍 Checkpoint 2 Review:<br/>Placement Approval"]
+    H2 -->|Approved| G["6. Prep for Routing<br/>Netclass validation & unroute orphaned tracks"]
+    H2 -->|Feedback| F["Apply Adjustment ops.json"]
     F --> C
-    G --> H["7. Headless Routing<br/>kaibridge_route_pcb (Freerouting 2.4.1)"]
-    H --> H2["🧍 Human Checkpoint 2:<br/>Routing Approval"]
-    H2 -->|Approved| I["8. Solid GND Copper Pour<br/>kaibridge_add_ground_plane (B.Cu GND)"]
-    H2 -->|Feedback| G
-    I --> J["9. DRC Verification<br/>kaibridge_run_drc (0 Errors, 0 Unconnected)"]
-    J -->|DRC Clean| K["10. Final Visual Snapshot<br/>render_pcb_preview"]
-    J -->|DRC Violations| L["Diagnose & Fix via ops.json"]
+    G --> H["7. Headless Routing<br/>kicad_route.py (Freerouting 2.4.1)"]
+    H --> I["8. Solid GND Copper Pour<br/>B.Cu Ground Plane (0.3mm clearance)"]
+    I --> J["9. Automated DRC Verification<br/>KiCad DRC (0 Errors, 0 Unconnected)"]
+    J --> H3["🧍 Checkpoint 3 Review:<br/>Routing & DRC Confirmation"]
+    H3 -->|Approved| K["10. Factory Production Export<br/>export_jlcpcb.py (Gerber, BOM, CPL)"]
+    H3 -->|Feedback| G
+    J -->|DRC Violations| L["Diagnose & Fix via Failure Matrix"]
     L --> G
-    K --> M["✅ DONE (Production Grade A+)"]
+    K --> M["✅ 100% JLCPCB Ready"]
 ```
+
+## Mandatory Rules Reference
+Before formulating `ops.json`, consult canonical rulebases in `references/`:
+1. [`references/pcb_placement_rules.md`](../references/pcb_placement_rules.md): 80-rule floorplanning doctrine, precedence ladder (§0.3), and proximity tolerances.
+2. [`references/trackwidth_clearence_viasize.md`](../references/trackwidth_clearence_viasize.md): Netclasses, track widths, clearances, and via hole/pad sizing.
+3. [`references/failure_recovery_matrix.md`](../references/failure_recovery_matrix.md): Exhaustive recovery procedures for layout, DRC, and routing faults.

@@ -124,10 +124,15 @@ When an AI agent executes component placement:
 1. **Coordinate Synthesis:** The AI calculates nominal coordinates based on functional flow (Power -> MCU -> Analog -> Headers), injecting exact symmetry (`SYM-01`) and semantic alignment.
 2. **Operations Specification (`ops.json`):** The AI synthesizes placement operations using `{"op": "footprint.place", "ref": "...", "x": ..., "y": ..., "rot": ...}` or linear arrays via `{"op": "array.place", "refs": [...], "start_x": ..., "start_y": ..., "pitch_x": ..., "rot": ...}`.
 3. **Grid-Snap:** The bridge automatically quantizes all coordinates to a clean **0.5mm grid** before applying them, eliminating decimal noise without unpredictable drift.
-4. **In-Memory Simulation (`dry_run: true`):** The AI invokes `kaibridge_apply_ops_layout` with `"dry_run": true`. The Geometry Gate simulates the operations entirely in memory, checking for courtyard collisions and boundary violations with a zero-disk-write guarantee.
+4. **In-Memory Simulation (`dry_run: true`):** The AI runs in-memory simulation to check for courtyard collisions and boundary violations with a zero-disk-write guarantee:
+   - *Mode A (Root CLI):* `python kicad_layout.py "projects/<NAME>" "kaibridge_dump/ops.json" --dry-run`
+   - *Mode B (MCP):* `kaibridge_apply_ops_layout(project_dir, ops, dry_run=True)`
 5. **Deterministic Collision Resolution:** If courtyard overlaps are detected during in-memory simulation, widen board dimensions using `{"op": "board.set_size", ...}` or increase array pitch/spacing. Never rely on random fractional nudges—maintain strict 0.5mm grid alignment.
-6. **Commit (`dry_run: false`) & Critical Locking (`LCK-01`):** Once simulated cleanly, the AI calls `kaibridge_apply_ops_layout` to write the verified positions into `.kicad_pcb`. The agent MUST issue `{"op": "footprint.lock", "ref": "..."}` for all crystals, RF matching circuits, and edge connectors to lock their coordinates prior to auto-routing.
-7. **The Vision Gate:** The AI renders visual previews via `kaibridge_render_pcb_preview` (SVG and PNG) and evaluates the layout against the Vision QA Rubric, citing rule IDs (e.g., `DEC-02`, `THM-02`, `LCK-01`) in its critique table if adjustments are needed.
+6. **Commit (`dry_run: false`) & Critical Locking (`LCK-01`):** Once simulated cleanly, write verified positions into `.kicad_pcb`:
+   - *Mode A (Root CLI):* `python kicad_layout.py "projects/<NAME>" "kaibridge_dump/ops.json"`
+   - *Mode B (MCP):* `kaibridge_apply_ops_layout(project_dir, ops, dry_run=False)`
+   The agent MUST issue `{"op": "footprint.lock", "ref": "..."}` for all crystals, RF matching circuits, and edge connectors to lock their coordinates prior to auto-routing.
+7. **The Vision Gate:** The AI renders visual previews (`pcb_snapshot.py` in Mode A / `kaibridge_render_pcb_preview` in Mode B) and evaluates the layout against the Vision QA Rubric, citing rule IDs (e.g., `DEC-02`, `THM-02`, `LCK-01`) in its critique table if adjustments are needed.
 
 ---
 

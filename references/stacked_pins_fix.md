@@ -21,7 +21,7 @@ If you list all stacked pins in a net array inside `design.json`:
   "U1.21"
 ]
 ```
-The schematic compiler (`kaibridge_build_schematic`) attaches a net label to each declared pin coordinate. When pins share the exact same location, labels overlap on top of each other, cluttering the schematic visual and triggering potential label collision warnings.
+The schematic compiler (`json2sch.py` or `kaibridge_build_schematic`) attaches a net label to each declared pin coordinate. When pins share the exact same location, labels overlap on top of each other, cluttering the schematic visual and triggering potential label collision warnings.
 
 ---
 
@@ -39,5 +39,5 @@ The schematic compiler (`kaibridge_build_schematic`) attaches a net label to eac
 
 ###Why This Works:
 1. **Schematic Cleanliness:** KiCad renders one clean, readable net label at pin 3 without overlapping text.
-2. **Internal Net Connection:** KiCad's symbol definition automatically associates the stacked pins internally. When `kaibridge_sync_to_pcb` generates `.kicad_pcb`, all physical footprint pads (e.g. pads 3, 5, and 21) are correctly connected to `GND`.
+2. **Internal Net Connection:** KiCad's symbol definition automatically associates the stacked pins internally. When `kicad_pcb_sync.py` (or `kaibridge_sync_to_pcb`) generates `.kicad_pcb`, all physical footprint pads (e.g. pads 3, 5, and 21) are correctly connected to `GND`.
 3. **Zero ERC Violations:** Headless ERC verifies that the power net is driven and continuous without duplicate pin errors.

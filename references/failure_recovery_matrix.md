@@ -26,8 +26,8 @@ This reference document contains the exhaustive, deterministic recovery procedur
 | **DRC: `[starved_thermal]`** | Thermal relief spokes too narrow or restricted on dense SMT pads | Use solid copper pad connections (`zone.SetPadConnection(pcbnew.ZONE_CONNECTION_FULL)`) with `0.2mm` minimum copper thickness when calling `kaibridge_add_ground_plane`. |
 | **DRC: `[zones_intersect]`** | Multiple overlapping zones on the same layer with identical priority | Delete existing zones on that layer before pouring new plane (`kaibridge_add_ground_plane` handles this automatically). Or call `{"op": "zone.delete"}` / `kaibridge_unroute_pcb(remove_zones=True)`. |
 | **DRC: `[malformed_courtyard]`** | Footprint contains zero-length or self-intersecting lines in `F.CrtYd` | Replace footprint with official KiCad IPC-7351 footprint (e.g. `Resistor_SMD:R_0805_2012Metric`). |
-| **DRC: `[clearance]` (Track-to-Track / Track-to-Pad)** | Traces routed closer than design rule clearance (`0.15mm` / `0.20mm`) | Unroute affected tracks using `kaibridge_unroute_pcb(net="<NET_NAME>")` and re-route with `kaibridge_route_pcb`. |
-| **DRC: `[unconnected_items]`** | Unrouted airwires remaining on board | Check if net was unrouted or pads are too cramped for routing channels. Increase board dimensions with `{"op": "board.set_size", ...}` or adjust component spacing using `kaibridge_apply_ops_layout` on the 0.5mm grid, then re-run `kaibridge_route_pcb`. |
+| **DRC: `[clearance]` (Track-to-Track / Track-to-Pad)** | Traces routed closer than design rule clearance (`0.15mm` / `0.20mm`) | Unroute affected tracks using `kaibridge_unroute_pcb(net="<NET_NAME>")` and re-route with `python kicad_route.py` (or `kaibridge_route_pcb`). |
+| **DRC: `[unconnected_items]`** | Unrouted airwires remaining on board | Check if net was unrouted or pads are too cramped for routing channels. Increase board dimensions with `{"op": "board.set_size", ...}` or adjust component spacing using `kicad_layout.py` (or `kaibridge_apply_ops_layout`) on the 0.5mm grid, then re-run `python kicad_route.py` (or `kaibridge_route_pcb`). |
 
 ---
 
@@ -35,10 +35,10 @@ This reference document contains the exhaustive, deterministic recovery procedur
 
 | Failure Symptom | Root Cause | Exact Deterministic Remedy |
 |---|---|---|
-| **Freerouting: `SES_IMPORTED: 0 tracks`** | Netlist pads not bound to nets in `.kicad_pcb` | Call `kaibridge_sync_to_pcb` to synchronize footprints and bind nets before exporting Specctra DSN. |
+| **Freerouting: `SES_IMPORTED: 0 tracks`** | Netlist pads not bound to nets in `.kicad_pcb` | Call `python kicad_pcb_sync.py` (or `kaibridge_sync_to_pcb`) to synchronize footprints and bind nets before exporting Specctra DSN. |
 | **Freerouting: All tracks routed with same width** | `.kicad_pro` missing `netclass_patterns` binding | Ensure `_ensure_netclass_patterns()` runs before `ExportSpecctraDSN`. In `design.json`, list power rails in `"netclasses.Power.nets"`. Router will automatically generate separate width classes in the DSN file. |
 | **Freerouting: `OutOfMemoryError`** | Java heap space exhausted on complex multi-layer boards | Run Java Freerouting with increased heap: `java -Xmx2048m -jar freerouting.jar ...`. |
-| **Freerouting: Timeout expired** | Dense placement with blocked routing channels causing endless rip-up loops | Increase component spacing or widen board outline by 10–20% using `{"op": "board.set_size", ...}`, then re-run `kaibridge_route_pcb`. |
+| **Freerouting: Timeout expired** | Dense placement with blocked routing channels causing endless rip-up loops | Increase component spacing or widen board outline by 10–20% using `{"op": "board.set_size", ...}`, then re-run `python kicad_route.py` (or `kaibridge_route_pcb`). |
 
 ---
 

@@ -53,10 +53,10 @@ At the root level of your `design.json`, define the `"netclasses"` dictionary. I
 In Kaibridge 2.0, you do **not** need to run manual CLI commands or remember flags:
 
 1. **Automatic Project Sync:**  
-   When `kaibridge_build_schematic` compiles `design.json`, it automatically updates the KiCad project file (`.kicad_pro`) with your `netclasses` and `netclass_patterns`.
-2. **Headless PCB Sync (`kaibridge_sync_to_pcb`):**  
-   Syncs the schematic netlist into `.kicad_pcb` without opening the KiCad GUI, binding all netclass assignments directly to the copper ratsnest.
+   When compiling `design.json` via `json2sch.py --apply-netclasses` (or `kaibridge_build_schematic`), the compiler automatically updates the KiCad project file (`.kicad_pro`) with your `netclasses` and `netclass_patterns`.
+2. **Headless PCB Sync:**  
+   `python kicad_pcb_sync.py` (or `kaibridge_sync_to_pcb`) syncs the schematic netlist into `.kicad_pcb` without opening the KiCad GUI, binding all netclass assignments directly to the copper ratsnest.
 3. **Pre-Flight DSN Audit:**  
-   When `kaibridge_route_pcb` runs, it executes a pre-flight audit on the exported Specctra `.dsn` in <2ms, verifying that all power and signal nets have valid track widths > 0 and correct clearances before handing off to Freerouting 2.4.1.
+   When running `python kicad_route.py` (or `kaibridge_route_pcb`), the engine executes a pre-flight audit on the exported Specctra `.dsn` in < 2ms, verifying that all power and signal nets have valid track widths > 0 and correct clearances before handing off to Freerouting 2.4.1.
 4. **Freerouting 2.4.1 Compliance:**  
    Freerouting strictly honors the netclass rules from the DSN file, routing power nets with thick traces (`0.6mm`+) and signals with clean nominal traces (`0.25mm`).

@@ -11,6 +11,12 @@ temp_ops_*.json
 *.kicad_prl
 *.kicad_pcb-bak
 *.kicad_sch-bak
+*.lck
+~*
+
+# Projects workspace
+projects/
+**/projects/
 
 # VS Code / IDE history
 .history/

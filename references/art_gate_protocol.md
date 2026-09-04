@@ -30,12 +30,12 @@ Each INFERRED and UNKNOWN field must be impact-rated:
 
 ### 0.2 — Interactive Clarification (User-Facing Questions)
 
-The agent MUST ask the user clarifying questions for fields classified as INFERRED or UNKNOWN with CRITICAL or HIGH impact. This ensures the user actively participates in the most important design decisions without needing technical knowledge.
+The agent MUST present clarifying questions for fields classified as INFERRED or UNKNOWN with CRITICAL or HIGH impact. When operating in an IDE planning mode, these questions MUST be embedded directly into the Turn 1 `implementation_plan.md` artifact under `## Open Questions` with selectable options (do NOT invoke external modal tools like `ask_question`). This ensures the user actively participates in the most important design decisions without interrupting automated compiler flows.
 
 **Question format (mandatory for every question):**
 - **3 agent-suggested options** — phrased in plain, non-technical language that a school student can understand. The agent picks the 3 most likely answers based on the prompt context.
 - **"I'm not sure — you decide for me"** — the agent uses a conservative engineering default and documents it as an assumption.
-- *(The system automatically provides a write-in field for advanced users who want to specify their own answer.)*
+- *(The system provides write-in capability for advanced users who want to specify their own answer).*
 
 **Rules:**
 - **Max 4 questions per design prompt.** Never overwhelm the user. Prioritize by impact: CRITICAL-impact unknowns first, then HIGH-impact.
