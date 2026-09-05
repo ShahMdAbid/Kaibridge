@@ -172,6 +172,84 @@ def unroute_board(
         return {"success": False, "error": str(e)}
 
 
+def apply_dogbone_fanout(board, gnd_net_name: str = "GND") -> int:
+    """Pre-places 0.6mm structural vias (0.3mm drill) and 0.25mm escape neck traces
+    offset 1.0-1.2mm away from every SMD GND pad. Guarantees intact solder mask dams
+    and eliminates Via-in-Pad defects.
+    """
+    gnd_net = board.FindNet(gnd_net_name)
+    if not gnd_net:
+        return 0
+    gnd_code = gnd_net.GetNetCode()
+
+    import pcbnew
+    # Collect existing GND vias to prevent duplicate/stacked vias
+    existing_vias = set()
+    for t in board.GetTracks():
+        if t.GetClass() == "PCB_VIA" and t.GetNetCode() == gnd_code:
+            pos = t.GetPosition()
+            existing_vias.add((round(pcbnew.ToMM(pos.x), 2), round(pcbnew.ToMM(pos.y), 2)))
+
+    placed_count = 0
+    for fp in board.GetFootprints():
+        fp_pos = fp.GetPosition()
+        for pad in fp.Pads():
+            if pad.GetNetname() == gnd_net_name and pad.GetAttribute() == pcbnew.PAD_ATTRIB_SMD:
+                pad_pos = pad.GetPosition()
+                px_mm = pcbnew.ToMM(pad_pos.x)
+                py_mm = pcbnew.ToMM(pad_pos.y)
+
+                # Check if this pad already has a via within 1.8mm
+                already_has_via = any(
+                    ((vx - px_mm)**2 + (vy - py_mm)**2) <= (1.8**2)
+                    for vx, vy in existing_vias
+                )
+                if already_has_via:
+                    continue
+
+                dx_mm = pcbnew.ToMM(pad_pos.x - fp_pos.x)
+                dy_mm = pcbnew.ToMM(pad_pos.y - fp_pos.y)
+
+                escape_x = 0.0
+                escape_y = 0.0
+                if abs(dx_mm) >= abs(dy_mm):
+                    escape_x = 1.1 if dx_mm >= 0 else -1.1
+                else:
+                    escape_y = 1.1 if dy_mm >= 0 else -1.1
+
+                if escape_x == 0.0 and escape_y == 0.0:
+                    escape_y = -1.1
+
+                via_x = pad_pos.x + pcbnew.FromMM(escape_x)
+                via_y = pad_pos.y + pcbnew.FromMM(escape_y)
+                via_pos = pcbnew.VECTOR2I(via_x, via_y)
+
+                # 1. Via: 0.6mm diameter, 0.3mm drill
+                via = pcbnew.PCB_VIA(board)
+                via.SetPosition(via_pos)
+                via.SetWidth(pcbnew.FromMM(0.6))
+                via.SetDrill(pcbnew.FromMM(0.3))
+                via.SetNetCode(gnd_code)
+                via.SetViaType(pcbnew.VIATYPE_THROUGH)
+                board.Add(via)
+
+                # 2. Escape neck trace: 0.25mm width on F.Cu
+                tr = pcbnew.PCB_TRACK(board)
+                tr.SetStart(pad_pos)
+                tr.SetEnd(via_pos)
+                tr.SetWidth(pcbnew.FromMM(0.25))
+                tr.SetLayer(pcbnew.F_Cu)
+                tr.SetNetCode(gnd_code)
+                board.Add(tr)
+
+                existing_vias.add((round(pcbnew.ToMM(via_x), 2), round(pcbnew.ToMM(via_y), 2)))
+                placed_count += 1
+
+    board.BuildListOfNets()
+    board.BuildConnectivity()
+    return placed_count
+
+
 def _ensure_netclass_patterns(proj_path: Path, pro_file: Path):
     """Ensures .kicad_pro has netclass_patterns so ExportSpecctraDSN writes differential track widths."""
     try:
@@ -202,10 +280,12 @@ def route_board(
     timeout_sec: int = 300,
     copper_edge_clearance_um: int = 150,
     strict_drc: bool = True,
-    max_passes: Optional[int] = None
+    max_passes: Optional[int] = None,
+    fanout_first: bool = True
 ) -> Dict[str, Any]:
     """Exports DSN, runs Java Freerouting v2.4.1 with robust edge clearance and strict DRC,
-    and imports SES tracks into the board.
+    and imports SES tracks into the board. When fanout_first=True, pre-places Dog-Bone GND vias
+    and isolates GND to achieve zero signal vias.
     """
     try:
         import pcbnew
@@ -216,7 +296,8 @@ def route_board(
             "timeout_sec": timeout_sec,
             "copper_edge_clearance_um": copper_edge_clearance_um,
             "strict_drc": strict_drc,
-            "max_passes": max_passes
+            "max_passes": max_passes,
+            "fanout_first": fanout_first
         })
 
     proj_path = Path(project_dir).resolve()
@@ -231,6 +312,7 @@ def route_board(
 
     dsn_file = proj_path / f"{stem}.dsn"
     ses_file = proj_path / f"{stem}.ses"
+    rules_file = proj_path / f"{stem}.rules"
 
     import gc
     gc.collect()
@@ -238,10 +320,17 @@ def route_board(
     # Preflight: Sync netclass patterns to .kicad_pro so ExportSpecctraDSN writes differential widths
     _ensure_netclass_patterns(proj_path, pro_files[0])
 
-    # 1. Export Specctra DSN
+    # 1. Export Specctra DSN (with optional Tier-1 Dog-Bone Fanout First)
     try:
         board = pcbnew.LoadBoard(str(pcb_file))
+        if fanout_first:
+            # Clean previous routing tracks if re-routing
+            for t in list(board.GetTracks()):
+                board.Delete(t)
+            apply_dogbone_fanout(board, "GND")
         pcbnew.ExportSpecctraDSN(board, str(dsn_file))
+        if fanout_first:
+            pcbnew.SaveBoard(str(pcb_file), board)
         del board
         gc.collect()
     except Exception as e:
@@ -249,6 +338,25 @@ def route_board(
 
     if not dsn_file.exists():
         return {"success": False, "error": "Failed to export Specctra DSN file."}
+
+    # If fanout_first: strip GND from DSN network so Freerouting routes only signals on F.Cu
+    if fanout_first:
+        dsn_text = dsn_file.read_text(encoding="utf-8")
+        dsn_text = re.sub(r'\(net\s+GND\s*\(pins[^)]+\)\s*\)', '', dsn_text)
+        # Harmonize default signal clearance (200um) to power clearance (250um) so tracks honor power pads
+        dsn_text = re.sub(r'\(clearance\s+200\)', '(clearance 250)', dsn_text)
+        dsn_file.write_text(dsn_text, encoding="utf-8")
+
+        # Generate custom rules file with high via costs and single-layer signal preference
+        rules_content = f'''(rules PCB {stem}
+  (autoroute_settings
+    (fanout off)
+    (vias off)
+    (layer_rule B.Cu (active off))
+  )
+)
+'''
+        rules_file.write_text(rules_content, encoding="utf-8")
 
     # 1.5. Pre-flight Specctra DSN Audit (Failproof Guard)
     dsn_audit = audit_dsn(dsn_file)
@@ -272,6 +380,8 @@ def route_board(
         "--gui.enabled=false",
         f"--router.copperToEdgeClearanceUm={copper_edge_clearance_um}"
     ]
+    if rules_file.exists():
+        cmd.extend(["-dr", str(rules_file)])
     if strict_drc:
         cmd.append("--router.strictDrc=true")
     if max_passes is not None and max_passes > 0:
@@ -299,6 +409,11 @@ def route_board(
         for t in list(board.GetTracks()):
             board.Delete(t)
         pcbnew.ImportSpecctraSES(board, str(ses_file))
+        
+        # If fanout_first was used, re-apply any missing GND dog-bone stubs/vias
+        if fanout_first:
+            apply_dogbone_fanout(board, "GND")
+
         ds = board.GetDesignSettings()
         ds.m_TrackMinWidth = pcbnew.FromMM(0.15)
         ds.m_TrackClearance = pcbnew.FromMM(0.15)

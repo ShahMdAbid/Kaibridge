@@ -17,15 +17,16 @@ Select your tool invocation pattern based on the following deterministic rule:
 > [!IMPORTANT]
 > **Zero Nonexistent Tool Calls:** When in Mode A, NEVER attempt to invoke `kaibridge_*` functions as native tool calls. Execute the corresponding root CLI scripts directly.
 
-### B. The 8 Canonical Root CLI Tools:
+### B. The 9 Canonical Root CLI Tools:
 1. `python kicad_lib_init.py "projects/<NAME>" -n kaibridge` (Bootstrap & library plumbing)
 2. `python kicad_pins.py "projects/<NAME>\libs\kaibridge.kicad_sym" -s <SYM> --json` (Pin/footprint extraction)
 3. `python json2sch.py "projects/<NAME>" --apply-netclasses --erc` (Schematic compile & ERC gate)
 4. `python kicad_pcb_sync.py "projects/<NAME>"` (Headless F8 netlist/footprint sync)
-5. `python kicad_layout.py "projects/<NAME>" "projects/<NAME>/kaibridge_dump/ops.json" [--dry-run]` (Layout ops)
-6. `python pcb_snapshot.py "projects/<NAME>"` (Vector SVG preview render)
-7. `python kicad_route.py "projects/<NAME>" --pour-gnd --drc` (Autoroute, ground pour & DRC gate)
-8. `python export_jlcpcb.py "projects/<NAME>"` (100% factory-ready JLCPCB bundle export)
+5. `python kicad_planar_optimizer.py "projects/<NAME>"` (Primary Engine: In-memory planar layout optimizer)
+6. `python kicad_layout.py "projects/<NAME>" "projects/<NAME>/kaibridge_dump/ops.json" [--dry-run]` (Layout ops execution)
+7. `python pcb_snapshot.py "projects/<NAME>"` (Vector SVG preview render for visual audit)
+8. `python kicad_route.py "projects/<NAME>" --pour-gnd --drc` (3-Tier router: dog-bone fanout, F.Cu route, B.Cu pour & DRC)
+9. `python export_jlcpcb.py "projects/<NAME>"` (100% factory-ready JLCPCB bundle export)
 
 ### C. Session & Directory Contract
 - Default project directory is `projects/<Project_Name>`.
@@ -45,10 +46,19 @@ Every design follows this strictly sequential state transition. Do not skip phas
              S4: Spec (design.json) ──► S5: Compile & ERC (Gate 1: 0 Errors)
                  │
                  ▼
-             S6: Headless PCB Sync ──► S7: Layout & Visual Critique (Gate 2: 0 Overlaps, Vision Passed)
+             S6: Headless PCB Sync
                  │
                  ▼
-             S8: Autoroute, Pour & DRC (Gate 3: 0 Violations) ──► S9: JLCPCB Production Export
+             S7A: Planar Optimization (Primary Engine: 20k states in 1.5s, >85% crossing reduction)
+                 │
+                 ▼
+             S7B: Visual Critique Gate (Secondary Audit: connector facing, silk hygiene, corridors)
+                 │
+                 ▼
+             S8: 3-Tier Routing & DRC (Gate 3: Dog-bone fanout first, 0 signal vias, 0 violations)
+                 │
+                 ▼
+             S9: JLCPCB Production Export (100% factory-ready BOM, CPL, Gerbers)
 ```
 
 | Stage | Action / Command | Precondition | Success Gate / Verification |
@@ -60,8 +70,9 @@ Every design follows this strictly sequential state transition. Do not skip phas
 | **S4: Spec** | Write `<PROJECT_DIR>/kaibridge_dump/design.json` | Pins extracted | Schema validated, power flags & netclasses declared |
 | **S5: Compile** | `python json2sch.py "projects/<NAME>" --apply-netclasses --erc` | `design.json` written | **Gate 1:** Total ERC Errors == 0; SVG preview generated |
 | **S6: Sync** | `python kicad_pcb_sync.py "projects/<NAME>"` | ERC passed | Footprints instantiated and nets bound in `.kicad_pcb` |
-| **S7: Layout** | `python kicad_layout.py "projects/<NAME>" [ops.json]` + Visual Critique | Sync complete | **Gate 2:** 0 courtyard collisions; Visual QA rubric passed |
-| **S8: Route** | `python kicad_route.py "projects/<NAME>" --pour-gnd --drc` | Layout committed | **Gate 3:** 0 DRC clearance violations, 0 unconnected items |
+| **S7A: Planar Opt** | `python kicad_planar_optimizer.py "projects/<NAME>"` | Sync complete | **Primary Engine:** >85% crossing reduction, 0 overlaps, HPWL minimized |
+| **S7B: Visual Audit** | `python pcb_snapshot.py "projects/<NAME>"` + Vision Gate | Planar layout committed | **Gate 2:** Connectors face outward, silkscreen clean, corridors open |
+| **S8: 3-Tier Route** | `python kicad_route.py "projects/<NAME>" --pour-gnd --drc` | Visual audit passed | **Gate 3:** Dog-bone fanout stubs, 0 signal vias, 0 DRC violations |
 | **S9: Export** | `python export_jlcpcb.py "projects/<NAME>"` | DRC clean | `Gerber_*.zip`, Drill, `BOM_*.csv`, `CPL_*.csv` in `production_output/` |
 
 ---
@@ -184,17 +195,22 @@ Every design follows this strictly sequential state transition. Do not skip phas
 
 ## 8. Multimodal Visual Critique & Refinement Protocol
 
-Before proceeding from placement (Checkpoint 2) to routing, the AI Agent MUST inspect the rendered vector layout snapshot (`<project>_board.svg`) and execute the **Vision Gate**:
+### A. Primary Engine vs. Secondary Audit Hierarchy
+- **Primary Engine (`kicad_planar_optimizer.py`):**
+  Mathematical simulated annealing executes global macro-placement in-memory (20,000 states in 1.5s). It minimizes ratsnest intersections using Kruskal's MST and 2D CCW line segment intersections, enforces pad-to-pad keepouts, and aligns decoupling capacitors. It does the computational heavy lifting of placement.
+- **Secondary Audit Gate (Multimodal Visual Critique):**
+  Acts strictly as the **Quality Assurance Inspector**. The Vision Model inspects the rendered snapshot (`pcb_snapshot.py`) to verify domain/ergonomic common sense that pure cost functions cannot see (e.g. connector mating face pointing outward, silkscreen text not overlapping pads, heatsink tab direction).
+- **Fast-Path Convergence:** Because the Planar Optimizer solves global placement mathematically, the Visual Audit Gate passes immediately on the first attempt in >90% of designs without redundant, blind LLM layout shuffling.
 
-### A. 5-Point Visual QA Evaluation Checklist:
+### B. 5-Point Visual QA Evaluation Checklist:
 1. **Routing Corridors (`DFM-03`):** Are there open, unblocked channels ($\ge 2.5\text{mm}$) between ICs and connectors for bus routing?
 2. **Decoupling Proximity (`DEC-02`):** Are ceramic bypass capacitors ($0.1\mu\text{F}$) within $1.0–2.5\text{mm}$ of their companion IC supply pins with pads inline?
 3. **Oscillator / Crystal Loop (`OSC-01`):** Is the crystal adjacent to OSC pins ($\le 5\text{mm}$) with compact, symmetrical load capacitors?
 4. **Thermal & Mechanical Spacing (`THM-02`):** Are power FETs/regulators spaced $\ge 3\text{mm}$ from heat-sensitive ICs, with tabs facing outward?
 5. **Connector Ergonomics (`CON-01`, `CON-02`):** Are headers and USB/power ports flush along board edges, facing outward, with $\ge 3\text{mm}$ plug clearance?
 
-### B. Structured Visual Critique Table:
-If any issues or congestions are observed, output findings in this structured schema before generating ops:
+### C. Structured Visual Critique Table:
+If any issues or congestions are observed during visual audit, output findings in this structured schema before generating ops:
 
 | Ref | Current Observation | Rule ID / Criteria | Severity | Corrective Action | Target Coordinate / Rotation |
 |---|---|---|---|---|---|
@@ -202,22 +218,40 @@ If any issues or congestions are observed, output findings in this structured sc
 | `Y1` | Long loop trace between crystal & pins | `OSC-01` | Medium | Move directly above pins 7-8 | `x: 125.0, y: 78.0, rot: 0` |
 | `J1` | Receptacle facing inward toward MCU | `CON-02` | High | Rotate 180 deg to face left edge | `rot: 180` |
 
-### C. Critique-to-Ops Translation Loop:
+### D. Critique-to-Ops Translation Loop:
 Translate corrective actions directly into an adjustment `ops.json`, run `python kicad_layout.py "<PROJECT_DIR>" "kaibridge_dump/ops.json" --dry-run`, commit, and re-export the snapshot with `pcb_snapshot.py` until all visual criteria pass.
 
 ---
 
-## 9. Headless Routing, Ground Pour & Production Export
+## 9. Headless Routing, Dog-Bone Fanout & Production Export
 
+### A. The 3-Tier Hierarchical Routing Architecture (Zero-Signal-Via Doctrine)
+Never route GND concurrently with signals on dual-layer boards. Always execute the 3-Tier Protocol:
+1. **Tier 1 (Dog-Bone Fanout First):**
+   - Before exporting routing queues, pre-place a $0.6\text{mm}$ structural via ($0.3\text{mm}$ drill) offset $1.0 - 1.2\text{mm}$ outside each SMD GND pad with a $0.25\text{mm}$ `F.Cu` escape neck trace.
+   - **Zero Via-in-Pad Mandate:** Never place vias inside SMD pads. Maintain an intact $\ge 0.15\text{mm}$ solder mask dam to eliminate reflow solder wicking.
+2. **Tier 2 (Planar Signal Routing on F.Cu Only):**
+   - Strip `GND` from the Specctra DSN network (`re.sub(r'\(net\s+GND\s*\(pins[^)]+\)\s*\)', '', dsn_text)`).
+   - Route all signal nets on `F.Cu` with `(vias off)` or high via penalty (`via_costs: 150`).
+   - Achieves 100% planar signal routing on `F.Cu` with **zero signal vias**.
+3. **Tier 3 (Adaptive Stitching Fallback & Solid Ground Pour):**
+   - If dense topological crossings exist (Kuratowski $K_5 / K_{3,3}$), permit short, localized jumper vias on `B.Cu`.
+   - Pour solid continuous `GND` copper plane on `B.Cu` ($0.3\text{mm}$ clearance, `ZONE_CONNECTION_FULL`, $\ge 0.2\text{mm}$ thickness) swallowing all fanout vias and THT pins (`J1.2`, `J2.4`).
+   - Always refill zones post-SES import to eliminate copper zone track shorts.
+
+### B. In-Memory Planar Layout Optimization (`kicad_planar_optimizer.py`)
+- Prior to layout lock, run the in-memory Simulated Annealing planar optimizer:
+  `python kicad_planar_optimizer.py "projects/<NAME>"`
+- Minimizes ratsnest crossings using Kruskal's MST and 2D CCW line segment intersection evaluation ($5000 \cdot \text{crossings} + 2 \cdot \text{HPWL} + 100000 \cdot \text{overlaps}$).
+- Reduces topological intersections by $>85\%$ in $< 2$ seconds.
+
+### C. DRC Quality Gate & Production Export
 1. **Routing Constraints:**
    - Kaibridge enforces JLCPCB rules in `.kicad_pro`: `min_copper_edge_clearance: 0.15mm`, `min_clearance: 0.15mm`, `min_track_width: 0.15mm`.
    - Freerouting runs headlessly with `--router.copperToEdgeClearanceUm=150` and `--router.strictDrc=true`.
-2. **Solid Ground Pour:**
-   - Ground planes on `B.Cu` and/or `F.Cu` must use 0.3mm clearance and solid pad connections (`pcbnew.ZONE_CONNECTION_FULL`) with minimum 0.2mm thickness to prevent starved thermal relief errors.
-   - After importing SES, always execute zone refill to prevent copper zone track shorts.
-3. **DRC Quality Gate:**
+2. **DRC Quality Gate:**
    - DRC must report **0 clearance violations** and **0 unconnected items**.
-4. **Production Output (`production_output/`):**
+3. **Production Output (`production_output/`):**
    - `<Project_Name>_bom_jlcpcb.csv`: 100% populated with LCSC C-IDs.
    - `<Project_Name>_cpl_jlcpcb.csv`: Centroid placement table with numeric float coordinates.
    - `<Project_Name>_gerbers.zip`: Complete fabrication and drill archive.

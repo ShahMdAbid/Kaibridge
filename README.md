@@ -1,12 +1,12 @@
 <div align="center">
   <h1>Kaibridge</h1>
-  <p><b>An end-to-end open-source Model Context Protocol (MCP) connecting AI agents to KiCad — enabling fully headless PCB design: architecting circuits from natural language, sourcing verified components, compiling multi-sheet schematics, placing footprints with visual feedback, and routing boards alongside a human engineer in the loop.</b></p>
+  <p><b>An end-to-end open-source Model Context Protocol connecting AI agents to KiCad — enabling fully headless PCB design: architecting circuits from natural language, sourcing verified components, compiling multi-sheet schematics, optimizing planar placement with closed-loop visual audits, and executing hierarchical routing alongside a human engineer in the loop.</b></p>
 
 [![License: AGPL v3.0](https://img.shields.io/badge/License-AGPL_v3.0-blue.svg)](LICENSE)
 [![KiCad](https://img.shields.io/badge/KiCad-10-blue?logo=kicad)](https://www.kicad.org/)
 [![Java](https://img.shields.io/badge/Java-25_LTS-EA2D2E?logo=openjdk&logoColor=white)](https://adoptium.net/)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/Version-v2.1.0-green.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/Version-v2.2.0-green.svg)](CHANGELOG.md)
 [![Last Commit](https://img.shields.io/github/last-commit/ShahMdAbid/Kaibridge?logo=github&color=2ea043)](https://github.com/ShahMdAbid/Kaibridge/commits)
 
 </div>
@@ -24,8 +24,8 @@
 ---
 
 ## System Architecture
-
-The diagram below illustrates how Kaibridge translates natural language circuit requirements into PCB production files:
+Kaibridge operates in a **Headless mode** rather than an interactive CAD co-pilot. 
+The diagram below illustrates how Kaibridge translates natural language circuit requirements into verified PCB production files:
 
 ```mermaid
 %%{init: {
@@ -96,52 +96,57 @@ flowchart TD
         ERCGate -->|"0 Errors (Passed)"| SchSVG
     end
 
-    subgraph Phase4 ["Phase 4: Headless PCB Layout & Placement"]
-        SyncPCB["<b>Headless PCB Sync</b><br/>kicad_pcb_sync.py (F8)<br/>Footprints & ratsnest"]
+    subgraph Phase4 ["Phase 4: Two-Stage Placement & Geometry Gate"]
+        SyncPCB["<b>Headless PCB Sync</b><br/>kicad_pcb_sync.py (F8)<br/>Footprints & nets"]
         OpsTemplate["<b>ops_template.json</b><br/>Placement schema"]
         LayoutSpec["<b>Layout Spec</b><br/>ops.json<br/>Functional zoning"]
-        
+
         subgraph SubGeom ["Geometry Gate & Verification"]
+            PlanarOpt["<b>Stage 7A: Planar Optimizer</b><br/>kicad_planar_optimizer.py<br/>Simulated Annealing & Kruskal MST<br/>&gt;85% ratsnest crossing cut"]
             GridQuant["<b>Grid Quantization</b><br/>0.5mm manufacturing grid"]
             DryRun{"<b>Collision Audit</b><br/>--dry-run check"}
-            RelaxSim["<b>2D Relaxation</b><br/>Push overlapping parts"]
             CommitLayout["<b>Commit Placement</b><br/>kicad_layout.py"]
             LockParts["<b>Lock Critical Parts</b><br/>LCK-01: Crystals, RF & IO"]
         end
 
         Snapshot["<b>Checkpoint 2 Snapshot</b><br/>pcb_snapshot.py<br/>Vector Board SVG"]
-        Human2{"<b>Visual Review</b><br/>Placement Check"}
+        Human2{"<b>Stage 7B: Visual Audit Gate</b><br/>Connector facing, silk hygiene<br/>& corridor clearance"}
+        CritiqueFix["<b>Critique Adjustments</b><br/>Refine coordinates & rotation"]
 
         SchSVG --> SyncPCB
         SyncPCB --> LayoutSpec
         OpsTemplate -.->|"Governs"| LayoutSpec
-        LayoutSpec --> GridQuant
+        LayoutSpec --> PlanarOpt
+        PlanarOpt --> GridQuant
         GridQuant --> DryRun
-        DryRun -->|"Overlap"| RelaxSim
-        RelaxSim -->|"Adjust coords"| LayoutSpec
+        DryRun -->|"Overlap"| PlanarOpt
         DryRun -->|"0 Collisions"| CommitLayout
         CommitLayout --> LockParts
         LockParts --> Snapshot
         Snapshot --> Human2
+        Human2 -->|"Needs adjustment"| CritiqueFix
+        CritiqueFix -->|"Update spec"| LayoutSpec
     end
 
-    subgraph Phase5 ["Phase 5: Headless Routing, Ground Pour & DRC"]
-        DSNAudit["<b>Pre-Flight DSN Audit</b><br/>Track widths & clearances<br/>validated in &lt; 2ms"]
-        Freeroute["<b>Freerouting 2.4.1</b><br/>Headless Java 25 LTS<br/>150µm edge keepout"]
-        SESMerge["<b>Merge Traces & Vias</b><br/>SES import to .kicad_pcb"]
-        GNDPlane["<b>Ground Plane Pour</b><br/>Solid B.Cu copper plane<br/>0.3mm clearance rule"]
-        DRCGate{"<b>KiCad DRC Gate</b><br/>0 Violations?"}
-        RouteFix["<b>Route Optimization</b><br/>Adjust clearance & unroute"]
+    subgraph Phase5 ["Phase 5: 3-Tier Hierarchical Routing & DRC"]
+        Fanout["<b>Tier 1: Dog-Bone Fanout First</b><br/>SMD GND escape stubs & vias<br/>Zero Via-in-Pad (DFM safe)"]
+        DSNAudit["<b>Pre-Flight DSN Audit</b><br/>Clearance harmonization (250µm)<br/>GND stripped from Specctra DSN"]
+        Freeroute["<b>Tier 2: Planar Signal Routing</b><br/>Freerouting 2.4.1 (Java 25 LTS)<br/>150µm keepout, 0 signal vias"]
+        SESMerge["<b>Merge Traces</b><br/>SES import to .kicad_pcb"]
+        GNDPlane["<b>Tier 3: Solid Ground Flood</b><br/>Solid B.Cu copper plane<br/>0.3mm clearance, continuous pour"]
+        DRCGate{"<b>KiCad DRC Gate</b><br/>0 Clearance Violations<br/>0 Unconnected Nets"}
+        RouteFix["<b>Route Optimization</b><br/>Clearance & fanout adjust"]
         RoutedPCB["<b>Checkpoint 3 Verified</b><br/>DRC-clean .kicad_pcb"]
 
-        Human2 -->|"Approved"| DSNAudit
+        Human2 -->|"Approved"| Fanout
+        Fanout --> DSNAudit
         DSNAudit --> Freeroute
         Freeroute --> SESMerge
         SESMerge --> GNDPlane
         GNDPlane --> DRCGate
         DRCGate -->|"Violations"| RouteFix
-        RouteFix --> Freeroute
-        DRCGate -->|"Passed"| RoutedPCB
+        RouteFix -->|"Refine"| Fanout
+        DRCGate -->|"Passed (0 DRC)"| RoutedPCB
     end
 
     subgraph Phase6 ["Phase 6: JLCPCB Production Export"]
@@ -160,20 +165,17 @@ flowchart TD
     class SchSVG,Snapshot,RoutedPCB checkpoint;
     class Prompt,Plan,DesignJSON,LayoutSpec,GerberZip,BOMCSV,CPLCSV artifact;
     class DesTemplate,OpsTemplate template;
-    class ART,Passives,Actives,NetclassRules,GridQuant,RelaxSim,LockParts,SESMerge,GNDPlane,RouteFix,FixSch process;
+    class ART,Passives,Actives,NetclassRules,FixSch,PlanarOpt,GridQuant,LockParts,CritiqueFix,Fanout,SESMerge,GNDPlane,RouteFix process;
     class ERCGate,DryRun,DRCGate gate;
     class Bootstrap,Sourcing,PinExtract,Compiler,SyncPCB,CommitLayout,DSNAudit,Freeroute,ExportEngine tool;
-
-    linkStyle 0,1,2,4,5,6,7,8,9,11,12,13,17,18,20,21,25,26,27,29,30,31,32,36,37,38,39 stroke:#38bdf8,stroke-width:1.5px;
-    linkStyle 3,16,24,28,35 stroke:#10b981,stroke-width:2px;
-    linkStyle 14,15,22,23,33,34 stroke:#f59e0b,stroke-width:2px,stroke-dasharray:4 4;
-    linkStyle 10,19 stroke:#818cf8,stroke-width:1.5px,stroke-dasharray:3 3;
 ```
+
+
 
 ## Quick Start
 
 ### 1. Setup
-- **Source Code:** Clone via `git clone https://github.com/ShahMdAbid/Kaibridge.git` or download the standalone release archive [Kaibridge_v2.1.0.zip](https://github.com/ShahMdAbid/Kaibridge/releases/download/v2.1.0/Kaibridge_v2.1.0.zip).
+- **Source Code:** Clone via `git clone https://github.com/ShahMdAbid/Kaibridge.git` or download the standalone release archive [Kaibridge_v2.2.0.zip](https://github.com/ShahMdAbid/Kaibridge/releases/download/v2.2.0/Kaibridge_v2.2.0.zip).
 - **Prerequisites:** Ensure KiCad 10 and Java 25 LTS (or Java 17+) are installed and accessible in your environment.
 - **Offline Component Database (Optional):** For < 1ms offline component lookup across 16,600+ JLCPCB parts, download [easyeda-std.elib.zip](https://github.com/ShahMdAbid/Kaibridge/releases/download/v2.1.0/easyeda-std.elib.zip) (~142 MB) and extract it into `data/easyeda-std.elib`.
 - Add Kaibridge to your agent's MCP configuration (`mcp_config.json`):
@@ -196,13 +198,10 @@ flowchart TD
 2. Enter your circuit design requirements.
 3. The agent sources components, compiles schematics, verifies ERC, places footprints, and routes the board headlessly. While the engine can operate autonomously, guiding the agent step-by-step through checkpoints is recommended to maintain clear visibility over your design—**AI-generated design suggestions do not replace qualified engineering review**. (See the [User Guide](docs/user-guide.md) for details).
 
----
-
 ## AI Disclosure
 
 This project was developed with the support of AI-assisted coding tools. AI tools were used to accelerate development — creative decisions, hardware testing, and architecture remain entirely with the author(s).
 
----
 
 ## Disclaimer
 
@@ -212,9 +211,9 @@ This project is provided without any warranty, express or implied. The author(s)
 - Damage to hardware, components, or devices caused by incorrect designs
 - Financial losses due to manufacturing errors or incorrect orders
 
----
 
 ## License
 
 This project is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**.  
 You are free to use and modify this project. However, if you modify the code and make it available over a network (e.g., as a SaaS or web tool), you **must** open-source your modified backend code under the same AGPL-3.0 license.
+

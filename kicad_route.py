@@ -33,6 +33,8 @@ def main(argv=None):
     ap.add_argument("--max-passes", type=int, default=None, help="Maximum Freerouting optimization passes")
     ap.add_argument("--pour-gnd", action="store_true", default=True, help="Pour solid GND copper zone on B.Cu after routing (default: true)")
     ap.add_argument("--no-pour-gnd", action="store_false", dest="pour_gnd", help="Do not pour ground plane")
+    ap.add_argument("--fanout-first", action="store_true", default=True, help="Pre-place Dog-Bone GND fanouts and route signals on F.Cu (default: true)")
+    ap.add_argument("--no-fanout-first", action="store_false", dest="fanout_first", help="Disable Dog-Bone fanout first protocol")
     ap.add_argument("--drc", action="store_true", help="Run KiCad DRC check and output violations")
     args = ap.parse_args(argv)
 
@@ -45,6 +47,7 @@ def main(argv=None):
     print(f"  Track width     : {args.track_width} mm")
     print(f"  Edge clearance  : {args.edge_clearance_um} um")
     print(f"  Router timeout  : {args.timeout} s")
+    print(f"  Fanout First    : {args.fanout_first}")
 
     # 1. Execute Freerouting
     route_res = route_board(
@@ -53,7 +56,8 @@ def main(argv=None):
         timeout_sec=args.timeout,
         copper_edge_clearance_um=args.edge_clearance_um,
         strict_drc=True,
-        max_passes=args.max_passes
+        max_passes=args.max_passes,
+        fanout_first=args.fanout_first
     )
 
     if not route_res.get("success"):

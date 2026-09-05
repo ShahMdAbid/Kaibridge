@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-09-05
+
+### Added
+- `kicad_planar_optimizer.py`: In-memory simulated annealing placement using Kruskal's MST and 2D segment intersections to minimize airwire crossings.
+- 3-Tier Routing Protocol: Pre-places GND dog-bone vias, routes signals on F.Cu without signal vias, and floods B.Cu ground plane.
+- S7A / S7B Placement Flow: Decoupled mathematical placement (`kicad_planar_optimizer.py`) from visual audit (`pcb_snapshot.py`).
+- DSN clearance harmonization in `route_board()` to prevent power pad clearance DRC violations.
+- Added `kicad_planar_optimizer.py` to root CLI tools (9 tools) and `--fanout-first` flag to `kicad_route.py`.
+
+### Changed
+- `kaibridge/pcb/router.py`: Added native `apply_dogbone_fanout()` and `fanout_first` routing support.
+- Updated `AGENTS.md` and `SKILL.md` with 9-stage pipeline and 3-Tier routing protocol.
+
+---
+
 ## [2.1.0] - 2026-09-04
 
 ### Added

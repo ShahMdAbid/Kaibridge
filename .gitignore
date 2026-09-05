@@ -2,10 +2,13 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
 
-# Kaibridge intermediate dumps & caches
+# Kaibridge intermediate dumps, logs & caches
 kaibridge_dump/
 **/kaibridge_dump/
+production_output/
+**/production_output/
 temp_ops_*.json
 *.bak
 *.kicad_prl
@@ -13,18 +16,31 @@ temp_ops_*.json
 *.kicad_sch-bak
 *.lck
 ~*
+*.log
+*.dsn
+*.ses
 
-# Projects workspace
+# Test, Lint & Environment caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Projects workspace (strictly local)
 projects/
 **/projects/
 
-# VS Code / IDE history
+# VS Code & IDE files
 .history/
 **/.history/
 .vscode/
+.idea/
 
 # Heavy binary databases (>100MB) & release archives
 data/*.elib
+data/*.elib.zip
+data/easyeda-std.elib*
 *.zip
 **/*.zip
 
@@ -42,4 +58,5 @@ $RECYCLE.BIN/
 
 # Private notes / architectural analysis
 references/architectural_landscape_and_contributions.md
+
 

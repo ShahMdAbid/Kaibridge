@@ -1,9 +1,13 @@
-# Core Capabilities (v2.1.0)
+# Core Capabilities (v2.2.0)
 
 This document outlines the technical capabilities of the Kaibridge hardware automation bridge. The architecture is modular, defining the boundaries and interactions between autonomous agent execution and human engineering review.
 
 * **Modular Execution Modes:** Supports both Model Context Protocol (MCP) server integration (`server.py`) and standalone command-line utilities for headless KiCad execution.
-* **Standalone CLI Suite:** Provides dedicated command-line entry points (`kicad_lib_init.py`, `kicad_pins.py`, `json2sch.py`, `kicad_pcb_sync.py`, `kicad_layout.py`, `pcb_snapshot.py`, `kicad_route.py`, `export_jlcpcb.py`) for automated or scripted execution across all pipeline stages.
+* **Standalone CLI Suite (9 Canonical Tools):** Dedicated command-line utilities (`kicad_lib_init.py`, `kicad_pins.py`, `json2sch.py`, `kicad_pcb_sync.py`, `kicad_planar_optimizer.py`, `kicad_layout.py`, `pcb_snapshot.py`, `kicad_route.py`, `export_jlcpcb.py`) for automated execution across all 9 pipeline stages.
+* **In-Memory Planar Optimizer (`kicad_planar_optimizer.py`):** Simulated annealing placement engine using Kruskal's MST and 2D segment intersections to minimize airwire crossings in memory.
+* **Two-Stage Placement (S7A / S7B):** Stage 7A executes mathematical placement via `kicad_planar_optimizer.py`; Stage 7B executes visual audit via `pcb_snapshot.py`.
+* **3-Tier Routing Protocol:** Pre-places GND dogbone vias, routes signals on F.Cu without signal vias, and floods B.Cu ground plane with 0 DRC violations.
+* **DSN Clearance Harmonization:** Matches default signal clearance to power pad clearance to prevent false DRC violations.
 * **Intent Parsing:** Translates abstract natural language requirements into a structured JSON circuit netlist (`design.json`).
 * **Pin & Net Verification:** Extracts and verifies exact pin mappings directly from `.kicad_sym` files prior to schematic generation via `kicad_pins.py`.
 * **Component Sourcing & Offline Search:** Fetches footprints and 3D models from LCSC (via `easyeda2kicad`), resolves native `Device:*` symbols from standard KiCad libraries, and queries an offline SQLite database (`easyeda-std.elib`) in < 1ms with upfront LCSC C-Part ID binding.
