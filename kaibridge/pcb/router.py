@@ -11,11 +11,14 @@ import sys
 import json
 import time
 import re
+import math
 import subprocess
 from pathlib import Path
 from typing import Dict, Any, Optional
 
 from ..core.paths import load_cli, load_kicad_python, find_freerouting_jar
+from .freerouting_daemon import start_daemon, is_daemon_alive, FreeroutingClient
+
 
 _DSN_WIDTH = re.compile(r"\(width\s+(-?[\d.]+)\)")
 _DSN_CLEAR = re.compile(r"\(clearance\s+(-?[\d.]+)\)")
@@ -190,6 +193,13 @@ def apply_dogbone_fanout(board, gnd_net_name: str = "GND") -> int:
             pos = t.GetPosition()
             existing_vias.add((round(pcbnew.ToMM(pos.x), 2), round(pcbnew.ToMM(pos.y), 2)))
 
+    # Collect all existing pads across the board for clearance checking
+    all_pads = []
+    for fp in board.GetFootprints():
+        for pad in fp.Pads():
+            pos = pad.GetPosition()
+            all_pads.append((pad, pcbnew.ToMM(pos.x), pcbnew.ToMM(pos.y), pad.GetNetname()))
+
     placed_count = 0
     for fp in board.GetFootprints():
         fp_pos = fp.GetPosition()
@@ -210,16 +220,57 @@ def apply_dogbone_fanout(board, gnd_net_name: str = "GND") -> int:
                 dx_mm = pcbnew.ToMM(pad_pos.x - fp_pos.x)
                 dy_mm = pcbnew.ToMM(pad_pos.y - fp_pos.y)
 
-                escape_x = 0.0
-                escape_y = 0.0
+                # Candidate escape vectors (primary outward, orthogonal, diagonal, extended)
+                prim_x = 1.1 if dx_mm >= 0 else -1.1
+                prim_y = 1.1 if dy_mm >= 0 else -1.1
+                candidates = []
                 if abs(dx_mm) >= abs(dy_mm):
-                    escape_x = 1.1 if dx_mm >= 0 else -1.1
+                    candidates.append((prim_x, 0.0))
+                    candidates.append((0.0, prim_y))
+                    candidates.append((0.0, -prim_y))
+                    candidates.append((prim_x, prim_y * 0.7))
+                    candidates.append((prim_x, -prim_y * 0.7))
+                    candidates.append((prim_x * 1.3, 0.0))
                 else:
-                    escape_y = 1.1 if dy_mm >= 0 else -1.1
+                    candidates.append((0.0, prim_y))
+                    candidates.append((prim_x, 0.0))
+                    candidates.append((-prim_x, 0.0))
+                    candidates.append((prim_x * 0.7, prim_y))
+                    candidates.append((-prim_x * 0.7, prim_y))
+                    candidates.append((0.0, prim_y * 1.3))
 
-                if escape_x == 0.0 and escape_y == 0.0:
-                    escape_y = -1.1
+                chosen_vec = None
+                for ex, ey in candidates:
+                    cvx = px_mm + ex
+                    cvy = py_mm + ey
 
+                    # Check clearance against existing vias (>= 0.7mm)
+                    if any(math.hypot(vx - cvx, vy - cvy) < 0.70 for vx, vy in existing_vias):
+                        continue
+
+                    # Check clearance against all other non-GND pads (>= 0.75mm)
+                    collides = False
+                    for other_pad, ox, oy, onet in all_pads:
+                        if other_pad == pad:
+                            continue
+                        dist = math.hypot(ox - cvx, oy - cvy)
+                        if onet != gnd_net_name:
+                            if dist < 0.75:
+                                collides = True
+                                break
+                        else:
+                            if dist < 0.50:
+                                collides = True
+                                break
+                    if not collides:
+                        chosen_vec = (ex, ey)
+                        break
+
+                if not chosen_vec:
+                    # No safe clearance vector found; skip pre-via to prevent deadlocks
+                    continue
+
+                escape_x, escape_y = chosen_vec
                 via_x = pad_pos.x + pcbnew.FromMM(escape_x)
                 via_y = pad_pos.y + pcbnew.FromMM(escape_y)
                 via_pos = pcbnew.VECTOR2I(via_x, via_y)
@@ -274,23 +325,8 @@ def _ensure_netclass_patterns(proj_path: Path, pro_file: Path):
                 _update_netclasses_in_pro(pro_file, d.get("netclasses", {}), design=proxy)
                 pro_data = json.loads(pro_file.read_text(encoding="utf-8"))
 
-        # Auto-clamp Power netclass width if fine-pitch footprints exist on PCB
-        pcb_file = proj_path / f"{pro_file.stem}.kicad_pcb"
-        if pcb_file.exists():
-            pcb_text = pcb_file.read_text(encoding="utf-8", errors="replace")
-            if any(kw in pcb_text.upper() for kw in ("LQFP", "QFN", "TSSOP", "DFN", "BGA", "P0.5", "P0.4", "P0.35")):
-                ns = pro_data.setdefault("net_settings", {})
-                classes = ns.setdefault("classes", [])
-                changed = False
-                for c in classes:
-                    if c.get("name") == "Power" and float(c.get("track_width", 0)) > 0.25:
-                        orig_w = c["track_width"]
-                        c["track_width"] = 0.25
-                        c["clearance"] = min(float(c.get("clearance", 0.2)), 0.20)
-                        print(f"[*] Adaptive Router: Auto-clamped Power track width from {orig_w}mm to 0.25mm (clearance: 0.20mm) for fine-pitch IC.")
-                        changed = True
-                if changed:
-                    pro_file.write_text(json.dumps(pro_data, indent=2), encoding="utf-8")
+        # Power netclasses preserve their designated widths (0.4-0.6mm).
+        # Freerouting automatically necks down tracks at fine-pitch IC pads via automaticNeckdown=True.
     except Exception:
         pass
 
@@ -303,13 +339,15 @@ def route_board(
     strict_drc: bool = True,
     max_passes: Optional[int] = None,
     fanout_first: Optional[bool] = None,
-    strategy: str = "auto"
+    strategy: str = "auto",
+    via_costs: int = 140,
+    plane_via_costs: int = 100,
+    automatic_neckdown: bool = True,
+    use_daemon: bool = True
 ) -> Dict[str, Any]:
-    """Exports DSN, runs Java Freerouting v2.4.1 with robust edge clearance and strict DRC,
+    """Exports DSN, runs Java Freerouting v2.4.1 (Tier 2 Daemon or Tier 1 Optimized CLI)
+    with robust edge clearance, dynamic via penalization, and strict DRC,
     and imports SES tracks into the board.
-    Supports Adaptive Routing:
-    - Auto-detects Strategy 1 (Fanout-First) for discrete/simple boards vs Strategy 2 (Dual-Layer) for dense MCUs.
-    - Automatic Fallback: If Strategy 1 times out or fails, auto-recovers via Strategy 2 without human intervention.
     """
     try:
         import pcbnew
@@ -322,8 +360,13 @@ def route_board(
             "strict_drc": strict_drc,
             "max_passes": max_passes,
             "fanout_first": fanout_first,
-            "strategy": strategy
+            "strategy": strategy,
+            "via_costs": via_costs,
+            "plane_via_costs": plane_via_costs,
+            "automatic_neckdown": automatic_neckdown,
+            "use_daemon": use_daemon
         })
+
 
     proj_path = Path(project_dir).resolve()
     pro_files = list(proj_path.glob("*.kicad_pro"))
@@ -394,16 +437,23 @@ def route_board(
     if use_fanout:
         dsn_text = dsn_file.read_text(encoding="utf-8")
         dsn_text = re.sub(r'\(net\s+GND\s*\(pins[^)]+\)\s*\)', '', dsn_text)
-        # Harmonize default signal clearance (200um) to power clearance (250um) so tracks honor power pads
-        dsn_text = re.sub(r'\(clearance\s+200\)', '(clearance 250)', dsn_text)
+        # Harmonize default signal clearance to power clearance so tracks honor power pads and pre-placed GND vias
+        clears = [float(v) for v in _DSN_CLEAR.findall(dsn_text)]
+        max_c = int(max(clears)) if clears else 200
+        if max_c > 0:
+            def _bump_clear(m):
+                val = float(m.group(1))
+                if val < max_c:
+                    return f"(clearance {max_c})"
+                return m.group(0)
+            dsn_text = re.sub(r'\(clearance\s+(\d+(?:\.\d+)?)(?!\s*\(type)\)', _bump_clear, dsn_text)
         dsn_file.write_text(dsn_text, encoding="utf-8")
 
-        # Generate custom rules file with high via costs and single-layer signal preference
+        # High via costs prioritize flat F.Cu routing while permitting clean jumper escapes
         rules_content = f'''(rules PCB {stem}
   (autoroute_settings
     (fanout off)
-    (vias off)
-    (layer_rule B.Cu (active off))
+    (vias on)
   )
 )
 '''
@@ -424,38 +474,85 @@ def route_board(
             "dsn_audit": dsn_audit
         }
 
-    # 2. Run Java Freerouting 2.4.1 (Decoupled Universal Routing Pipeline)
+    # 2. Run Java Freerouting 2.4.1 (Tier 2 Daemon or Tier 1 Optimized CLI)
     jar_path = find_freerouting_jar()
     if not jar_path:
         return {"success": False, "error": "freerouting.jar not found."}
 
-    cmd = [
-        "java", "-Xmx1024m", "-jar", str(jar_path),
-        "-de", str(dsn_file),
-        "-do", str(ses_file),
-        "-mt", "1",
-        "--gui.enabled=false",
-        f"--router.copperToEdgeClearanceUm={copper_edge_clearance_um}"
-    ]
-    if rules_file.exists():
-        cmd.extend(["-dr", str(rules_file)])
-    if strict_drc:
-        cmd.append("--router.strictDrc=true")
-    if max_passes is not None and max_passes > 0:
-        cmd.extend(["-mp", str(max_passes)])
-    else:
-        cmd.extend(["-mp", "1"])
-
+    routing_method = "Freerouting 2.4.1 CLI"
     freerouting_failed = False
     proc_err = ""
-    try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_sec, check=False)
-        if proc.returncode != 0 and not ses_file.exists():
+
+    # Try Tier 2: Persistent REST API Daemon (Zero Cold-Start)
+    if use_daemon:
+        try:
+            if not is_daemon_alive():
+                start_daemon(jar_path, timeout_sec=8.0)
+            if is_daemon_alive():
+                client = FreeroutingClient()
+                daemon_res = client.route(
+                    dsn_path=dsn_file,
+                    ses_path=ses_file,
+                    rules_path=rules_file if rules_file.exists() else None,
+                    via_costs=via_costs,
+                    plane_via_costs=plane_via_costs,
+                    automatic_neckdown=automatic_neckdown,
+                    max_passes=max_passes or 1,
+                    copper_to_edge_clearance_um=copper_edge_clearance_um,
+                    timeout_sec=timeout_sec
+                )
+                if daemon_res.get("success") and ses_file.exists() and ses_file.stat().st_size > 0:
+                    routing_method = daemon_res.get("method", "Freerouting 2.4.1 REST API Daemon (Tier 2)")
+                else:
+                    freerouting_failed = True
+            else:
+                freerouting_failed = True
+        except Exception as e:
             freerouting_failed = True
-            proc_err = proc.stderr.strip() or proc.stdout.strip()
-    except subprocess.TimeoutExpired:
-        freerouting_failed = True
-        proc_err = f"Freerouting timed out after {timeout_sec}s"
+            proc_err = f"Daemon route failed: {e}"
+
+    # Fallback / Direct Tier 1: Optimized CLI Pipeline
+    if not ses_file.exists() or freerouting_failed:
+        freerouting_failed = False
+        proc_err = ""
+        cpu_threads = max(1, (os.cpu_count() or 2) - 1)
+        cmd = [
+            "java", "-Xmx1024m", "-jar", str(jar_path),
+            "-de", str(dsn_file),
+            "-do", str(ses_file),
+            "-mt", str(cpu_threads),
+            "--gui.enabled=false",
+            "-dct", "0",
+            "-ll", "WARN",
+            "-is", "prioritized",
+            "-us", "hybrid", "-hr", "1:1",
+            f"--router.copperToEdgeClearanceUm={copper_edge_clearance_um}",
+            f"--router.scoring.viaCosts={via_costs}",
+            f"--router.scoring.planeViaCosts={plane_via_costs}",
+            f"--router.automaticNeckdown={'true' if automatic_neckdown else 'false'}",
+            "--optimizer.maxConsecutiveFailures=40"
+        ]
+        if use_fanout:
+            cmd.extend(["-inc", "GND", "--router.viasAllowed=false"])
+        if rules_file.exists():
+            cmd.extend(["-dr", str(rules_file)])
+        if strict_drc:
+            cmd.append("--router.strictDrc=true")
+        if max_passes is not None and max_passes > 0:
+            cmd.extend(["-mp", str(max_passes)])
+        else:
+            cmd.extend(["-mp", "1"])
+
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_sec, check=False)
+            if proc.returncode != 0 and not ses_file.exists():
+                freerouting_failed = True
+                proc_err = proc.stderr.strip() or proc.stdout.strip()
+            else:
+                routing_method = "Freerouting 2.4.1 Optimized CLI (Tier 1)"
+        except subprocess.TimeoutExpired:
+            freerouting_failed = True
+            proc_err = f"Freerouting timed out after {timeout_sec}s"
 
     # Automatic Fallback: If Strategy 1 failed, immediately recover via Strategy 2 without stopping
     if use_fanout and (freerouting_failed or not ses_file.exists()):
@@ -473,11 +570,16 @@ def route_board(
             strict_drc=strict_drc,
             max_passes=max_passes or 5,
             fanout_first=False,
-            strategy="dual-layer"
+            strategy="dual-layer",
+            via_costs=via_costs,
+            plane_via_costs=plane_via_costs,
+            automatic_neckdown=automatic_neckdown,
+            use_daemon=use_daemon
         )
 
     if freerouting_failed or not ses_file.exists():
         return {"success": False, "error": f"Freerouting failed to generate SES output: {proc_err}"}
+
 
     # 3. Import Specctra SES into board
     imported_count = 0
@@ -535,12 +637,13 @@ def route_board(
 
     return {
         "success": True,
-        "method": "freerouting",
+        "method": routing_method,
         "tracks_imported": imported_count,
         "pcb_file": str(pcb_file),
         "ses_file": str(ses_file),
         "fanout_first_used": use_fanout
     }
+
 
 
 def add_ground_plane(

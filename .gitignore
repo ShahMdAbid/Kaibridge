@@ -50,10 +50,14 @@ data/easyeda-std.elib*
 # Benchmark results and test outputs
 bench/
 **/bench/
-tests/test_project_*/
-**/tests/test_project_*/
+tests/
+**/tests/
 scratch/
 **/scratch/
+benchmark_analyzer.py
+*_statistics.json
+test_*.py
+check_*.py
 
 # Python virtual environments
 .venv/

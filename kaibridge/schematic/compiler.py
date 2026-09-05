@@ -178,13 +178,8 @@ def _update_netclasses_in_pro(pro_path: Path, netclasses: Dict[str, Any], design
                     has_fine_pitch = True
                     break
 
-        if has_fine_pitch and "Power" in existing:
-            p_entry = existing["Power"]
-            cur_width = float(p_entry.get("track_width", 0.25))
-            if cur_width > 0.25:
-                p_entry["track_width"] = 0.25
-                p_entry["clearance"] = min(float(p_entry.get("clearance", 0.2)), 0.20)
-                print(f"[*] Fine-pitch IC detected -- auto-clamped Power track width from {cur_width}mm to 0.25mm (clearance: 0.20mm) to prevent pad clearance deadlocks.")
+        # Note: Freerouting handles fine-pitch neckdowns via automaticNeckdown=True,
+        # so Power netclasses preserve their designated width (0.4-0.6mm) without being flattened.
 
         # 3. Synthesize netclass_patterns to bind nets to netclasses in KiCad & DSN exporter
         patterns = []

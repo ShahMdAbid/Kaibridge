@@ -5,7 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.2.1] - 2026-09-05
+## [Beta v2.3.0] - 2026-09-06
+
+### Added
+- **Freerouting REST Daemon:** Integrated background routing daemon (`freerouting_daemon.py`) to eliminate repeated JVM startup latency.
+- **Dynamic Board Sizing:** Updated `kicad_planar_optimizer.py` to parse board dimensions and center offsets directly from layout specifications.
+
+### Fixed & Improved
+- **Netclass Width Preservation:** Removed power track clamping in schematic compiler and router; enabled automatic neckdown for fine-pitch IC pads.
+- **Decoupling Placement Constraints:** Enforced proximity penalties in planar optimizer to keep bypass capacitors adjacent to IC power pins.
+- **DSN Clearance Harmonization:** Aligned signal clearance rules in exported DSN with power netclasses to prevent DRC violations near fanout vias.
+- **Layout Parameter Handling:** Fixed coordinate parsing for center offset parameters in `board.set_size`.
+
+---
+
+## [Beta v2.2.1] - 2026-09-05
 
 ### Fixed & Improved
 - **ERC & DRC Warning Visibility:** Full warning reporting in `json2sch.py` and `kicad_route.py` using `--severity-all`.
@@ -17,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [2.2.0] - 2026-09-05
+## [Beta v2.2.0] - 2026-09-05
 
 ### Added
 - `kicad_planar_optimizer.py`: In-memory simulated annealing placement using Kruskal's MST and 2D segment intersections to minimize airwire crossings.
@@ -32,7 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [2.1.0] - 2026-09-04
+## [Beta v2.1.0] - 2026-09-04
 
 ### Added
 - Root CLI tool suite providing standalone command-line entry points for all design stages:
@@ -63,7 +77,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [2.0.0] - 2026-09-03
+## [Beta v2.0.0] - 2026-09-03
 
 ### Added
 - Model Context Protocol (MCP) server (`server.py`) exposing discrete tools over STDIO JSON-RPC 2.0.
@@ -97,7 +111,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.0.0] - 2026-08-15
+## [Beta v1.0.0] - 2026-08-15
 
 ### Added
 - Initial release of Kaibridge KiCad bridge.

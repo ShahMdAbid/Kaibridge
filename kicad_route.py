@@ -44,6 +44,9 @@ def main(argv=None):
     ap.add_argument("--no-fanout-first", action="store_true", default=None, help="Force Dual-Layer routing protocol (Strategy 2)")
     ap.add_argument("--layers", type=int, choices=[2, 4], default=2, help="Number of copper layers (2 or 4, default: 2)")
     ap.add_argument("--drc", action="store_true", help="Run KiCad DRC check and output violations")
+    ap.add_argument("--via-costs", type=int, default=140, help="Via cost penalty for multilayer routing (default: 140)")
+    ap.add_argument("--no-daemon", action="store_true", help="Disable persistent REST daemon and force direct CLI execution")
+    ap.add_argument("--no-neckdown", action="store_true", help="Disable automatic neckdown entering fine-pitch IC pads")
     args = ap.parse_args(argv)
 
     project_dir = Path(args.project_dir).expanduser().resolve()
@@ -64,6 +67,8 @@ def main(argv=None):
     print(f"  Router timeout  : {args.timeout} s")
     print(f"  Strategy        : {strategy}")
     print(f"  Layers          : {args.layers}")
+    print(f"  Via cost penalty: {args.via_costs}")
+    print(f"  Daemon mode     : {'Disabled' if args.no_daemon else 'Enabled (Port 37864)'}")
 
     # 1. Execute Freerouting
     route_res = route_board(
@@ -74,8 +79,12 @@ def main(argv=None):
         strict_drc=True,
         max_passes=args.max_passes,
         fanout_first=True if strategy == "fanout-first" else (False if strategy == "dual-layer" else None),
-        strategy=strategy
+        strategy=strategy,
+        via_costs=args.via_costs,
+        automatic_neckdown=not args.no_neckdown,
+        use_daemon=not args.no_daemon
     )
+
 
     if not route_res.get("success"):
         print(f"\nError in routing: {route_res.get('error', 'Routing failed')}", file=sys.stderr)

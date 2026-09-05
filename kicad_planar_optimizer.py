@@ -183,7 +183,32 @@ class PlanarLayoutOptimizer:
             self.design = json.load(f)
 
         self.fp_data = get_footprint_data_from_pcb(self.pcb_path)
-        
+
+        # Dynamically load board dimensions from ops.json if present
+        ops_path = self.proj_dir / "kaibridge_dump" / "ops.json"
+        if not ops_path.exists():
+            ops_path = self.proj_dir / "ops.json"
+        if ops_path.exists():
+            try:
+                ops_data = json.loads(ops_path.read_text(encoding="utf-8"))
+                for op in ops_data:
+                    if op.get("op") in ("board.set_size", "set_size"):
+                        w = float(op.get("width", op.get("width_mm", board_width)))
+                        h = float(op.get("height", op.get("height_mm", board_height)))
+                        if any(k in op for k in ("center_x_mm", "center_y_mm", "center_x", "center_y", "cx", "cy")):
+                            cx = float(op.get("center_x_mm", op.get("center_x", op.get("cx", w / 2.0))))
+                            cy = float(op.get("center_y_mm", op.get("center_y", op.get("cy", h / 2.0))))
+                            origin_x = cx - w / 2.0
+                            origin_y = cy - h / 2.0
+                        else:
+                            origin_x = float(op.get("origin_x", op.get("origin_x_mm", op.get("x", origin_x))))
+                            origin_y = float(op.get("origin_y", op.get("origin_y_mm", op.get("y", origin_y))))
+                        board_width = w
+                        board_height = h
+                        break
+            except Exception:
+                pass
+
         self.board_w = board_width
         self.board_h = board_height
         self.ox = origin_x
@@ -432,7 +457,7 @@ class PlanarLayoutOptimizer:
             if c_ref in state and u_ref in state:
                 dist = math.hypot(state[c_ref]["x"] - state[u_ref]["x"], state[c_ref]["y"] - state[u_ref]["y"])
                 if dist > max_dist:
-                    decoupling_penalty += (dist - max_dist) * 20.0
+                    decoupling_penalty += 10000.0 + ((dist - max_dist) ** 2) * 500.0
 
         # 4. Perimeter Connector Edge Constraint Penalty
         edge_penalty = 0.0
@@ -456,9 +481,9 @@ class PlanarLayoutOptimizer:
     def optimize(
         self,
         initial_ops: List[Dict[str, Any]],
-        steps: int = 6000,
+        steps: int = 12000,
         temp_init: float = 80.0,
-        cooling: float = 0.9985
+        cooling: float = 0.9988
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Simulated annealing to minimize cross-net airwire intersections."""
         state = {}
@@ -485,17 +510,103 @@ class PlanarLayoutOptimizer:
         t0 = time.time()
         T = temp_init
         unlocked_refs = [r for r, d in state.items() if not d["locked"]]
+        passives = [r for r in unlocked_refs if r.startswith(('R', 'C', 'D', 'L', 'Q', 'J'))]
+        if len(passives) < 2:
+            passives = list(unlocked_refs)
+
+        reheats = 0
+        reheat_limit = 4
+        steps_since_improvement = 0
 
         for step in range(steps):
-            ref = random.choice(unlocked_refs)
-            orig = dict(current_state[ref])
+            # 1. Identify culprit components from intersecting airwires
+            culprits = set()
+            if cur_cross > 0 and random.random() < 0.60:
+                all_edges = []
+                for net_name, pin_list in self.nets.items():
+                    pts = [self.get_pad_pos(current_state, ref, pad) for ref, pad in pin_list]
+                    mst = get_mst(pts)
+                    for u, v, d in mst:
+                        all_edges.append((pts[u], pts[v], net_name, pin_list[u][0], pin_list[v][0]))
+                for i in range(len(all_edges)):
+                    p1, p2, n1, u1, v1 = all_edges[i]
+                    for j in range(i + 1, len(all_edges)):
+                        p3, p4, n2, u2, v2 = all_edges[j]
+                        if n1 != n2 and segments_intersect(p1, p2, p3, p4):
+                            for r in (u1, v1, u2, v2):
+                                if r in unlocked_refs:
+                                    culprits.add(r)
 
-            # Mutation strategy: 40% rotation, 60% translation
-            if random.random() < 0.40:
+            # Move type selection:
+            # 25% Pair-Swap, 30% Rotation, 45% Translation
+            move_type = random.random()
+
+            if move_type < 0.25 and len(passives) >= 2:
+                # Pair-Swap Move
+                if culprits and any(r in passives for r in culprits) and random.random() < 0.7:
+                    rA = random.choice([r for r in culprits if r in passives])
+                else:
+                    rA = random.choice(passives)
+                rB = random.choice([r for r in passives if r != rA])
+
+                origA = dict(current_state[rA])
+                origB = dict(current_state[rB])
+
+                current_state[rA]["x"], current_state[rB]["x"] = origB["x"], origA["x"]
+                current_state[rA]["y"], current_state[rB]["y"] = origB["y"], origA["y"]
+
+                new_cost, new_cross, new_hpwl, new_ov = self.evaluate_state(current_state)
+                delta = new_cost - current_cost
+
+                if delta < 0 or random.random() < math.exp(-delta / max(1e-5, T)):
+                    current_cost = new_cost
+                    cur_cross = new_cross
+                    if (new_ov == 0 and (best_ov > 0 or new_cost < best_cost)) or (best_ov > 0 and new_ov < best_ov):
+                        best_cost = new_cost
+                        best_crossings = new_cross
+                        best_ov = new_ov
+                        best_state = {r: dict(v) for r, v in current_state.items()}
+                        steps_since_improvement = 0
+                        if step % 250 == 0 or (best_ov == 0 and best_crossings < 3):
+                            print(f"  [Step {step:4d} SWAP {rA}<->{rB}] Crossings = {new_cross}, Overlaps = {new_ov}, HPWL = {new_hpwl:.1f}mm, T = {T:.2f}")
+                        if best_ov == 0 and best_crossings == 0:
+                            print(f"\n[!] ZERO CROSSINGS & ZERO OVERLAPS ACHIEVED AT STEP {step}! Converged early.")
+                            break
+                else:
+                    current_state[rA] = origA
+                    current_state[rB] = origB
+
+            elif move_type < 0.55:
+                # Rotation Move
+                ref = random.choice(list(culprits) if culprits and random.random() < 0.6 else unlocked_refs)
+                orig = dict(current_state[ref])
                 new_rot = (orig["rot"] + random.choice([90, 180, 270])) % 360
                 current_state[ref]["rot"] = new_rot
+
+                new_cost, new_cross, new_hpwl, new_ov = self.evaluate_state(current_state)
+                delta = new_cost - current_cost
+
+                if delta < 0 or random.random() < math.exp(-delta / max(1e-5, T)):
+                    current_cost = new_cost
+                    cur_cross = new_cross
+                    if (new_ov == 0 and (best_ov > 0 or new_cost < best_cost)) or (best_ov > 0 and new_ov < best_ov):
+                        best_cost = new_cost
+                        best_crossings = new_cross
+                        best_ov = new_ov
+                        best_state = {r: dict(v) for r, v in current_state.items()}
+                        steps_since_improvement = 0
+                        if step % 250 == 0 or (best_ov == 0 and best_crossings < 3):
+                            print(f"  [Step {step:4d}] Improved! Crossings = {new_cross}, Overlaps = {new_ov}, HPWL = {new_hpwl:.1f}mm, T = {T:.2f}")
+                        if best_ov == 0 and best_crossings == 0:
+                            print(f"\n[!] ZERO CROSSINGS & ZERO OVERLAPS ACHIEVED AT STEP {step}! Converged early.")
+                            break
+                else:
+                    current_state[ref] = orig
+
             else:
-                # Nudge position on 0.5mm grid
+                # Translation Move (Jitter on 0.5mm / 1.0mm grid)
+                ref = random.choice(list(culprits) if culprits and random.random() < 0.6 else unlocked_refs)
+                orig = dict(current_state[ref])
                 jitter_x = random.choice([-3.0, -2.0, -1.0, -0.5, 0.5, 1.0, 2.0, 3.0])
                 jitter_y = random.choice([-3.0, -2.0, -1.0, -0.5, 0.5, 1.0, 2.0, 3.0])
                 nx = max(self.min_x, min(self.max_x, round((orig["x"] + jitter_x) * 2.0) / 2.0))
@@ -503,28 +614,36 @@ class PlanarLayoutOptimizer:
                 current_state[ref]["x"] = nx
                 current_state[ref]["y"] = ny
 
-            new_cost, new_cross, new_hpwl, new_ov = self.evaluate_state(current_state)
-            delta = new_cost - current_cost
+                new_cost, new_cross, new_hpwl, new_ov = self.evaluate_state(current_state)
+                delta = new_cost - current_cost
 
-            # Acceptance criterion
-            if delta < 0 or random.random() < math.exp(-delta / max(1e-5, T)):
-                current_cost = new_cost
-                # Best state must prioritize 0 overlaps first, then lowest cost
-                if (new_ov == 0 and (best_ov > 0 or new_cost < best_cost)) or (best_ov > 0 and new_ov < best_ov):
-                    best_cost = new_cost
-                    best_crossings = new_cross
-                    best_ov = new_ov
-                    best_state = {r: dict(v) for r, v in current_state.items()}
-                    if step % 250 == 0 or (best_ov == 0 and best_crossings < 3):
-                        print(f"  [Step {step:4d}] Improved! Crossings = {new_cross}, Overlaps = {new_ov}, HPWL = {new_hpwl:.1f}mm, T = {T:.2f}")
-                    if best_ov == 0 and best_crossings == 0:
-                        print(f"\n[!] ZERO CROSSINGS & ZERO OVERLAPS ACHIEVED AT STEP {step}! Converged early.")
-                        break
-            else:
-                # Reject mutation
-                current_state[ref] = orig
+                if delta < 0 or random.random() < math.exp(-delta / max(1e-5, T)):
+                    current_cost = new_cost
+                    cur_cross = new_cross
+                    if (new_ov == 0 and (best_ov > 0 or new_cost < best_cost)) or (best_ov > 0 and new_ov < best_ov):
+                        best_cost = new_cost
+                        best_crossings = new_cross
+                        best_ov = new_ov
+                        best_state = {r: dict(v) for r, v in current_state.items()}
+                        steps_since_improvement = 0
+                        if step % 250 == 0 or (best_ov == 0 and best_crossings < 3):
+                            print(f"  [Step {step:4d}] Improved! Crossings = {new_cross}, Overlaps = {new_ov}, HPWL = {new_hpwl:.1f}mm, T = {T:.2f}")
+                        if best_ov == 0 and best_crossings == 0:
+                            print(f"\n[!] ZERO CROSSINGS & ZERO OVERLAPS ACHIEVED AT STEP {step}! Converged early.")
+                            break
+                else:
+                    current_state[ref] = orig
 
             T *= cooling
+            steps_since_improvement += 1
+
+            # Adaptive Reheat: If cooling down with remaining crossings
+            if steps_since_improvement > 600 and T < 5.0 and reheats < reheat_limit and best_crossings > 0:
+                reheats += 1
+                T = 35.0
+                steps_since_improvement = 0
+                current_state = {r: dict(v) for r, v in best_state.items()}
+                current_cost = best_cost
 
         # Local greedy quench on best state
         print("[*] Running local greedy quench...")

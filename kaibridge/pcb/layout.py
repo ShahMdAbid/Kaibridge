@@ -239,9 +239,9 @@ def _execute_in_process(
         elif action in ("board.set_size", "set_size", "add_edge_cuts", "set_board_outline"):
             w = float(op.get("width", op.get("width_mm", 50.0)))
             h = float(op.get("height", op.get("height_mm", 40.0)))
-            if "center_x_mm" in op or "center_y_mm" in op or "center_x" in op or "center_y" in op:
-                cx = float(op.get("center_x_mm", op.get("center_x", w / 2.0)))
-                cy = float(op.get("center_y_mm", op.get("center_y", h / 2.0)))
+            if any(k in op for k in ("center_x_mm", "center_y_mm", "center_x", "center_y", "cx", "cy")):
+                cx = float(op.get("center_x_mm", op.get("center_x", op.get("cx", w / 2.0))))
+                cy = float(op.get("center_y_mm", op.get("center_y", op.get("cy", h / 2.0))))
                 ox = cx - w / 2.0
                 oy = cy - h / 2.0
             else:
