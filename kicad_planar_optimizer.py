@@ -214,6 +214,154 @@ class PlanarLayoutOptimizer:
                 if len(valid_pins) >= 2:
                     self.nets[net_name] = valid_pins
 
+        # Dynamically detect decoupling and crystal proximity constraints
+        self.prox_pairs = self._detect_proximity_pairs()
+        if self.prox_pairs:
+            print(f"[*] Detected {len(self.prox_pairs)} dynamic proximity/decoupling pair(s):")
+            for c_ref, u_ref, d in self.prox_pairs:
+                print(f"    - {c_ref} -> {u_ref} (max {d}mm)")
+
+    def _detect_proximity_pairs(self) -> List[Tuple[str, str, float]]:
+        """Dynamically identifies:
+        1. Power rail decoupling capacitors and pairs them with their companion IC.
+        2. Crystal oscillators and pairs them with their companion IC (OSC pins).
+        3. Crystal load capacitors and pairs them with their crystal.
+        Zero hardcoded references!
+        """
+        prox_pairs: List[Tuple[str, str, float]] = []
+
+        # 1. Normalize parts catalog
+        parts_catalog = {}
+        if "parts" in self.design and isinstance(self.design["parts"], dict):
+            parts_catalog = self.design["parts"]
+        elif "components" in self.design and isinstance(self.design["components"], list):
+            for c in self.design["components"]:
+                if c.get("ref"):
+                    parts_catalog[c["ref"]] = c
+
+        # 2. Build map of groups
+        part_to_group = {}
+        for grp in self.design.get("groups", []):
+            gid = grp.get("id", "")
+            for p in grp.get("parts", []):
+                part_to_group[p] = gid
+        for pref, pinfo in parts_catalog.items():
+            if isinstance(pinfo, dict) and "group" in pinfo:
+                part_to_group[pref] = pinfo["group"]
+
+        # 3. Map all nets (including GND) for each component
+        all_nets = self.design.get("nets", {})
+        comp_nets: Dict[str, set] = {}
+        for net_name, net_data in all_nets.items():
+            pins = net_data.get("connections", net_data) if isinstance(net_data, dict) else net_data
+            if isinstance(pins, list):
+                for p in pins:
+                    if "." in p:
+                        ref, pad = p.split(".", 1)
+                        if ref not in comp_nets:
+                            comp_nets[ref] = set()
+                        comp_nets[ref].add(net_name)
+
+        def is_gnd(net: str) -> bool:
+            n = net.upper()
+            return "GND" in n or n == "0V" or "VSS" in n
+
+        def is_power(net: str) -> bool:
+            n = net.upper()
+            return any(k in n for k in ("3V3", "5V", "VCC", "VDD", "VBUS", "VIN", "VBAT", "12V", "PWR", "PROT")) or n.startswith("+")
+
+        # 4. Classify parts: ICs, Crystals, Capacitors, Connectors
+        ics = []
+        crystals = []
+        caps = []
+        self.connectors = []
+
+        for ref, fp in self.fp_data.items():
+            pads_count = len(fp.get("pads", {}))
+            ref_upper = ref.upper()
+            pdata = parts_catalog.get(ref, {})
+            lib_id = str(pdata.get("lib_id", "")).upper()
+            val = str(pdata.get("value", "")).upper()
+
+            if ref_upper.startswith(("J", "CONN", "HDR", "HEADER", "USB", "TERM", "JACK", "BARREL")) or "CONNECTOR" in lib_id or "HEADER" in lib_id or "USB" in lib_id:
+                self.connectors.append(ref)
+            elif ref_upper.startswith(("Y", "X")) or "CRYSTAL" in lib_id or "RESONATOR" in lib_id or "MHZ" in val:
+                crystals.append(ref)
+            elif ref_upper.startswith(("U", "IC")) or (not ref_upper.startswith(("J", "CONN", "TP", "SW", "F", "D", "R", "C", "L", "Y", "X")) and pads_count >= 4):
+                ics.append(ref)
+            elif ref_upper.startswith("C") and pads_count == 2:
+                caps.append(ref)
+
+        paired_caps = set()
+
+        # 5. Connect Crystals to Companion IC and Load Caps to Crystal
+        for y_ref in crystals:
+            y_nets = comp_nets.get(y_ref, set())
+            target_ic = None
+            for ic in ics:
+                if target_ic:
+                    break
+                ic_nets = comp_nets.get(ic, set())
+                shared = [n for n in (y_nets & ic_nets) if not is_gnd(n) and not is_power(n)]
+                if shared:
+                    target_ic = ic
+                    break
+                if part_to_group.get(y_ref) and part_to_group.get(y_ref) == part_to_group.get(ic):
+                    target_ic = ic
+
+            if target_ic:
+                prox_pairs.append((y_ref, target_ic, 5.0))
+
+            for c_ref in caps:
+                if c_ref in paired_caps:
+                    continue
+                c_nets = comp_nets.get(c_ref, set())
+                has_gnd = any(is_gnd(n) for n in c_nets)
+                shared_with_y = [n for n in (c_nets & y_nets) if not is_gnd(n)]
+                if has_gnd and shared_with_y:
+                    prox_pairs.append((c_ref, y_ref, 3.5))
+                    paired_caps.add(c_ref)
+
+        # 6. Decoupling Capacitors Pairing with Active ICs
+        for c_ref in caps:
+            if c_ref in paired_caps:
+                continue
+            c_nets = comp_nets.get(c_ref, set())
+            has_gnd = any(is_gnd(n) for n in c_nets)
+            power_nets = [n for n in c_nets if is_power(n)]
+            if not (has_gnd and power_nets):
+                continue
+
+            c_pwr = power_nets[0]
+            candidate_ics = []
+            for ic in ics:
+                ic_nets = comp_nets.get(ic, set())
+                if any(is_gnd(n) for n in ic_nets) and (c_pwr in ic_nets):
+                    candidate_ics.append(ic)
+
+            if not candidate_ics:
+                c_grp = part_to_group.get(c_ref)
+                if c_grp:
+                    candidate_ics = [ic for ic in ics if part_to_group.get(ic) == c_grp]
+
+            if candidate_ics:
+                c_grp = part_to_group.get(c_ref)
+                matched_ic = None
+                if c_grp:
+                    for ic in candidate_ics:
+                        if part_to_group.get(ic) == c_grp:
+                            matched_ic = ic
+                            break
+                if not matched_ic:
+                    matched_ic = candidate_ics[0]
+
+                ic_pads = len(self.fp_data[matched_ic].get("pads", {}))
+                max_d = 7.0 if ic_pads >= 28 else (5.0 if ic_pads >= 8 else 4.0)
+                prox_pairs.append((c_ref, matched_ic, max_d))
+                paired_caps.add(c_ref)
+
+        return prox_pairs
+
     def get_pad_pos(self, state: Dict[str, Dict[str, Any]], ref: str, pad_num: str) -> Tuple[float, float]:
         comp = state[ref]
         cx, cy = comp["x"], comp["y"]
@@ -278,23 +426,31 @@ class PlanarLayoutOptimizer:
                 if n1 != n2 and segments_intersect(p1, p2, p3, p4):
                     crossings += 1
 
-        # Decoupling Proximity Penalties (e.g. C1 near U1, C2/C3 near U1, C4/C5 near U2)
+        # Dynamic Decoupling & Proximity Penalties
         decoupling_penalty = 0.0
-        prox_pairs = [
-            ("C1", "U1", 5.0),
-            ("C2", "U1", 5.0),
-            ("C3", "U1", 5.0),
-            ("C4", "U2", 6.0),
-            ("C5", "U2", 6.0),
-        ]
-        for c_ref, u_ref, max_dist in prox_pairs:
+        for c_ref, u_ref, max_dist in self.prox_pairs:
             if c_ref in state and u_ref in state:
                 dist = math.hypot(state[c_ref]["x"] - state[u_ref]["x"], state[c_ref]["y"] - state[u_ref]["y"])
                 if dist > max_dist:
                     decoupling_penalty += (dist - max_dist) * 20.0
 
-        # 4. Total Cost Calculation
-        total_cost = (crossings * 5000.0) + (total_hpwl * 2.0) + (overlaps * 100000.0) + decoupling_penalty
+        # 4. Perimeter Connector Edge Constraint Penalty
+        edge_penalty = 0.0
+        for c_ref in getattr(self, "connectors", []):
+            if c_ref in state:
+                c = state[c_ref]
+                w = self.fp_data[c_ref]["width"]
+                h = self.fp_data[c_ref]["height"]
+                d_left = abs(c["x"] - (self.min_x + w / 2.0))
+                d_right = abs((self.max_x - w / 2.0) - c["x"])
+                d_top = abs(c["y"] - (self.min_y + h / 2.0))
+                d_bottom = abs((self.max_y - h / 2.0) - c["y"])
+                min_edge = min(d_left, d_right, d_top, d_bottom)
+                if min_edge > 2.5:
+                    edge_penalty += (min_edge - 2.5) * 50000.0
+
+        # 5. Total Cost Calculation
+        total_cost = (crossings * 5000.0) + (total_hpwl * 2.0) + (overlaps * 100000.0) + decoupling_penalty + edge_penalty
         return total_cost, crossings, total_hpwl, overlaps
 
     def optimize(
@@ -418,29 +574,159 @@ if __name__ == "__main__":
     parser.add_argument("project_path", nargs="?", default="projects/sample_pulse_generator", help="Path to KiCad project directory")
     parser.add_argument("--steps", type=int, default=6000, help="Number of annealing iterations (default: 6000)")
     parser.add_argument("--temp", type=float, default=70.0, help="Initial temperature (default: 70.0)")
+    parser.add_argument("--no-commit", action="store_true", help="Do not commit layout to .kicad_pcb")
     args = parser.parse_args()
 
     proj = Path(args.project_path)
     ops_file = proj / "kaibridge_dump" / "ops.json"
     if not ops_file.exists():
-        print(f"Error: Ops file not found at {ops_file}")
-        sys.exit(1)
-
-    with open(ops_file, "r") as f:
-        init_ops = json.load(f)
+        ops_file = proj / "ops.json"
 
     bw, bh = 55.0, 40.0
-    for op in init_ops:
-        if op.get("op") == "board.set_size":
-            bw = float(op.get("width", bw))
-            bh = float(op.get("height", bh))
-            break
+    ox, oy = 100.0, 100.0
+    init_ops = []
 
-    opt = PlanarLayoutOptimizer(proj, board_width=bw, board_height=bh)
+    if ops_file.exists():
+        try:
+            with open(ops_file, "r", encoding="utf-8") as f:
+                init_ops = json.load(f)
+            for op in init_ops:
+                if op.get("op") == "board.set_size":
+                    bw = float(op.get("width", op.get("width_mm", bw)))
+                    bh = float(op.get("height", op.get("height_mm", bh)))
+                    if "center_x_mm" in op or "center_x" in op:
+                        cx = float(op.get("center_x_mm", op.get("center_x", bw / 2.0)))
+                        cy = float(op.get("center_y_mm", op.get("center_y", bh / 2.0)))
+                        ox = cx - bw / 2.0
+                        oy = cy - bh / 2.0
+                    else:
+                        ox = float(op.get("origin_x", op.get("origin_x_mm", op.get("x", ox))))
+                        oy = float(op.get("origin_y", op.get("origin_y_mm", op.get("y", oy))))
+                    break
+        except Exception:
+            init_ops = []
+
+    opt = PlanarLayoutOptimizer(proj, board_width=bw, board_height=bh, origin_x=ox, origin_y=oy)
+
+    # If ops_file was missing or lacked footprint placement ops, auto-seed initial grid placement
+    has_places = any(op.get("op") in ("footprint.place", "place") for op in init_ops)
+    if not has_places:
+        print("[*] No existing footprint placement found in ops.json -- auto-seeding 4-Zone floorplan layout...")
+        init_ops = [{"op": "board.set_size", "width": bw, "height": bh, "origin_x": ox, "origin_y": oy}]
+
+        # Classify connectors vs core components
+        input_conns = []
+        output_conns = []
+        other_conns = []
+        core_parts = []
+
+        for ref in opt.fp_data:
+            ref_u = ref.upper()
+            pdata = opt.design.get("parts", {}).get(ref, {})
+            val_u = str(pdata.get("value", "")).upper()
+            lib_u = str(pdata.get("lib_id", "")).upper()
+            is_conn = ref_u.startswith(("J", "CONN", "USB", "HDR", "HEADER", "JACK", "TERM")) or "CONNECTOR" in lib_u or "HEADER" in lib_u or "USB" in lib_u
+
+            if is_conn:
+                if any(k in ref_u or k in val_u or k in lib_u for k in ("USB", "IN", "VBUS", "VIN", "PWR_IN", "5V_IN", "DC")):
+                    input_conns.append(ref)
+                elif any(k in ref_u or k in val_u or k in lib_u for k in ("OUT", "HDR", "HEADER", "PIN", "GPIO", "BUS", "CAN", "RS485")):
+                    output_conns.append(ref)
+                else:
+                    other_conns.append(ref)
+            else:
+                core_parts.append(ref)
+
+        # Distribute unclassified connectors across West (Input) and East (Output) edges
+        if not input_conns and other_conns:
+            input_conns.append(other_conns.pop(0))
+        if not output_conns and other_conns:
+            output_conns.append(other_conns.pop(0))
+
+        # 1. Place Input Connectors on West (Left) Edge, facing outward
+        y_step = bh / (len(input_conns) + 1)
+        for idx, ref in enumerate(input_conns):
+            fp_w = opt.fp_data[ref]["width"]
+            px = round((ox + opt.margin + fp_w / 2.0) * 2.0) / 2.0
+            py = round((oy + (idx + 1) * y_step) * 2.0) / 2.0
+            pdata = opt.design.get("parts", {}).get(ref, {})
+            is_usb = "USB" in ref.upper() or "USB" in str(pdata).upper()
+            rot = 270 if is_usb else 180
+            init_ops.append({
+                "op": "footprint.place",
+                "ref": ref,
+                "x": px,
+                "y": py,
+                "rot": rot,
+                "locked": True
+            })
+
+        # 2. Place Output Connectors on East (Right) Edge, facing outward
+        y_step_out = bh / (len(output_conns) + 1)
+        for idx, ref in enumerate(output_conns):
+            fp_w = opt.fp_data[ref]["width"]
+            px = round((ox + bw - opt.margin - fp_w / 2.0) * 2.0) / 2.0
+            py = round((oy + (idx + 1) * y_step_out) * 2.0) / 2.0
+            init_ops.append({
+                "op": "footprint.place",
+                "ref": ref,
+                "x": px,
+                "y": py,
+                "rot": 270,
+                "locked": True
+            })
+
+        # 3. Place remaining other connectors distributed evenly on North / South edges
+        x_step_other = bw / (len(other_conns) + 1) if other_conns else bw / 2.0
+        for idx, ref in enumerate(other_conns):
+            fp_h = opt.fp_data[ref]["height"]
+            px = round((ox + (idx + 1) * x_step_other) * 2.0) / 2.0
+            py = round((oy + opt.margin + fp_h / 2.0) * 2.0) / 2.0
+            init_ops.append({
+                "op": "footprint.place",
+                "ref": ref,
+                "x": px,
+                "y": py,
+                "rot": 0,
+                "locked": True
+            })
+
+        # 4. Place Core ICs and Passives in center corridor (Zone 2 & 3)
+        cols = 3
+        avail_w = max(10.0, bw - 2 * opt.margin - 14.0)
+        spacing_x = avail_w / max(1, cols)
+        spacing_y = 6.0
+        c_idx = 0
+        r_idx = 0
+        for ref in core_parts:
+            px = round((ox + opt.margin + 8.0 + (c_idx + 0.5) * spacing_x) * 2.0) / 2.0
+            py = round((oy + opt.margin + (r_idx + 0.5) * spacing_y) * 2.0) / 2.0
+            init_ops.append({
+                "op": "footprint.place",
+                "ref": ref,
+                "x": px,
+                "y": py,
+                "rot": 0
+            })
+            c_idx += 1
+            if c_idx >= cols:
+                c_idx = 0
+                r_idx += 1
+
     best_ops, crossings = opt.optimize(init_ops, steps=args.steps, temp_init=args.temp)
-    
-    out_ops_file = proj / "kaibridge_dump" / "ops.json"
-    with open(out_ops_file, "w") as f:
+
+    dump_dir = proj / "kaibridge_dump"
+    dump_dir.mkdir(parents=True, exist_ok=True)
+    out_ops_file = dump_dir / "ops.json"
+    with open(out_ops_file, "w", encoding="utf-8") as f:
         json.dump(best_ops, f, indent=2)
     print(f"\nSaved optimized ops to: {out_ops_file}")
+
+    if not args.no_commit:
+        from kaibridge.pcb.layout import apply_ops
+        commit_res = apply_ops(proj, best_ops)
+        if commit_res.get("success"):
+            print("  [OK] Successfully committed optimized layout directly into .kicad_pcb.")
+        else:
+            print(f"  [Warning] Could not commit ops to PCB: {commit_res.get('error')}")
 

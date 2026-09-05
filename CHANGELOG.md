@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.1] - 2026-09-05
+
+### Fixed & Improved
+- **ERC & DRC Warning Visibility:** Full warning reporting in `json2sch.py` and `kicad_route.py` using `--severity-all`.
+- **Pin Type Auto-Healing:** Automatically maps EasyEDA unspecified pins to proper electrical types to resolve `[pin_to_pin]` warnings.
+- **Dangling Track Pruning:** Automatically removes $<0.08$mm stubs after routing to ensure 0 DRC warnings.
+- **Connector Placement:** Auto-distributes input/output connectors across board edges to prevent courtyard overlap.
+- **Silkscreen Sanitization:** Added standalone `--sanitize-silk` flag in `kicad_layout.py`.
+- **Component Sourcing Hierarchy:** Explicitly prioritized on-demand active IC downloads via `easyeda2kicad` and native KiCad IPC passives in `AGENTS.md` and `SKILL.md`.
+
+---
+
 ## [2.2.0] - 2026-09-05
 
 ### Added

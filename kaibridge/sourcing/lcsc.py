@@ -134,6 +134,13 @@ def fetch_lcsc(project_dir: str | Path, lcsc_id: str, lib_name: str = "kaibridge
 
     pins_data = {}
     if created_sym:
+        sym_lib_path = libs_dir / f"{lib_name}.kicad_sym"
+        if sym_lib_path.exists():
+            try:
+                from ..schematic.compiler import heal_symbol_pins
+                heal_symbol_pins(sym_lib_path)
+            except Exception:
+                pass
         try:
             idx = LibIndex(proj_path)
             sym_obj = idx.symbol(f"{lib_name}:{created_sym}")

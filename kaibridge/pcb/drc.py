@@ -70,18 +70,35 @@ def run_drc(project_dir: str | Path) -> Dict[str, Any]:
     clearance_errors = [v for v in violations if v.get("severity") == "error"]
     clearance_warnings = [v for v in violations if v.get("severity") == "warning"]
 
+    def _fmt_violation(v):
+        vtype = v.get("type", "violation")
+        vdesc = v.get("description", "")
+        items = v.get("items", [])
+        item_strs = [i.get("description", "") for i in items if i.get("description")]
+        if item_strs:
+            return f"[{vtype}] {vdesc} ({' <-> '.join(item_strs)})"
+        return f"[{vtype}] {vdesc}"
+
+    error_violations = [_fmt_violation(v) for v in clearance_errors]
+    warning_violations = [_fmt_violation(v) for v in clearance_warnings]
+
     passed = len(clearance_errors) == 0 and len(unconnected) == 0
 
     return {
         "success": passed,
         "passed": passed,
         "drc_report_file": str(drc_report_file),
+        "total_errors": len(clearance_errors),
+        "total_warnings": len(clearance_warnings),
+        "total_unconnected": len(unconnected),
         "clearance_errors": len(clearance_errors),
         "geometric_clearance_errors": len(clearance_errors),
         "clearance_warnings": len(clearance_warnings),
         "geometric_clearance_warnings": len(clearance_warnings),
         "unconnected": len(unconnected),
         "unconnected_airwires_count": len(unconnected),
+        "error_violations": error_violations,
+        "warning_violations": warning_violations,
         "violations": violations,
         "unconnected_items": unconnected
     }

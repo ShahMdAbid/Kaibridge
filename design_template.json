@@ -103,7 +103,7 @@
 
   "power_flags": ["GND", "VBUS", "VIN"],
 
-  "no_connect": ["J1.SHIELD", "U2.38"],
+  "no_connect": ["J1.SH", "U2.38"],
 
   "checks": {
     "unused_pins": "warn",

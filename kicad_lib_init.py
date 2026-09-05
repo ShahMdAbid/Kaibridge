@@ -90,7 +90,7 @@ def upsert_table(file: Path, tag, version, name, uri_tpl):
     file.write_text(text[:cut] + lib_entry(name, uri_tpl) + text[cut:], encoding="utf-8")
     return f"{file.name}: added '{name}' (backup: {file.name}.bak)"
 
-def init_libraries(project_dir: str | Path, name: str = "kaibridge"):
+def init_libraries(project_dir: str | Path, name: str = "kaibridge", layers: int = 2):
     name = name.strip()
     if not name or "/" in name or "\\" in name:
         raise ValueError("library name must be a plain name with no path separators")
@@ -113,7 +113,7 @@ def init_libraries(project_dir: str | Path, name: str = "kaibridge"):
             "min_connection": 0.0,
             "min_copper_edge_clearance": 0.15,
             "min_groove_width": 0.0,
-            "min_hole_clearance": 0.25,
+            "min_hole_clearance": 0.15,
             "min_hole_to_hole": 0.25,
             "min_microvia_diameter": 0.2,
             "min_microvia_drill": 0.1,
@@ -121,7 +121,7 @@ def init_libraries(project_dir: str | Path, name: str = "kaibridge"):
             "min_silk_clearance": 0.0,
             "min_text_height": 0.8,
             "min_text_thickness": 0.08,
-            "min_through_hole_clearance": 0.2,
+            "min_through_hole_clearance": 0.15,
             "min_through_hole_diameter": 0.3,
             "min_track_width": 0.15,
             "min_via_annular_width": 0.1,
@@ -137,7 +137,11 @@ def init_libraries(project_dir: str | Path, name: str = "kaibridge"):
         }
         pro_file.write_text(json.dumps(pro_content, indent=2), encoding="utf-8")
         if not pcb_file.exists():
-            pcb_file.write_text(f'(kicad_pcb (version 20260206) (generator "pcbnew") (generator_version "10.0")\n  (general (thickness 1.6))\n  (paper "A4")\n  (layers\n    (0 "F.Cu" signal)\n    (31 "B.Cu" signal)\n    (32 "B.Adhes" user "B.Adhesive")\n    (33 "F.Adhes" user "F.Adhesive")\n    (34 "B.Paste" user)\n    (35 "F.Paste" user)\n    (36 "B.SilkS" user "B.Silkscreen")\n    (37 "F.SilkS" user "F.Silkscreen")\n    (38 "B.Mask" user)\n    (39 "F.Mask" user)\n    (40 "Dwgs.User" user "User.Drawings")\n    (41 "Cmts.User" user "User.Comments")\n    (42 "Eco1.User" user "User.Eco1")\n    (43 "Eco2.User" user "User.Eco2")\n    (44 "Edge.Cuts" user)\n    (45 "Margin" user)\n    (46 "B.CrtYd" user "B.Courtyard")\n    (47 "F.CrtYd" user "F.Courtyard")\n    (48 "B.Fab" user)\n    (49 "F.Fab" user)\n  )\n)\n', encoding="utf-8")
+            if layers == 4:
+                layers_sexpr = '    (0 "F.Cu" signal)\n    (1 "In1.Cu" power "GND")\n    (2 "In2.Cu" power "Power")\n    (31 "B.Cu" signal)\n'
+            else:
+                layers_sexpr = '    (0 "F.Cu" signal)\n    (31 "B.Cu" signal)\n'
+            pcb_file.write_text(f'(kicad_pcb (version 20260206) (generator "pcbnew") (generator_version "10.0")\n  (general (thickness 1.6))\n  (paper "A4")\n  (layers\n{layers_sexpr}    (32 "B.Adhes" user "B.Adhesive")\n    (33 "F.Adhes" user "F.Adhesive")\n    (34 "B.Paste" user)\n    (35 "F.Paste" user)\n    (36 "B.SilkS" user "B.Silkscreen")\n    (37 "F.SilkS" user "F.Silkscreen")\n    (38 "B.Mask" user)\n    (39 "F.Mask" user)\n    (40 "Dwgs.User" user "User.Drawings")\n    (41 "Cmts.User" user "User.Comments")\n    (42 "Eco1.User" user "User.Eco1")\n    (43 "Eco2.User" user "User.Eco2")\n    (44 "Edge.Cuts" user)\n    (45 "Margin" user)\n    (46 "B.CrtYd" user "B.Courtyard")\n    (47 "F.CrtYd" user "F.Courtyard")\n    (48 "B.Fab" user)\n    (49 "F.Fab" user)\n  )\n)\n', encoding="utf-8")
 
     cfg = load_paths("kicad_config_dir", "kicad_symbol_dir")
     table_version, symbol_version = detect_versions(cfg)
@@ -162,18 +166,20 @@ def init_libraries(project_dir: str | Path, name: str = "kaibridge"):
         "libs_dir": str(libs),
         "symbol_file": str(symbol_file),
         "pretty_dir": str(libs / f"{name}.pretty"),
-        "3dshapes_dir": str(libs / f"{name}.3dshapes")
+        "3dshapes_dir": str(libs / f"{name}.3dshapes"),
+        "layers": layers
     }
 
 def main():
     ap = argparse.ArgumentParser(description="Set up project libraries for a KiCad project.")
     ap.add_argument("project_dir", help="existing KiCad project folder")
     ap.add_argument("-n", "--name", default="kaibridge", help="project library name")
+    ap.add_argument("--layers", type=int, choices=[2, 4], default=2, help="Number of copper layers (2 or 4, default: 2)")
     a = ap.parse_args()
 
     try:
-        res = init_libraries(a.project_dir, a.name)
-        print(f"[*] Initialized KiCad libraries successfully in: {res['project']}")
+        res = init_libraries(a.project_dir, a.name, layers=a.layers)
+        print(f"[*] Initialized KiCad libraries successfully in: {res['project']} [{res['layers']}-Layer Stackup]")
         print(f"  ok  {res['symbol_file']}")
         print(f"  ok  {res['pretty_dir']}")
         print(f"  ok  {res['3dshapes_dir']}")

@@ -1,14 +1,14 @@
-#Kaibridge 2.0 Command & Tool Reference
+# Kaibridge 2.0 Command & Tool Reference
 
-This document describes the **22 dedicated MCP tools** exposed by `server.py` via native STDIO JSON-RPC 2.0. These form the primary autonomous interface for AI agents operating in Antigravity IDE, Claude Desktop, Cursor, or any MCP-compatible environment.
+This document describes the **25 dedicated MCP tools** (23 canonical + 2 explicit aliases) exposed by `server.py` via native STDIO JSON-RPC 2.0. These form the primary autonomous interface for AI agents operating in Antigravity IDE, Claude Desktop, Cursor, or any MCP-compatible environment.
 
 ---
 
-##1. Complete MCP Tool Catalog (22 Tools)
+## 1. Complete MCP Tool Catalog (25 Tools)
 
 All project-level tools accept `project_dir` as their first parameter (absolute path to the KiCad project folder).
 
-###A. Project & Component Sourcing (4 Tools)
+### A. Project & Component Sourcing (4 Tools)
 | Tool | Purpose |
 |---|---|
 | `kaibridge_init_project` | Create project folder, `.kicad_pro`, empty `.kicad_pcb`, sym-lib/fp-lib tables, and `kaibridge_dump/`. |
@@ -16,48 +16,54 @@ All project-level tools accept `project_dir` as their first parameter (absolute 
 | `kaibridge_fetch_lcsc_component` | Download symbol, footprint, and 3D model from EasyEDA/LCSC into local project libraries with retry. |
 | `kaibridge_query_symbol_pins` | Extract exact pin numbers, names, electrical types, and default footprints from `.kicad_sym`. |
 
-###B. Schematic Compilation & Preview (2 Tools)
+### B. Schematic Compilation & Preview (2 Tools)
 | Tool | Purpose |
 |---|---|
 | `kaibridge_build_schematic` | Compile declarative `design.json` into hierarchical `.kicad_sch` with netclasses, and run headless ERC. |
 | `kaibridge_render_schematic_preview` | Export high-resolution vector SVG snapshot of compiled schematic for multimodal visual review. |
 
-###C. Headless PCB Layout & Physics (6 Tools)
+### C. Headless PCB Layout & Physics (7 Tools)
 | Tool | Purpose |
 |---|---|
 | `kaibridge_sync_to_pcb` | Headless F8: instantiate footprints into `.kicad_pcb` and bind nets/ratsnest. |
+| `kaibridge_optimize_planar_layout` | Simulated Annealing macro-optimizer: solves Kruskal MST crossings (>85% reduction), dynamically pairs decoupling caps/crystals, auto-seeds from board if `ops.json` absent, and auto-commits to board. |
 | `kaibridge_apply_ops_layout` | Apply discrete placement operations (`ops.json`) with 0.5mm grid snap and in-memory `dry_run` simulation. |
 | `kaibridge_autoplace_pcb` | Execute geometric component autoplacement based on net topology and connector perimeters. |
 | `kaibridge_auto_relax_layout` | Physics-based 2D spring repulsion solver to iteratively separate overlapping component courtyards. |
 | `kaibridge_render_pcb_preview` | Export top-view PNG and vector SVG layout snapshots, returning structural board analytics. |
-| `kaibridge_audit_placement` | Audit component boundaries, edge clearance violations, and courtyard collisions against the Geometry Gate. |
+| `kaibridge_placement_audit` | Audit component boundaries, edge clearance violations, and courtyard collisions against the Geometry Gate (alias: `kaibridge_audit_placement`). |
 
-###D. Autorouting & Copper Zones (3 Tools)
+### D. Autorouting & Copper Zones (3 Tools)
 | Tool | Purpose |
 |---|---|
 | `kaibridge_route_pcb` | Headless Freerouting 2.4.1 autorouting with DSN track width audit, 150µm edge keepout, and strict DRC. |
 | `kaibridge_unroute_pcb` | Rip up / delete copper tracks, vias, and optional copper zones. |
 | `kaibridge_add_ground_plane` | Add and fill ground copper zones (`B.Cu` / `F.Cu`) with exact `Edge.Cuts` boundary clipping and solid thermal relief (`ZONE_CONNECTION_FULL`). |
 
-###E. Structural Introspection & Rollback (5 Tools)
+### E. Structural Introspection & Rollback (4 Tools)
 | Tool | Purpose |
 |---|---|
-| `kaibridge_inspect_board` | Deep structural inspection of footprints, tracks, vias, zones, and layer dimensions in memory. |
-| `kaibridge_get_board_state` | Extract lightweight JSON summary of board components, bounding boxes, and routing status. |
+| `kaibridge_get_board_state` | Extract structural JSON summary of board components, bounding boxes, and routing status (alias: `kaibridge_inspect_board`). |
 | `kaibridge_snapshot_board` | Create timestamped board snapshot with SHA-256 fingerprint for recovery. |
 | `kaibridge_diff_board` | Compute spatial and topological diff between two board snapshots or against active board. |
 | `kaibridge_restore_snapshot` | Deterministic rollback to a previous snapshot state if layout or routing fails. |
 
-###F. Live API Grounding & Verification (2 Tools)
+### F. Live API Grounding & Verification (2 Tools)
 | Tool | Purpose |
 |---|---|
 | `kaibridge_api_oracle` | Live introspection of KiCad host `pcbnew.py` C++ SWIG wrapper (<4ms) to query methods, classes, and constants. |
 | `kaibridge_run_drc` | Run headless Design Rules Check via `kicad-cli` and parse clearance violations and unrouted airwires. |
 
-###G. Production & Manufacturing (1 Tool)
+### G. Production & Manufacturing (1 Tool)
 | Tool | Purpose |
 |---|---|
-| `kaibridge_export_production` | Generate 100% factory-ready JLCPCB bundle (Gerber ZIP, Drill, BOM CSV with LCSC IDs, and CPL Pick & Place CSV). |
+| `kaibridge_export_production` | Generate 100% factory-ready JLCPCB bundle (Gerber ZIP, Drill, BOM CSV with LCSC IDs [filtering DNP parts], and CPL Pick & Place CSV). |
+
+### H. Canonical Tool Aliases (2 Tools)
+| Alias Tool | Canonical Function | Note |
+|---|---|---|
+| `kaibridge_inspect_board` | `kaibridge_get_board_state` | Exact alias for structural inspection. |
+| `kaibridge_audit_placement` | `kaibridge_placement_audit` | Exact alias for courtyard/clearance audit. |
 
 ---
 

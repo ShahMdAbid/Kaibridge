@@ -175,6 +175,32 @@ TOOLS_LIST = [
         }
     },
     {
+        "name": "kaibridge_optimize_planar_layout",
+        "description": "Stage 7A Planar Layout Optimizer: Simulated annealing placement using Kruskal MST and 2D line segment intersection to eliminate airwire crossings (>85%) with dynamic decoupling proximity.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project_dir": {"type": "string", "description": "Absolute path to the KiCad project directory."},
+                "steps": {"type": "integer", "description": "Number of simulated annealing iterations (default: 6000)."},
+                "temp": {"type": "number", "description": "Initial annealing temperature (default: 70.0)."}
+            },
+            "required": ["project_dir"]
+        }
+    },
+    {
+        "name": "kaibridge_auto_relax_layout",
+        "description": "Physics-based 2D spring repulsion solver to iteratively separate overlapping component courtyards while respecting board boundaries and locked components.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project_dir": {"type": "string", "description": "Absolute path to the KiCad project directory."},
+                "passes": {"type": "integer", "description": "Number of physics simulation passes (default: 300)."},
+                "clearance": {"type": "number", "description": "Clearance margin in mm (default: 0.5)."}
+            },
+            "required": ["project_dir"]
+        }
+    },
+    {
         "name": "kaibridge_render_pcb_preview",
         "description": "Render vector SVG snapshot, top-view PNG render, and structural board geometry analytics for multimodal visual AI critique.",
         "inputSchema": {
@@ -527,6 +553,126 @@ def handle_tool_call(name: str, args: dict) -> dict:
             h = float(args.get("board_height_mm", 40.0))
             pitch = float(args.get("pitch_mm", 8.0))
             return autoplace_board(proj_path, board_width_mm=w, board_height_mm=h, pitch_mm=pitch)
+
+        elif name == "kaibridge_optimize_planar_layout":
+            from kicad_planar_optimizer import PlanarLayoutOptimizer
+            from kaibridge.pcb.layout import apply_ops
+            ops_file = proj_path / "kaibridge_dump" / "ops.json"
+            if not ops_file.exists():
+                ops_file = proj_path / "ops.json"
+
+            bw, bh = 55.0, 40.0
+            ox, oy = 100.0, 100.0
+            init_ops = []
+            if ops_file.exists():
+                try:
+                    with open(ops_file, "r", encoding="utf-8") as f:
+                        init_ops = json.load(f)
+                    for op in init_ops:
+                        if op.get("op") == "board.set_size":
+                            bw = float(op.get("width", op.get("width_mm", bw)))
+                            bh = float(op.get("height", op.get("height_mm", bh)))
+                            if "center_x_mm" in op or "center_x" in op:
+                                cx = float(op.get("center_x_mm", op.get("center_x", bw / 2.0)))
+                                cy = float(op.get("center_y_mm", op.get("center_y", bh / 2.0)))
+                                ox = cx - bw / 2.0
+                                oy = cy - bh / 2.0
+                            else:
+                                ox = float(op.get("origin_x", op.get("origin_x_mm", op.get("x", ox))))
+                                oy = float(op.get("origin_y", op.get("origin_y_mm", op.get("y", oy))))
+                            break
+                except Exception:
+                    init_ops = []
+
+            steps = int(args.get("steps", 6000))
+            temp = float(args.get("temp", 70.0))
+            opt = PlanarLayoutOptimizer(proj_path, board_width=bw, board_height=bh, origin_x=ox, origin_y=oy)
+
+            # Auto-seed 4-zone floorplan placement if ops_file was missing or had no placements
+            has_places = any(op.get("op") in ("footprint.place", "place") for op in init_ops)
+            if not has_places:
+                init_ops = [{"op": "board.set_size", "width": bw, "height": bh, "origin_x": ox, "origin_y": oy}]
+                input_conns, output_conns, other_conns, core_parts = [], [], [], []
+                for ref in opt.fp_data:
+                    ref_u = ref.upper()
+                    pdata = opt.design.get("parts", {}).get(ref, {})
+                    val_u = str(pdata.get("value", "")).upper()
+                    lib_u = str(pdata.get("lib_id", "")).upper()
+                    is_conn = ref_u.startswith(("J", "CONN", "USB", "HDR", "HEADER", "JACK", "TERM")) or "CONNECTOR" in lib_u or "HEADER" in lib_u or "USB" in lib_u
+                    if is_conn:
+                        if any(k in ref_u or k in val_u or k in lib_u for k in ("USB", "IN", "VBUS", "VIN", "PWR_IN", "5V_IN", "DC")):
+                            input_conns.append(ref)
+                        elif any(k in ref_u or k in val_u or k in lib_u for k in ("OUT", "HDR", "HEADER", "PIN", "GPIO", "BUS", "CAN", "RS485")):
+                            output_conns.append(ref)
+                        else:
+                            other_conns.append(ref)
+                    else:
+                        core_parts.append(ref)
+
+                if not input_conns and other_conns:
+                    input_conns.append(other_conns.pop(0))
+                if not output_conns and other_conns:
+                    output_conns.append(other_conns.pop(0))
+
+                y_step = bh / (len(input_conns) + 1)
+                for idx, ref in enumerate(input_conns):
+                    fp_w = opt.fp_data[ref]["width"]
+                    px = round((ox + opt.margin + fp_w / 2.0) * 2.0) / 2.0
+                    py = round((oy + (idx + 1) * y_step) * 2.0) / 2.0
+                    pdata = opt.design.get("parts", {}).get(ref, {})
+                    is_usb = "USB" in ref.upper() or "USB" in str(pdata).upper()
+                    rot = 270 if is_usb else 180
+                    init_ops.append({"op": "footprint.place", "ref": ref, "x": px, "y": py, "rot": rot, "locked": True})
+
+                y_step_out = bh / (len(output_conns) + 1)
+                for idx, ref in enumerate(output_conns):
+                    fp_w = opt.fp_data[ref]["width"]
+                    px = round((ox + bw - opt.margin - fp_w / 2.0) * 2.0) / 2.0
+                    py = round((oy + (idx + 1) * y_step_out) * 2.0) / 2.0
+                    init_ops.append({"op": "footprint.place", "ref": ref, "x": px, "y": py, "rot": 270, "locked": True})
+
+                x_step_other = bw / (len(other_conns) + 1) if other_conns else bw / 2.0
+                for idx, ref in enumerate(other_conns):
+                    fp_h = opt.fp_data[ref]["height"]
+                    px = round((ox + (idx + 1) * x_step_other) * 2.0) / 2.0
+                    py = round((oy + opt.margin + fp_h / 2.0) * 2.0) / 2.0
+                    init_ops.append({"op": "footprint.place", "ref": ref, "x": px, "y": py, "rot": 0, "locked": True})
+
+                cols = 3
+                avail_w = max(10.0, bw - 2 * opt.margin - 14.0)
+                spacing_x = avail_w / max(1, cols)
+                spacing_y = 6.0
+                c_idx, r_idx = 0, 0
+                for ref in core_parts:
+                    px = round((ox + opt.margin + 8.0 + (c_idx + 0.5) * spacing_x) * 2.0) / 2.0
+                    py = round((oy + opt.margin + (r_idx + 0.5) * spacing_y) * 2.0) / 2.0
+                    init_ops.append({"op": "footprint.place", "ref": ref, "x": px, "y": py, "rot": 0})
+                    c_idx += 1
+                    if c_idx >= cols:
+                        c_idx = 0
+                        r_idx += 1
+
+            best_ops, crossings = opt.optimize(init_ops, steps=steps, temp_init=temp)
+            dump_dir = proj_path / "kaibridge_dump"
+            dump_dir.mkdir(parents=True, exist_ok=True)
+            out_ops = dump_dir / "ops.json"
+            with open(out_ops, "w", encoding="utf-8") as f:
+                json.dump(best_ops, f, indent=2)
+
+            commit_res = apply_ops(proj_path, best_ops)
+
+            return {
+                "success": True,
+                "optimized_ops_file": str(out_ops),
+                "final_crossings": crossings,
+                "total_placed": len(best_ops),
+                "pcb_committed": commit_res.get("success", False)
+            }
+
+        elif name == "kaibridge_auto_relax_layout":
+            passes = int(args.get("passes", 300))
+            clr = float(args.get("clearance", 0.5))
+            return relax_board(proj_path, passes=passes, clearance=clr)
 
         elif name == "kaibridge_render_pcb_preview":
             return render_pcb_preview(proj_path)

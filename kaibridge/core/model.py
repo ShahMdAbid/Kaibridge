@@ -146,10 +146,19 @@ def resolve_pin(part, token, where):
     hits = [n for n, p in pins.items() if p.name == token]
     if len(hits) == 1:
         return hits[0]
-    if len(hits) > 1:
+    # Case-insensitive fallback to prevent spurious crashes when case differs (e.g. Shield vs SHIELD)
+    lower_token = token.lower()
+    lower_pin_hits = [n for n in pins if n.lower() == lower_token]
+    if len(lower_pin_hits) == 1:
+        return lower_pin_hits[0]
+    lower_name_hits = [n for n, p in pins.items() if p.name.lower() == lower_token]
+    if len(lower_name_hits) == 1:
+        return lower_name_hits[0]
+    if len(hits) > 1 or len(lower_name_hits) > 1:
+        ambiguous = hits or lower_name_hits
         raise DesignError(
             f"{where}: pin name '{token}' is ambiguous on {part.ref} "
-            f"(pins {', '.join(sorted(hits, key=_natural))}) -- use the number")
+            f"(pins {', '.join(sorted(ambiguous, key=_natural))}) -- use the number")
     known = ", ".join(sorted(pins, key=_natural)[:14])
     more = " ..." if len(pins) > 14 else ""
     raise DesignError(f"{where}: {part.ref} ({part.lib_id}) has no pin '{token}'. "
@@ -554,7 +563,7 @@ def load(raw, lib):
     _validate(design, lib)
     return design
 
-def sidecar(design):
+def sidecar(design, *args, **kwargs):
     """kaibridge_build.json -- the resolved design metadata sidecar."""
     return {
         "schema": 3,

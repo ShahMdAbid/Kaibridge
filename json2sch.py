@@ -38,6 +38,10 @@ def main(argv=None):
                     help="do not modify .kicad_pro netclasses")
     ap.add_argument("--erc", action="store_true",
                     help="run KiCad ERC check automatically and output report")
+    ap.add_argument("--heal-pins", action="store_true", default=True,
+                    help="auto-heal unspecified pin types in project libraries (default: true)")
+    ap.add_argument("--no-heal-pins", action="store_false", dest="heal_pins",
+                    help="do not auto-heal pin types")
     ap.add_argument("--svg", action="store_true",
                     help="also export vector SVG schematic preview to kaibridge_dump/")
     args = ap.parse_args(argv)
@@ -53,7 +57,8 @@ def main(argv=None):
         output_name=args.out,
         apply_netclasses=args.apply_netclasses,
         run_erc=args.erc,
-        dry_run=args.dry_run
+        dry_run=args.dry_run,
+        auto_heal_pins=args.heal_pins
     )
 
     if not res.get("success") and not res.get("dry_run"):
@@ -82,18 +87,34 @@ def main(argv=None):
         erc = res.get("erc", {})
         errs = erc.get("errors", 0)
         warns = erc.get("warnings", 0)
-        violations = res.get("violations", [])
+        err_violations = res.get("error_violations", []) or erc.get("error_violations", [])
+        warn_violations = res.get("warning_violations", []) or erc.get("warning_violations", [])
+
         print("\n  === ERC Verification Report ===")
         print(f"  Total Errors: {errs}, Total Warnings: {warns}")
+
         if errs > 0:
-            print("  ERRORS:")
-            for v in violations[:10]:
+            print(f"\n  [!] ERRORS ({errs}):")
+            for v in err_violations[:10]:
                 print(f"    - {v}")
-            if len(violations) > 10:
-                print(f"    ... and {len(violations) - 10} more.")
+            if len(err_violations) > 10:
+                print(f"    ... and {len(err_violations) - 10} more errors.")
+
+        if warns > 0:
+            print(f"\n  [*] WARNINGS ({warns}):")
+            for v in warn_violations[:10]:
+                print(f"    - {v}")
+            if len(warn_violations) > 10:
+                print(f"    ... and {len(warn_violations) - 10} more warnings.")
+            print("  (Notice: Pin-type warnings like 'unspecified <-> passive' are non-fatal symbol metadata warnings and do not affect PCB netlist generation or copper connectivity).")
+
+        if errs > 0:
+            print(f"\n  Status: FAILED ({errs} Errors)")
             return 1
+        elif warns > 0:
+            print(f"\n  Status: PASSED WITH WARNINGS (0 Errors, {warns} Warnings)")
         else:
-            print("  Status: PASSED (0 Errors)")
+            print(f"\n  Status: PASSED CLEAN (0 Errors, 0 Warnings)")
 
     if args.svg:
         from kaibridge.pcb.preview import render_schematic_preview

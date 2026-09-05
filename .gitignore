@@ -37,26 +37,40 @@ projects/
 .vscode/
 .idea/
 
-# Heavy binary databases (>100MB) & release archives
+# Heavy binary databases (>100MB), jars & release archives
 data/*.elib
 data/*.elib.zip
 data/easyeda-std.elib*
 *.zip
 **/*.zip
+*.jar
+**/*.jar
+
 
 # Benchmark results and test outputs
 bench/
 **/bench/
 tests/test_project_*/
 **/tests/test_project_*/
+scratch/
+**/scratch/
 
-# OS generated
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# OS generated & temp files
+.DS_Store
 Thumbs.db
 ehthumbs.db
 Desktop.ini
 $RECYCLE.BIN/
+*.tmp
+*.temp
 
 # Private notes / architectural analysis
 references/architectural_landscape_and_contributions.md
+
 
 

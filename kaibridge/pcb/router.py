@@ -251,7 +251,9 @@ def apply_dogbone_fanout(board, gnd_net_name: str = "GND") -> int:
 
 
 def _ensure_netclass_patterns(proj_path: Path, pro_file: Path):
-    """Ensures .kicad_pro has netclass_patterns so ExportSpecctraDSN writes differential track widths."""
+    """Ensures .kicad_pro has netclass_patterns so ExportSpecctraDSN writes differential track widths.
+    Also auto-clamps Power netclasses for fine-pitch ICs to prevent pad entry clearance deadlocks.
+    """
     try:
         pro_data = json.loads(pro_file.read_text(encoding="utf-8"))
         ns = pro_data.setdefault("net_settings", {})
@@ -270,6 +272,25 @@ def _ensure_netclass_patterns(proj_path: Path, pro_file: Path):
                     power_flags=d.get("power_flags", [])
                 )
                 _update_netclasses_in_pro(pro_file, d.get("netclasses", {}), design=proxy)
+                pro_data = json.loads(pro_file.read_text(encoding="utf-8"))
+
+        # Auto-clamp Power netclass width if fine-pitch footprints exist on PCB
+        pcb_file = proj_path / f"{pro_file.stem}.kicad_pcb"
+        if pcb_file.exists():
+            pcb_text = pcb_file.read_text(encoding="utf-8", errors="replace")
+            if any(kw in pcb_text.upper() for kw in ("LQFP", "QFN", "TSSOP", "DFN", "BGA", "P0.5", "P0.4", "P0.35")):
+                ns = pro_data.setdefault("net_settings", {})
+                classes = ns.setdefault("classes", [])
+                changed = False
+                for c in classes:
+                    if c.get("name") == "Power" and float(c.get("track_width", 0)) > 0.25:
+                        orig_w = c["track_width"]
+                        c["track_width"] = 0.25
+                        c["clearance"] = min(float(c.get("clearance", 0.2)), 0.20)
+                        print(f"[*] Adaptive Router: Auto-clamped Power track width from {orig_w}mm to 0.25mm (clearance: 0.20mm) for fine-pitch IC.")
+                        changed = True
+                if changed:
+                    pro_file.write_text(json.dumps(pro_data, indent=2), encoding="utf-8")
     except Exception:
         pass
 
@@ -281,11 +302,14 @@ def route_board(
     copper_edge_clearance_um: int = 150,
     strict_drc: bool = True,
     max_passes: Optional[int] = None,
-    fanout_first: bool = True
+    fanout_first: Optional[bool] = None,
+    strategy: str = "auto"
 ) -> Dict[str, Any]:
     """Exports DSN, runs Java Freerouting v2.4.1 with robust edge clearance and strict DRC,
-    and imports SES tracks into the board. When fanout_first=True, pre-places Dog-Bone GND vias
-    and isolates GND to achieve zero signal vias.
+    and imports SES tracks into the board.
+    Supports Adaptive Routing:
+    - Auto-detects Strategy 1 (Fanout-First) for discrete/simple boards vs Strategy 2 (Dual-Layer) for dense MCUs.
+    - Automatic Fallback: If Strategy 1 times out or fails, auto-recovers via Strategy 2 without human intervention.
     """
     try:
         import pcbnew
@@ -297,7 +321,8 @@ def route_board(
             "copper_edge_clearance_um": copper_edge_clearance_um,
             "strict_drc": strict_drc,
             "max_passes": max_passes,
-            "fanout_first": fanout_first
+            "fanout_first": fanout_first,
+            "strategy": strategy
         })
 
     proj_path = Path(project_dir).resolve()
@@ -320,17 +345,43 @@ def route_board(
     # Preflight: Sync netclass patterns to .kicad_pro so ExportSpecctraDSN writes differential widths
     _ensure_netclass_patterns(proj_path, pro_files[0])
 
+    # 0. Resolve Routing Strategy
+    if strategy == "fanout-first" or fanout_first is True:
+        use_fanout = True
+    elif strategy == "dual-layer" or fanout_first is False:
+        use_fanout = False
+    else:
+        # Auto-detect density from board topology
+        use_fanout = True
+        try:
+            chk_board = pcbnew.LoadBoard(str(pcb_file))
+            fps = list(chk_board.GetFootprints())
+            max_pads = max([fp.GetPadCount() for fp in fps] or [0])
+            active_nets = [n for n in chk_board.GetNetsByName().values() if n.GetNetname() not in ("", "GND")]
+            del chk_board
+            gc.collect()
+            if max_pads >= 24 or len(active_nets) > 20:
+                use_fanout = False
+                print(f"[*] Adaptive Router: High-density board detected (max IC pads: {max_pads}, active nets: {len(active_nets)}) -> Selected Strategy 2 (Dual-Layer Routing).")
+            else:
+                use_fanout = True
+                print(f"[*] Adaptive Router: Standard/discrete board detected (max IC pads: {max_pads}, active nets: {len(active_nets)}) -> Selected Strategy 1 (Dog-Bone Fanout First).")
+        except Exception:
+            use_fanout = False
+
     # 1. Export Specctra DSN (with optional Tier-1 Dog-Bone Fanout First)
     try:
         board = pcbnew.LoadBoard(str(pcb_file))
-        if fanout_first:
-            # Clean previous routing tracks if re-routing
-            for t in list(board.GetTracks()):
-                board.Delete(t)
+        # Always clean previous routing tracks, vias, AND zones before exporting DSN
+        # This prevents KiCad from exporting (plane GND (polygon B.Cu ...)) which locks B.Cu against signal routing
+        for t in list(board.GetTracks()):
+            board.Delete(t)
+        for z in list(board.Zones()):
+            board.Delete(z)
+        if use_fanout:
             apply_dogbone_fanout(board, "GND")
-        pcbnew.ExportSpecctraDSN(board, str(dsn_file))
-        if fanout_first:
             pcbnew.SaveBoard(str(pcb_file), board)
+        pcbnew.ExportSpecctraDSN(board, str(dsn_file))
         del board
         gc.collect()
     except Exception as e:
@@ -339,8 +390,8 @@ def route_board(
     if not dsn_file.exists():
         return {"success": False, "error": "Failed to export Specctra DSN file."}
 
-    # If fanout_first: strip GND from DSN network so Freerouting routes only signals on F.Cu
-    if fanout_first:
+    # If use_fanout: strip GND from DSN network so Freerouting routes only signals on F.Cu
+    if use_fanout:
         dsn_text = dsn_file.read_text(encoding="utf-8")
         dsn_text = re.sub(r'\(net\s+GND\s*\(pins[^)]+\)\s*\)', '', dsn_text)
         # Harmonize default signal clearance (200um) to power clearance (250um) so tracks honor power pads
@@ -357,6 +408,12 @@ def route_board(
 )
 '''
         rules_file.write_text(rules_content, encoding="utf-8")
+    else:
+        if rules_file.exists():
+            try:
+                rules_file.unlink()
+            except Exception:
+                pass
 
     # 1.5. Pre-flight Specctra DSN Audit (Failproof Guard)
     dsn_audit = audit_dsn(dsn_file)
@@ -373,7 +430,7 @@ def route_board(
         return {"success": False, "error": "freerouting.jar not found."}
 
     cmd = [
-        "java", "-jar", str(jar_path),
+        "java", "-Xmx1024m", "-jar", str(jar_path),
         "-de", str(dsn_file),
         "-do", str(ses_file),
         "-mt", "1",
@@ -386,19 +443,41 @@ def route_board(
         cmd.append("--router.strictDrc=true")
     if max_passes is not None and max_passes > 0:
         cmd.extend(["-mp", str(max_passes)])
+    else:
+        cmd.extend(["-mp", "1"])
 
+    freerouting_failed = False
+    proc_err = ""
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_sec, check=False)
         if proc.returncode != 0 and not ses_file.exists():
-            return {
-                "success": False,
-                "error": f"Freerouting failed (code {proc.returncode}): {proc.stderr.strip() or proc.stdout.strip()}"
-            }
+            freerouting_failed = True
+            proc_err = proc.stderr.strip() or proc.stdout.strip()
     except subprocess.TimeoutExpired:
-        return {"success": False, "error": f"Freerouting timed out after {timeout_sec}s."}
+        freerouting_failed = True
+        proc_err = f"Freerouting timed out after {timeout_sec}s"
 
-    if not ses_file.exists():
-        return {"success": False, "error": "Freerouting did not generate .ses file."}
+    # Automatic Fallback: If Strategy 1 failed, immediately recover via Strategy 2 without stopping
+    if use_fanout and (freerouting_failed or not ses_file.exists()):
+        print("[!] Strategy 1 (Dog-Bone Fanout) did not complete. Automatically recovering via Strategy 2 (Dual-Layer Routing)...")
+        if rules_file.exists():
+            try:
+                rules_file.unlink()
+            except Exception:
+                pass
+        return route_board(
+            project_dir=project_dir,
+            track_width_mm=track_width_mm,
+            timeout_sec=timeout_sec,
+            copper_edge_clearance_um=copper_edge_clearance_um,
+            strict_drc=strict_drc,
+            max_passes=max_passes or 5,
+            fanout_first=False,
+            strategy="dual-layer"
+        )
+
+    if freerouting_failed or not ses_file.exists():
+        return {"success": False, "error": f"Freerouting failed to generate SES output: {proc_err}"}
 
     # 3. Import Specctra SES into board
     imported_count = 0
@@ -411,8 +490,13 @@ def route_board(
         pcbnew.ImportSpecctraSES(board, str(ses_file))
         
         # If fanout_first was used, re-apply any missing GND dog-bone stubs/vias
-        if fanout_first:
+        if use_fanout:
             apply_dogbone_fanout(board, "GND")
+
+        # Clean any dangling micro-track stubs (< 0.08mm) left by autorouter overshoot
+        for t in list(board.GetTracks()):
+            if t.GetClass() == "PCB_TRACK" and pcbnew.ToMM(t.GetLength()) < 0.08:
+                board.Delete(t)
 
         ds = board.GetDesignSettings()
         ds.m_TrackMinWidth = pcbnew.FromMM(0.15)
@@ -454,7 +538,8 @@ def route_board(
         "method": "freerouting",
         "tracks_imported": imported_count,
         "pcb_file": str(pcb_file),
-        "ses_file": str(ses_file)
+        "ses_file": str(ses_file),
+        "fanout_first_used": use_fanout
     }
 
 
@@ -464,7 +549,7 @@ def add_ground_plane(
     layer: str = "B.Cu",
     clearance_mm: float = 0.3
 ) -> Dict[str, Any]:
-    """Adds a solid copper ground plane zone strictly matching the board outline."""
+    """Adds a solid copper ground plane zone strictly matching the board outline with island removal."""
     try:
         import pcbnew
     except ImportError:
@@ -489,7 +574,18 @@ def add_ground_plane(
     gc.collect()
     try:
         board = pcbnew.LoadBoard(str(pcb_file))
-        target_layer = pcbnew.B_Cu if layer == "B.Cu" else pcbnew.F_Cu
+        
+        # Dynamic Layer Resolution (supports 2-layer F.Cu/B.Cu and 4-layer In1.Cu/In2.Cu)
+        try:
+            target_layer = board.GetLayerID(layer)
+        except Exception:
+            layer_map = {
+                "F.Cu": pcbnew.F_Cu,
+                "B.Cu": pcbnew.B_Cu,
+                "In1.Cu": getattr(pcbnew, "In1_Cu", 1),
+                "In2.Cu": getattr(pcbnew, "In2_Cu", 2)
+            }
+            target_layer = layer_map.get(layer, pcbnew.B_Cu)
 
         # Remove duplicate zone on same layer
         for z in list(board.Zones()):
@@ -539,6 +635,12 @@ def add_ground_plane(
         zone.SetLocalClearance(pcbnew.FromMM(clearance_mm))
         zone.SetPadConnection(pcbnew.ZONE_CONNECTION_FULL)
         zone.SetMinThickness(pcbnew.FromMM(0.2))
+
+        # Enforce island removal to eliminate floating copper antennas
+        try:
+            zone.SetIslandRemovalMode(pcbnew.ISLAND_REMOVAL_MODE_ALWAYS)
+        except Exception:
+            pass
 
         board.Add(zone)
 

@@ -6,7 +6,7 @@
 [![KiCad](https://img.shields.io/badge/KiCad-10-blue?logo=kicad)](https://www.kicad.org/)
 [![Java](https://img.shields.io/badge/Java-25_LTS-EA2D2E?logo=openjdk&logoColor=white)](https://adoptium.net/)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/Version-v2.2.0-green.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/Version-v2.2.1-green.svg)](CHANGELOG.md)
 [![Last Commit](https://img.shields.io/github/last-commit/ShahMdAbid/Kaibridge?logo=github&color=2ea043)](https://github.com/ShahMdAbid/Kaibridge/commits)
 
 </div>
@@ -175,7 +175,7 @@ flowchart TD
 ## Quick Start
 
 ### 1. Setup
-- **Source Code:** Clone via `git clone https://github.com/ShahMdAbid/Kaibridge.git` or download the standalone release archive [Kaibridge_v2.2.0.zip](https://github.com/ShahMdAbid/Kaibridge/releases/download/v2.2.0/Kaibridge_v2.2.0.zip).
+- **Source Code:** Clone via `git clone https://github.com/ShahMdAbid/Kaibridge.git` or download the standalone release archive [Kaibridge_v2.2.1.zip](https://github.com/ShahMdAbid/Kaibridge/releases/download/v2.2.1/Kaibridge_v2.2.1.zip).
 - **Prerequisites:** Ensure KiCad 10 and Java 25 LTS (or Java 17+) are installed and accessible in your environment.
 - **Offline Component Database (Optional):** For < 1ms offline component lookup across 16,600+ JLCPCB parts, download [easyeda-std.elib.zip](https://github.com/ShahMdAbid/Kaibridge/releases/download/v2.1.0/easyeda-std.elib.zip) (~142 MB) and extract it into `data/easyeda-std.elib`.
 - Add Kaibridge to your agent's MCP configuration (`mcp_config.json`):

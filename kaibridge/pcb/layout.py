@@ -403,6 +403,35 @@ def _execute_in_process(
                     b.Remove(t)
             applied += 1
 
+        # 14. Silkscreen Sanitation / Clean-up
+        elif action in ("silkscreen.sanitize", "sanitize_silk", "silkscreen.hide_all", "silkscreen.hide_values", "clean_silk"):
+            silk_mode = op.get("mode", "hide_all" if "hide_all" in action else ("hide_values" if "hide_values" in action else "sanitize"))
+            target_ref = op.get("ref")
+            target_fps = [fps[target_ref]] if target_ref and target_ref in fps else list(b.GetFootprints())
+            for fp in target_fps:
+                if silk_mode == "hide_all":
+                    fp.Reference().SetVisible(False)
+                    fp.Value().SetVisible(False)
+                elif silk_mode == "hide_values":
+                    fp.Value().SetVisible(False)
+                elif silk_mode == "sanitize":
+                    fp.Value().SetVisible(False)
+                    ref_text = fp.Reference()
+                    ref_text.SetTextSize(pcbnew.VECTOR2I(pcbnew.FromMM(1.0), pcbnew.FromMM(1.0)))
+                    ref_text.SetTextThickness(pcbnew.FromMM(0.15))
+                    ref_bbox = ref_text.GetBoundingBox()
+                    collides = False
+                    for other_fp in b.GetFootprints():
+                        for pad in other_fp.Pads():
+                            if ref_bbox.Intersects(pad.GetBoundingBox()):
+                                collides = True
+                                break
+                        if collides:
+                            break
+                    if collides:
+                        ref_text.SetVisible(False)
+            applied += 1
+
     b.BuildListOfNets()
     b.BuildConnectivity()
 
@@ -453,4 +482,14 @@ def _execute_in_process(
     return result
 
 
-
+def sanitize_silkscreen(
+    project_dir: str | Path,
+    mode: str = "sanitize",
+    target_ref: Optional[str] = None
+) -> Dict[str, Any]:
+    """Sanitizes silkscreen text across footprints:
+    - 'sanitize': Hides bulky values and auto-hides reference designators that collide with copper pads.
+    - 'hide_all': Hides all silkscreen reference designators and values (for dense boards / clean aesthetic).
+    - 'hide_values': Hides all bulky component values, preserving reference designators.
+    """
+    return apply_ops(project_dir, [{"op": "silkscreen.sanitize", "mode": mode, "ref": target_ref}])

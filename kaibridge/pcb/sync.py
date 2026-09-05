@@ -40,16 +40,7 @@ def sync_schematic_to_pcb(project_dir: str | Path) -> Dict[str, Any]:
         else:
             return {"success": False, "error": "No .kicad_sch schematic file found."}
 
-    cli = load_cli()
-    if not cli:
-        return {"success": False, "error": "kicad-cli not found in system PATH."}
-
-    # 1. Export netlist from schematic
-    netlist_file = proj_path / f"{proj_name}.net"
-    cmd_net = [str(cli), "sch", "export", "netlist", str(sch_file), "-o", str(netlist_file)]
-    res_net = subprocess.run(cmd_net, capture_output=True, text=True)
-
-    # 2. Perform PCB footprint instantiation and Net binding via pcbnew
+    # Perform PCB footprint instantiation and Net binding via pcbnew
     try:
         import pcbnew
     except ImportError:

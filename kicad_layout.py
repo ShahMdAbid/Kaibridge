@@ -20,7 +20,7 @@ _ROOT = os.path.dirname(os.path.abspath(__file__))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-from kaibridge.pcb.layout import apply_ops
+from kaibridge.pcb.layout import apply_ops, sanitize_silkscreen
 
 
 def main(argv=None):
@@ -38,12 +38,39 @@ def main(argv=None):
         action="store_true",
         help="Simulate placement in memory and audit courtyard collisions without writing to disk"
     )
+    ap.add_argument(
+        "--sanitize-silk",
+        action="store_true",
+        help="Sanitize silkscreen: hide bulky values and auto-hide references that collide with copper pads"
+    )
+    ap.add_argument(
+        "--hide-silk",
+        action="store_true",
+        help="Hide all silkscreen reference designators and values (for dense boards / clean aesthetic)"
+    )
+    ap.add_argument(
+        "--hide-values",
+        action="store_true",
+        help="Hide all component values from silkscreen, preserving reference designators"
+    )
     args = ap.parse_args(argv)
 
     project_dir = Path(args.project_dir).expanduser().resolve()
     if not project_dir.is_dir():
         print(f"Error: {project_dir} is not a directory", file=sys.stderr)
         return 1
+
+    # Handle dedicated silkscreen sanitation standalone invocations
+    if args.sanitize_silk or args.hide_silk or args.hide_values:
+        mode = "hide_all" if args.hide_silk else ("hide_values" if args.hide_values else "sanitize")
+        print(f"[*] Sanitizing silkscreen for: {project_dir.name} [Mode: {mode}]")
+        s_res = sanitize_silkscreen(project_dir, mode=mode)
+        if s_res.get("success"):
+            print("  Status: Silkscreen successfully cleaned and updated in .kicad_pcb.")
+        else:
+            print(f"  Warning: Silkscreen sanitation reported: {s_res.get('error', 'unknown error')}")
+        if not args.ops_file:
+            return 0
 
     ops_path = None
     if args.ops_file:

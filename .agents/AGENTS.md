@@ -11,22 +11,22 @@ Select your tool invocation pattern based on the following deterministic rule:
 
 | Condition | Modality | Primary Action Mechanism |
 |---|---|---|
-| **`kaibridge_*` tools are declared in your active tool palette** | **Mode B: MCP Tools** | Invoke the 22 JSON-RPC tools (`kaibridge_build_schematic`, `kaibridge_apply_ops_layout`, etc.). |
-| **`kaibridge_*` tools are ABSENT (Standard IDE / Terminal Subagent)** | **Mode A: Root CLI Scripts** | Execute the 8 canonical Python tools in workspace root via shell `run_command`. |
+| **`kaibridge_*` tools are declared in your active tool palette** | **Mode B: MCP Tools** | Invoke the 25 JSON-RPC tools (23 canonical + 2 aliases, e.g. `kaibridge_optimize_planar_layout`, `kaibridge_build_schematic`, `kaibridge_apply_ops_layout`, etc.). |
+| **`kaibridge_*` tools are ABSENT (Standard IDE / Terminal Subagent)** | **Mode A: Root CLI Scripts** | Execute the 9 canonical Python tools in workspace root via shell `run_command`. |
 
 > [!IMPORTANT]
 > **Zero Nonexistent Tool Calls:** When in Mode A, NEVER attempt to invoke `kaibridge_*` functions as native tool calls. Execute the corresponding root CLI scripts directly.
 
 ### B. The 9 Canonical Root CLI Tools:
-1. `python kicad_lib_init.py "projects/<NAME>" -n kaibridge` (Bootstrap & library plumbing)
+1. `python kicad_lib_init.py "projects/<NAME>" -n kaibridge [--layers 2|4]` (Bootstrap, 2/4-layer stackup & library plumbing)
 2. `python kicad_pins.py "projects/<NAME>\libs\kaibridge.kicad_sym" -s <SYM> --json` (Pin/footprint extraction)
 3. `python json2sch.py "projects/<NAME>" --apply-netclasses --erc` (Schematic compile & ERC gate)
 4. `python kicad_pcb_sync.py "projects/<NAME>"` (Headless F8 netlist/footprint sync)
 5. `python kicad_planar_optimizer.py "projects/<NAME>"` (Primary Engine: In-memory planar layout optimizer)
-6. `python kicad_layout.py "projects/<NAME>" "projects/<NAME>/kaibridge_dump/ops.json" [--dry-run]` (Layout ops execution)
+6. `python kicad_layout.py "projects/<NAME>" [ops.json] [--dry-run] [--sanitize-silk] [--hide-silk]` (Layout ops execution & silkscreen sanitizer)
 7. `python pcb_snapshot.py "projects/<NAME>"` (Vector SVG preview render for visual audit)
-8. `python kicad_route.py "projects/<NAME>" --pour-gnd --drc` (3-Tier router: dog-bone fanout, F.Cu route, B.Cu pour & DRC)
-9. `python export_jlcpcb.py "projects/<NAME>"` (100% factory-ready JLCPCB bundle export)
+8. `python kicad_route.py "projects/<NAME>" --pour-gnd --drc [--strategy auto|fanout-first|dual-layer] [--layers 2|4]` (Adaptive router: auto-detection, auto-fallback, island removal, 2/4-layer copper pours, DRC)
+9. `python export_jlcpcb.py "projects/<NAME>"` (100% factory-ready JLCPCB bundle export with auto 2/4-layer Gerbers)
 
 ### C. Session & Directory Contract
 - Default project directory is `projects/<Project_Name>`.
@@ -65,14 +65,14 @@ Every design follows this strictly sequential state transition. Do not skip phas
 |---|---|---|---|
 | **S0: Planning** | Formulate `implementation_plan.md` via ART-Gate | Design prompt received | User approval of 4-part plan |
 | **S1: Bootstrap** | `python kicad_lib_init.py "projects/<NAME>" -n kaibridge` | Plan approved | `.kicad_pro`, empty `.kicad_pcb`, `libs/` created (< 0.5s) |
-| **S2: Sourcing** | Query local SQLite DB / Fetch active ICs via `easyeda2kicad` | Components identified | All parts mapped to LCSC C-IDs & KiCad IPC footprints |
+| **S2: Sourcing** | Priority 1: Fetch active ICs via `easyeda2kicad`; Priority 2: Map passives to native IPC footprints & LCSC IDs | Components identified | Active ICs downloaded to `libs/kaibridge`; passives mapped to LCSC C-IDs |
 | **S3: Pins** | `python kicad_pins.py "<SYM_PATH>" -s <SYM> --json` | Active IC downloaded | Verbatim footprint string & pin numbers extracted |
 | **S4: Spec** | Write `<PROJECT_DIR>/kaibridge_dump/design.json` | Pins extracted | Schema validated, power flags & netclasses declared |
-| **S5: Compile** | `python json2sch.py "projects/<NAME>" --apply-netclasses --erc` | `design.json` written | **Gate 1:** Total ERC Errors == 0; SVG preview generated |
+| **S5: Compile** | `python json2sch.py "projects/<NAME>" --apply-netclasses --erc` | `design.json` written | **Gate 1:** Total ERC Errors == 0; All warnings surfaced with full context; auto-healed pins eliminate `[pin_to_pin]` warnings; SVG preview generated |
 | **S6: Sync** | `python kicad_pcb_sync.py "projects/<NAME>"` | ERC passed | Footprints instantiated and nets bound in `.kicad_pcb` |
-| **S7A: Planar Opt** | `python kicad_planar_optimizer.py "projects/<NAME>"` | Sync complete | **Primary Engine:** >85% crossing reduction, 0 overlaps, HPWL minimized |
+| **S7A: Planar Opt** | `python kicad_planar_optimizer.py "projects/<NAME>"` (Mode A) or `kaibridge_optimize_planar_layout` (Mode B) | Sync complete | **Primary Engine:** >85% crossing reduction, 0 overlaps, dynamic decoupling & crystal loop proximity |
 | **S7B: Visual Audit** | `python pcb_snapshot.py "projects/<NAME>"` + Vision Gate | Planar layout committed | **Gate 2:** Connectors face outward, silkscreen clean, corridors open |
-| **S8: 3-Tier Route** | `python kicad_route.py "projects/<NAME>" --pour-gnd --drc` | Visual audit passed | **Gate 3:** Dog-bone fanout stubs, 0 signal vias, 0 DRC violations |
+| **S8: 3-Tier Route** | `python kicad_route.py "projects/<NAME>" --pour-gnd --drc` | Visual audit passed | **Gate 3:** Dog-bone fanout stubs, 0 signal vias, 0 DRC violations, 0 unconnected items; micro-tracks auto-cleaned; all warnings surfaced |
 | **S9: Export** | `python export_jlcpcb.py "projects/<NAME>"` | DRC clean | `Gerber_*.zip`, Drill, `BOM_*.csv`, `CPL_*.csv` in `production_output/` |
 
 ---
@@ -93,14 +93,20 @@ Every design follows this strictly sequential state transition. Do not skip phas
 
 ---
 
-## 4. Component Sourcing & Zero-Hallucinated Pin Protocol
+## 4. Component Sourcing Hierarchy & Zero-Hallucinated Pin Protocol
 
-### A. Passive Sourcing (Native Symbols & IPC Footprints)
-- **Symbols:** ALWAYS use native KiCad symbols: `Device:R`, `Device:C`, `Device:LED`, `Device:D`, `Device:L`, `Connector_Generic:Conn_01x<N>`.
-  *(NEVER use EasyEDA passive symbols: their pins are typed as "Input", triggering `[pin_not_driven]` ERC errors).*
-- **Footprints:** ALWAYS use official KiCad IPC-7351 footprints: `Resistor_SMD:R_0805_2012Metric`, `Capacitor_SMD:C_0805_2012Metric`, `LED_SMD:LED_0805_2012Metric`, `Diode_SMD:D_SOD-123`, `Connector_PinHeader_2.54mm:PinHeader_1x*`.
-  *(NEVER use EasyEDA passive footprints: they lack standardized courtyards and trigger courtyard DRC errors).*
-- **Upfront LCSC Binding:** Every component in `design.json` MUST have its LCSC part ID bound upfront: `"fields": {"LCSC": "Cxxxx", "JLCPCB_Class": "Basic Part"}`. Consult [`references/jlcpcb_basic_parts.md`](../references/jlcpcb_basic_parts.md).
+### A. Architectural Priority Hierarchy
+Kaibridge enforces a strict two-tier sourcing hierarchy:
+
+1. **Priority 1 (Active ICs, Modules & Complex Connectors — On-Demand Fetch via `easyeda2kicad`):**
+   - **Mandate:** All active semiconductor ICs (MCUs, transceivers, op-amps, linear regulators, buck/boost converters, sensors, gate drivers) and complex connectors (USB-C receptacles e.g. `TYPE-C-31-M-12`, barrel jacks, HDMI) MUST be fetched directly on-demand via `easyeda2kicad`.
+   - **Why:** Fetches exact manufacturer symbol, pad geometries, courtyard dimensions, and 3D step model into `libs/kaibridge`. Downloaded symbols are automatically pin-healed to standard KiCad electrical types.
+2. **Priority 2 (Small Discrete Passives & Headers — Native KiCad + Upfront LCSC Binding):**
+   - **Mandate:** Generic resistors, capacitors, inductors, discrete diodes, LEDs, and standard 2.54mm pin headers MUST use native KiCad symbols (`Device:*`, `Connector_Generic:Conn_01x*`) and standardized KiCad IPC-7351 SMD footprints (`*_SMD:*_0805_*` / `0603`).
+   - **Upfront LCSC Binding:** Never download passives from EasyEDA (their symbols trigger `[pin_not_driven]` ERC errors and their footprints lack standardized courtyards). Bind their verified JLCPCB Basic Part C-IDs directly from [`references/jlcpcb_basic_parts.md`](../references/jlcpcb_basic_parts.md) in `design.json`: `"fields": {"LCSC": "Cxxxx", "JLCPCB_Class": "Basic Part"}`.
+3. **Optional Fallback (Local SQLite DB `easyeda-std.elib`):**
+   - Purely an optional offline parametric search index for looking up part numbers if the 142MB catalog is downloaded.
+   - **Zero-Block Mandate:** The AI agent must NEVER assume or block on `easyeda-std.elib` being present. It does NOT generate symbols or footprints. If absent, simply proceed directly with Priority 1 (`easyeda2kicad`) and Priority 2 (native passives).
 
 ### B. Active IC Sourcing & CLI Extraction
 - Download active ICs and modules directly:
@@ -118,8 +124,9 @@ Every design follows this strictly sequential state transition. Do not skip phas
   # For stock KiCad native library symbols:
   python kicad_pins.py --native <LIBRARY_NAME> -s <SYMBOL_NAME> --json
   ```
-  - **Footprint Rule:** Copy the `"footprint"` value from the JSON output verbatim into `design.json` (e.g. `"kaibridge:SOIC-8_3.9x4.9mm_P1.27mm"`).
-  - **Pin Rule:** Pin connections in nets must strictly use `"<REF>.<PIN_NUMBER>"` matching the JSON output.
+  - **Footprint Rule:** Copy the footprint value verbatim (`"footprint"` in Mode A list, `"default_footprint"` in Mode B dict) into `design.json` (e.g. `"kaibridge:SOIC-8_3.9x4.9mm_P1.27mm"`).
+  - **Pin Rule:** Pin connections in nets must strictly use `"<REF>.<PIN_NUMBER>"` matching the JSON output (e.g. `U1.1`).
+
 
 ---
 
@@ -155,8 +162,9 @@ Every design follows this strictly sequential state transition. Do not skip phas
    | External Power Ingest | USB `VBUS`, DC Jack `VIN`, Battery `VBAT`, `GND` | **YES** (`["VBUS", "GND"]`) | External nets have no active symbol driving them. |
    | Passive-Interrupted Rail | Downstream of diode, PTC fuse, switch, or filter inductor feeding IC supply pins | **YES** (`["VIN_PROT", "VBUS_SW"]`) | Passives break power conductivity in ERC net graph. |
    | Active Regulator Output | LDO / Buck output (`+3V3`, `+5V`, `VOUT`) | **NO** | Active regulators internally define `power_out` pins. Adding a flag causes a `[pin_to_pin]` driver collision. |
-2. **Stacked Pins:** If multiple symbol pins share identical coordinates (e.g. multi-GND pins), list only the primary visible pin in `design.json` (see [`references/stacked_pins_fix.md`](../references/stacked_pins_fix.md)).
-3. **Netclasses:** Declare widths and clearances in `design.json` (Default: 0.25mm / 0.2mm; Power: 0.6mm / 0.25mm). Handled via [`references/trackwidth_clearence_viasize.md`](../references/trackwidth_clearence_viasize.md).
+2. **Stacked Pins & USB-C Receptacles:** If multiple symbol pins share identical coordinates (e.g. multi-GND pins) or if a connector has paired/stacked physical pads (e.g. USB-C `TYPE-C-31-M-12` pads `A1/B12`, `A4/B9`, `A9/B4`, `A12/B1`), list ONLY the primary visible pins (`A1`, `A4`, `A9`, `A12`) in `design.json` (see [`references/stacked_pins_fix.md`](../references/stacked_pins_fix.md)). Declare connector shield pins (`SH`) in `no_connect` unless tied to a dedicated chassis symbol.
+3. **Netclasses & Fine-Pitch IC Necking:** Declare widths and clearances in `design.json` (Default: 0.25mm / 0.2mm; Power: 0.25mm–0.30mm / 0.2mm for fine-pitch ICs, 0.6mm / 0.25mm for discrete passives).
+   - *Fine-Pitch Rule:* For packages with $\le 0.5\text{mm}$ pin pitch (e.g. LQFP-48, QFN, BGA with $0.20\text{mm}$ pad-to-pad clearance), `Power` netclass track width MUST NOT exceed $0.25\text{mm}$ and clearance MUST NOT exceed $0.20\text{mm}$. Tracks wider than $0.25\text{mm}$ will fail clearance upon entering IC pads, trapping Freerouting in infinite rip-up deadlock loops. Handled via [`references/trackwidth_clearence_viasize.md`](../references/trackwidth_clearence_viasize.md).
 
 ---
 
@@ -187,9 +195,11 @@ Every design follows this strictly sequential state transition. Do not skip phas
    Immediately after placing crystals (`OSC-01`), RF circuits, sensitive analog front-ends, and perimeter connectors (`CON-01`), LOCK them in `ops.json`:
    `{"op": "footprint.lock", "ref": "<REF>"}`.
    Locked components are completely immune to displacement during `kaibridge_auto_relax_layout` and auto-routing.
-5. **Silkscreen Hygiene:**
-   - Reference designators (`R1`, `C1`, `U1`) must be visible, sized $1.0\text{mm} \times 1.0\text{mm}$ (thickness $0.15\text{mm}$), positioned outside courtyards.
+5. **Silkscreen Hygiene & CPL Independence:**
+   - Standard boards: Reference designators (`R1`, `C1`, `U1`) should be visible, sized $1.0\text{mm} \times 1.0\text{mm}$ (thickness $0.15\text{mm}$), positioned outside component courtyards.
    - Hide bulky value text from `F.SilkS` to avoid text overlapping pads, tracks, or neighboring components.
+   - *High-Density & Clean Aesthetics Protocol:* On high-density boards (e.g. 48-pin MCUs, tightly packed passives) or upon user request, silkscreen reference designators and values can be hidden (`fp.Reference().SetVisible(False)`, `fp.Value().SetVisible(False)`). JLCPCB automated SMT pick-and-place assembly relies 100% on the Centroid CPL file (`.cpl_jlcpcb.csv`) and BOM, NOT silkscreen text. Machine vision locates component centroids using board fiducials and pad geometries; silkscreen text visibility does not affect manufacturing yield.
+   - *Native CLI Sanitation:* Run `python kicad_layout.py "projects/<NAME>" --sanitize-silk` to automatically hide bulky values and auto-hide references colliding with copper pads, or `--hide-silk` for complete clean aesthetic.
 
 ---
 
@@ -223,29 +233,38 @@ Translate corrective actions directly into an adjustment `ops.json`, run `python
 
 ---
 
-## 9. Headless Routing, Dog-Bone Fanout & Production Export
+## 9. Headless Routing, Dual-Strategy Engine & Production Export
 
-### A. The 3-Tier Hierarchical Routing Architecture (Zero-Signal-Via Doctrine)
-Never route GND concurrently with signals on dual-layer boards. Always execute the 3-Tier Protocol:
-1. **Tier 1 (Dog-Bone Fanout First):**
-   - Before exporting routing queues, pre-place a $0.6\text{mm}$ structural via ($0.3\text{mm}$ drill) offset $1.0 - 1.2\text{mm}$ outside each SMD GND pad with a $0.25\text{mm}$ `F.Cu` escape neck trace.
-   - **Zero Via-in-Pad Mandate:** Never place vias inside SMD pads. Maintain an intact $\ge 0.15\text{mm}$ solder mask dam to eliminate reflow solder wicking.
-2. **Tier 2 (Planar Signal Routing on F.Cu Only):**
-   - Strip `GND` from the Specctra DSN network (`re.sub(r'\(net\s+GND\s*\(pins[^)]+\)\s*\)', '', dsn_text)`).
-   - Route all signal nets on `F.Cu` with `(vias off)` or high via penalty (`via_costs: 150`).
-   - Achieves 100% planar signal routing on `F.Cu` with **zero signal vias**.
-3. **Tier 3 (Adaptive Stitching Fallback & Solid Ground Pour):**
-   - If dense topological crossings exist (Kuratowski $K_5 / K_{3,3}$), permit short, localized jumper vias on `B.Cu`.
-   - Pour solid continuous `GND` copper plane on `B.Cu` ($0.3\text{mm}$ clearance, `ZONE_CONNECTION_FULL`, $\ge 0.2\text{mm}$ thickness) swallowing all fanout vias and THT pins (`J1.2`, `J2.4`).
-   - Always refill zones post-SES import to eliminate copper zone track shorts.
+### A. Adaptive Two-Strategy Routing Architecture
+Execute headless autorouting deterministically with zero configuration:
+`python kicad_route.py "projects/<NAME>" --pour-gnd --drc`
 
-### B. In-Memory Planar Layout Optimization (`kicad_planar_optimizer.py`)
+1. **Automatic Strategy Selection (`--strategy auto`):**
+   - **Strategy 1 (Dog-Bone Fanout First):** Selected automatically for discrete/simple boards (all ICs $<24$ pins, nets $\le 20$). Pre-places $0.6\text{mm}$ structural vias ($0.3\text{mm}$ drill) outside SMD GND pads, strips GND from DSN, and routes signals purely on `F.Cu` with **zero signal vias**.
+   - **Strategy 2 (Dual-Layer Routing):** Selected automatically for dense MCUs ($\ge 24$ pins or nets $>20$). Routes signals across `F.Cu` and `B.Cu` using short jumper vias ($0.6\text{mm}$ pad / $0.3\text{mm}$ drill), followed by a solid continuous GND copper plane on `B.Cu` ($0.3\text{mm}$ clearance, `ZONE_CONNECTION_FULL`, $\ge 0.2\text{mm}$ thickness) swallowing all GND vias and pins.
+   - **Zero-Failure Auto-Fallback:** If Strategy 1 produces unrouted airwires or times out, the router automatically unlinks `<stem>.rules`, cleans tracks, and recovers via Strategy 2 with 5 optimization passes (`max_passes=5`), guaranteeing zero unrouted airwires without human intervention.
+
+2. **CRITICAL: Specctra DSN Cleanliness & Stale Rules Elimination:**
+   - **Zone & Track Purge:** Prior to exporting DSN, all existing copper tracks, vias, AND copper zones MUST be purged from the board (`board.prep_for_route`). If previous zones persist on `B.Cu`, KiCad exports `(plane GND (polygon B.Cu ...))` which locks `B.Cu` against signal routing in Freerouting, triggering infinite rip-up loops.
+   - **Stale Rules Deletion:** When switching strategies or rerunning, `<stem>.rules` containing `(vias off)` is unconditionally unlinked.
+   - **Deterministic Fast Optimizer (`-mp 1` & `-Xmx1024m`):** Freerouting is capped at 1 optimization pass (or 5 on fallback) and 1024MB heap, guaranteeing fast convergence (< 20s) while eliminating JVM runaway native memory allocations.
+   - **Island Removal:** Copper ground zones enforce `ISLAND_REMOVAL_MODE_ALWAYS` to eliminate floating copper antennas.
+   - **4-Layer Profile & Dedicated Planes:** Initialized via `kicad_lib_init.py --layers 4` for standard JLCPCB JLC04161H stackup (`F.Cu` signal, `In1.Cu` GND, `In2.Cu` Power, `B.Cu` GND). Routed via `kicad_route.py --layers 4 --pour-gnd`, which automatically detects primary power rails (`+3V3`, `3V3`, `+5V`, `5V`, `VCC`, `VDD`, `VBUS`, `VIN`, `VBAT`) and pours solid continuous copper planes on `In1.Cu` (GND), `In2.Cu` (Power), and `B.Cu` (GND) with automatic island removal (`ISLAND_REMOVAL_MODE_ALWAYS`).
+
+### B. In-Memory Planar Layout Optimization (`kicad_planar_optimizer.py` / `kaibridge_optimize_planar_layout`)
 - Prior to layout lock, run the in-memory Simulated Annealing planar optimizer:
-  `python kicad_planar_optimizer.py "projects/<NAME>"`
+  `python kicad_planar_optimizer.py "projects/<NAME>"` (Mode A) or `kaibridge_optimize_planar_layout` (Mode B).
 - Minimizes ratsnest crossings using Kruskal's MST and 2D CCW line segment intersection evaluation ($5000 \cdot \text{crossings} + 2 \cdot \text{HPWL} + 100000 \cdot \text{overlaps}$).
-- Reduces topological intersections by $>85\%$ in $< 2$ seconds.
+- Reduces topological intersections by $>85\%$ in $< 2$ seconds, dramatically simplifying routing for either strategy.
+- **Dynamic Decoupling & Proximity Pairing:** Automatically identifies 2-pin bypass capacitors between power and GND, dynamically pairing them with their companion IC (distance constraint scaled by package: $\le 7.0\text{mm}$ for LQFP-48, $\le 5.0\text{mm}$ for SOIC, $\le 4.0\text{mm}$ for SOT). Binds crystal resonators ($\le 5.0\text{mm}$) to MCU OSC pins and crystal load capacitors ($\le 3.5\text{mm}$) to the crystal.
+- **Agent Grouping Doctrine (`design.json`):** When authoring `design.json`, group parts into functional `"groups"` (e.g. `"mcu_core"`, `"can_bus"`, `"ldo_reg"`, `"clock_reset"`) or declare `"group": "<group_id>"` on each component. This ensures 100% deterministic pairing between decoupling capacitors and their target ICs when multiple ICs share a single power rail (`+3V3`/`VCC`).
 
-### C. DRC Quality Gate & Production Export
+### C. Via Density & DFM Standard (Engineering Truth)
+- **Via Norms for 2-Layer MCUs:** For a 2-layer board with a 32–48 pin MCU and 20–35 passives/ICs, having **15–30 total vias** (10–12 GND return vias from decoupling capacitors directly to the B.Cu plane + 10–18 short signal jumper vias) is standard industrial best practice.
+- **Signal Integrity vs Detours:** A short via transition (inductance $\approx 1.2\text{nH}$) is far superior to a $30\text{mm}$ serpentine trace detour around the MCU edge (which adds $>30\text{nH}$ parasitic inductance and acts as a loop antenna).
+- **Fabrication Cost:** Standard PCB pool fabricators (e.g. JLCPCB) charge identically for 1 via vs 100 vias ($2 for 5 boards). Zero cost penalty applies.
+
+### D. DRC Quality Gate & Production Export
 1. **Routing Constraints:**
    - Kaibridge enforces JLCPCB rules in `.kicad_pro`: `min_copper_edge_clearance: 0.15mm`, `min_clearance: 0.15mm`, `min_track_width: 0.15mm`.
    - Freerouting runs headlessly with `--router.copperToEdgeClearanceUm=150` and `--router.strictDrc=true`.
@@ -253,8 +272,18 @@ Never route GND concurrently with signals on dual-layer boards. Always execute t
    - DRC must report **0 clearance violations** and **0 unconnected items**.
 3. **Production Output (`production_output/`):**
    - `<Project_Name>_bom_jlcpcb.csv`: 100% populated with LCSC C-IDs.
-   - `<Project_Name>_cpl_jlcpcb.csv`: Centroid placement table with numeric float coordinates.
-   - `<Project_Name>_gerbers.zip`: Complete fabrication and drill archive.
+   - `<Project_Name>_cpl_jlcpcb.csv`: Centroid placement table with numeric float coordinates and **automated SMT rotation angle compensation (`DFM-ROT`)**. Corrects the $180^\circ$ discrepancy between KiCad IPC-7351 and JLCPCB EIA-481 tape feeders for `Diode_SMD`, `LED_SMD`, `SOT-23`, `SOT-223`, and polarized capacitors, while keeping EasyEDA `kaibridge:*` parts at $0^\circ$. Supports custom overrides via `"rotation_offset": <deg>` in `design.json`.
+   - `<Project_Name>_gerbers.zip`: Complete fabrication and drill archive (automatically includes all 4 copper layers `F_Cu.gtl`, `GND.g1`, `Power.g2`, `B_Cu.gbl` on 4-layer boards).
+
+### E. Warning Transparency & Auto-Remediation Protocol
+1. **ERC Warning Visibility & Healing:**
+   - `json2sch.py --erc` executes KiCad ERC with `--severity-all` and parses both errors and warnings into structured reports (`Total Errors: X, Total Warnings: Y`).
+   - Every warning is surfaced with its sheet name, violation type (e.g. `[pin_to_pin]`), and connected pin details.
+   - EasyEDA/third-party symbols default to pin type `unspecified`, which triggers non-fatal `unspecified <-> passive` warnings. The compiler automatically runs `heal_symbol_pins` (default `--heal-pins`), inferring `power_in`, `power_out`, `input`, and `passive` electrical types based on pin names, eliminating `pin_to_pin` warnings at the root.
+2. **DRC Warning Visibility & Micro-Track Pruning:**
+   - `kicad_route.py --drc` parses and displays `Clearance Errors`, `Unconnected Nets`, and `Warnings` with full context (violation type, coordinates, and component/pad descriptors).
+   - Autorouter overshoots often leave sub-0.08mm track stubs that trigger `[track_dangling]` warnings. The router automatically prunes micro-stubs ($< 0.08\text{mm}$) upon SES track import via `clean_dangling_micro_tracks`, guaranteeing clean DRC convergence.
+   - Status reporting explicitly differentiates `PASSED CLEAN (0 Errors, 0 Warnings)` from `PASSED WITH WARNINGS (0 Errors, X Warnings)`.
 
 ---
 
