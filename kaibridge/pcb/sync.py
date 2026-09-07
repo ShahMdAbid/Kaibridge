@@ -62,6 +62,26 @@ print("PCB_SYNC_RESULT:" + json.dumps(res))
     return _execute_pcbnew_sync(str(proj_path), str(pcb_file), str(design_file))
 
 
+def _matches_pad(p_num: str, target: str) -> bool:
+    """Matches pad numbers supporting exact, case-insensitive, and composite aliases (e.g. A1/B12)."""
+    if p_num == target:
+        return True
+    p_lower = p_num.lower()
+    t_lower = target.lower()
+    if p_lower == t_lower:
+        return True
+    for delim in ("/", ",", "_", "-"):
+        if delim in target:
+            parts = [s.strip().lower() for s in target.split(delim) if s.strip()]
+            if p_lower in parts:
+                return True
+        if delim in p_num:
+            parts = [s.strip().lower() for s in p_num.split(delim) if s.strip()]
+            if t_lower in parts:
+                return True
+    return False
+
+
 def _execute_pcbnew_sync(proj_path_str: str, pcb_file_str: str, design_file_str: str) -> Dict[str, Any]:
     import pcbnew
     proj_path = Path(proj_path_str)
@@ -170,10 +190,10 @@ def _execute_pcbnew_sync(proj_path_str: str, pcb_file_str: str, design_file_str:
 
             fp = existing_fps.get(ref) or board.FindFootprintByReference(ref)
             if fp:
-                pad = fp.FindPadByNumber(pad_num)
-                if pad:
-                    pad.SetNet(net_info)
-                    pads_connected += 1
+                for p in fp.Pads():
+                    if _matches_pad(p.GetNumber(), pad_num):
+                        p.SetNet(net_info)
+                        pads_connected += 1
 
     board.BuildListOfNets()
     board.BuildConnectivity()

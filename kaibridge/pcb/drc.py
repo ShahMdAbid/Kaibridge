@@ -17,11 +17,11 @@ def run_drc(project_dir: str | Path) -> Dict[str, Any]:
     """Runs full DRC check on the PCB and returns parsed violations report."""
     proj_path = Path(project_dir).resolve()
     if not proj_path.exists():
-        return {"success": False, "error": f"Project directory not found: {project_dir}"}
+        return {"success": False, "passed": False, "report_valid": False, "error": f"Project directory not found: {project_dir}"}
 
     pro_files = list(proj_path.glob("*.kicad_pro"))
     if not pro_files:
-        return {"success": False, "error": "No .kicad_pro found."}
+        return {"success": False, "passed": False, "report_valid": False, "error": "No .kicad_pro found."}
 
     stem = pro_files[0].stem
     pcb_file = proj_path / f"{stem}.kicad_pcb"
@@ -32,11 +32,24 @@ def run_drc(project_dir: str | Path) -> Dict[str, Any]:
     drc_report_file = dump_dir / "drc_report.json"
 
     if not pcb_file.exists():
-        return {"success": False, "error": f"PCB file not found: {pcb_file}"}
+        return {"success": False, "passed": False, "report_valid": False, "error": f"PCB file not found: {pcb_file}"}
 
     cli = load_cli()
     if not cli:
-        return {"success": False, "error": "kicad-cli executable not found."}
+        return {"success": False, "passed": False, "report_valid": False, "error": "kicad-cli executable not found."}
+
+    # Clean up stale report files before execution to guarantee report freshness
+    if drc_report_file.exists():
+        try:
+            drc_report_file.unlink()
+        except Exception:
+            pass
+    legacy_cand = proj_path / "drc_report.json"
+    if legacy_cand.exists():
+        try:
+            legacy_cand.unlink()
+        except Exception:
+            pass
 
     cmd = [
         str(cli), "pcb", "drc",
@@ -49,19 +62,49 @@ def run_drc(project_dir: str | Path) -> Dict[str, Any]:
 
     res = subprocess.run(cmd, capture_output=True, text=True, check=False)
 
-    report_data = {}
-    if not drc_report_file.exists():
-        # Fallback check in project root
-        legacy_cand = proj_path / "drc_report.json"
-        if legacy_cand.exists():
-            drc_report_file = legacy_cand
+    if not drc_report_file.exists() and legacy_cand.exists():
+        drc_report_file = legacy_cand
 
-    if drc_report_file.exists():
-        try:
-            with open(drc_report_file, "r", encoding="utf-8") as f:
-                report_data = json.load(f)
-        except Exception as e:
-            report_data = {"parse_error": str(e)}
+    if not drc_report_file.exists():
+        return {
+            "success": False,
+            "passed": False,
+            "report_valid": False,
+            "error": f"kicad-cli pcb drc did not generate report. Exit code: {res.returncode}. Stderr: {res.stderr.strip()}",
+            "drc_report_file": str(drc_report_file),
+            "total_errors": 1,
+            "clearance_errors": 1,
+            "geometric_clearance_errors": 1,
+            "total_warnings": 0,
+            "total_unconnected": 0,
+            "unconnected_airwires_count": 0,
+            "error_violations": [f"DRC process failed (code {res.returncode}): {res.stderr.strip() or 'No report file generated'}"],
+            "warning_violations": [],
+            "violations": [],
+            "unconnected_items": []
+        }
+
+    try:
+        with open(drc_report_file, "r", encoding="utf-8") as f:
+            report_data = json.load(f)
+    except Exception as e:
+        return {
+            "success": False,
+            "passed": False,
+            "report_valid": False,
+            "error": f"Failed to parse DRC report JSON: {e}",
+            "drc_report_file": str(drc_report_file),
+            "total_errors": 1,
+            "clearance_errors": 1,
+            "geometric_clearance_errors": 1,
+            "total_warnings": 0,
+            "total_unconnected": 0,
+            "unconnected_airwires_count": 0,
+            "error_violations": [f"DRC report JSON corrupt or malformed: {e}"],
+            "warning_violations": [],
+            "violations": [],
+            "unconnected_items": []
+        }
 
     violations = report_data.get("violations", [])
     unconnected = report_data.get("unconnected_items", [])
@@ -87,6 +130,7 @@ def run_drc(project_dir: str | Path) -> Dict[str, Any]:
     return {
         "success": passed,
         "passed": passed,
+        "report_valid": True,
         "drc_report_file": str(drc_report_file),
         "total_errors": len(clearance_errors),
         "total_warnings": len(clearance_warnings),

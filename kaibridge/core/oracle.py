@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import sys
+import json
 import re
 import difflib
 from pathlib import Path
@@ -181,6 +182,9 @@ def _find_similar_names(all_names: List[str], query: str, limit: int = 6) -> Lis
     return close
 
 
+_QUERY_CACHE: Dict[Tuple[str, Optional[str]], Dict[str, Any]] = {}
+
+
 def query_oracle(query: str, class_name: Optional[str] = None) -> Dict[str, Any]:
     """Queries the KiCad pcbnew SWIG oracle for exact signatures, docstrings, classes, constants, and rules.
     
@@ -192,10 +196,27 @@ def query_oracle(query: str, class_name: Optional[str] = None) -> Dict[str, Any]
     q_clean = query.strip()
     c_clean = class_name.strip() if class_name else None
 
+    cache_key = (q_clean, c_clean)
+    if cache_key in _QUERY_CACHE:
+        return _QUERY_CACHE[cache_key]
+
+    res = _query_oracle_uncached(q_clean, c_clean)
+    _QUERY_CACHE[cache_key] = res
+    return res
+
+
+def _query_oracle_uncached(q_clean: str, c_clean: Optional[str]) -> Dict[str, Any]:
+    if not q_clean:
+        return {
+            "success": False,
+            "error": "Empty query string provided.",
+            "source_path": str(_PCBNEW_SOURCE_PATH) if _PCBNEW_SOURCE_PATH else None
+        }
+
     # 1. Architectural & Production Rules Knowledge Base Match
     q_rule_key = q_clean.lower().replace("-", "_").replace(" ", "_")
     for key, data in _RULES_KNOWLEDGE_BASE.items():
-        if key == q_rule_key or key in q_rule_key or q_rule_key in key:
+        if key == q_rule_key or key in q_rule_key or (len(q_rule_key) >= 3 and q_rule_key in key):
             return {
                 "success": True,
                 "type": "RULE",
@@ -341,7 +362,10 @@ def query_oracle(query: str, class_name: Optional[str] = None) -> Dict[str, Any]
             }
 
     # 6. Not Found -> Compute Fuzzy Suggestions across methods, classes, and global defs
-    all_candidates = list(class_method_names) if class_method_names else (global_func_names + class_names)
+    if c_clean:
+        all_candidates = list(class_method_names)
+    else:
+        all_candidates = sorted(set(list(class_method_names) + global_func_names + class_names))
     suggestions = _find_similar_names(all_candidates, q_clean, limit=6)
 
     return {
@@ -351,3 +375,30 @@ def query_oracle(query: str, class_name: Optional[str] = None) -> Dict[str, Any]
         "suggestions": suggestions,
         "source_path": str(_PCBNEW_SOURCE_PATH)
     }
+
+
+if __name__ == "__main__":
+    import argparse
+    ap = argparse.ArgumentParser(description="Live KiCad pcbnew SWIG C++ Oracle Inspector (<4ms)")
+    ap.add_argument("query", help="Method, class, constant, or architectural rule to query (e.g. ExportSpecctraDSN, GetFootprints)")
+    ap.add_argument("-c", "--class-name", dest="class_name", default=None, help="Target class name (e.g. BOARD, ZONE, FOOTPRINT, GLOBAL)")
+    ap.add_argument("--json", action="store_true", help="Output raw JSON response")
+    args = ap.parse_args()
+
+    res = query_oracle(args.query, args.class_name)
+    if args.json:
+        print(json.dumps(res, indent=2))
+    else:
+        if res.get("success"):
+            print(f"[+] Found {res.get('type')}: {res.get('scope')}")
+            if "exact_signature" in res:
+                print(f"\nSignature / Definition:\n{res['exact_signature']}")
+            elif "description" in res:
+                print(f"\nTopic: {res.get('topic')}\n{res.get('description')}")
+            elif "constant" in res:
+                print(f"\nConstant Value: {res.get('constant')}")
+        else:
+            print(f"[-] Not found: {res.get('error')}")
+            if res.get("suggestions"):
+                print(f"Did you mean: {', '.join(res['suggestions'])}?")
+

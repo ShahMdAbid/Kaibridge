@@ -53,7 +53,7 @@ def start_daemon(jar_path: str | Path, port: int = DEFAULT_PORT, timeout_sec: fl
     cmd = [
         "java", "-Xmx1024m", "-jar", str(jar_p),
         "--api_server.enabled=true",
-        "--api_server.authentication.is_enabled=false",
+        "--api_server.authentication.enabled=false",
         "--gui.enabled=false"
     ]
 
@@ -105,26 +105,41 @@ class FreeroutingClient:
         self.headers = {
             "Content-Type": "application/json",
             "Freerouting-Profile-ID": self.profile_id,
-            "Freerouting-Environment-Host": DEFAULT_HOST_HEADER
+            "Freerouting-Environment-Host": DEFAULT_HOST_HEADER,
+            "Connection": "close"
         }
 
     def _post(self, path: str, payload: dict | bytes = b"{}", method: str = "POST", timeout: float = 10.0) -> dict:
         url = f"{self.base_url}{path}"
         data = json.dumps(payload).encode("utf-8") if isinstance(payload, dict) else payload
-        req = urllib.request.Request(url, data=data, headers=self.headers, method=method)
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            raw = resp.read().decode("utf-8")
-            return json.loads(raw) if raw else {}
+        for attempt in range(2):
+            try:
+                req = urllib.request.Request(url, data=data, headers=self.headers, method=method)
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    raw = resp.read().decode("utf-8")
+                    return json.loads(raw) if raw else {}
+            except (ConnectionResetError, urllib.error.URLError) as e:
+                if attempt == 0:
+                    time.sleep(0.3)
+                    continue
+                raise
 
     def _get(self, path: str, timeout: float = 10.0) -> bytes | dict:
         url = f"{self.base_url}{path}"
-        req = urllib.request.Request(url, headers=self.headers)
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            content = resp.read()
+        for attempt in range(2):
             try:
-                return json.loads(content.decode("utf-8"))
-            except Exception:
-                return content
+                req = urllib.request.Request(url, headers=self.headers)
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    content = resp.read()
+                    try:
+                        return json.loads(content.decode("utf-8"))
+                    except Exception:
+                        return content
+            except (ConnectionResetError, urllib.error.URLError) as e:
+                if attempt == 0:
+                    time.sleep(0.3)
+                    continue
+                raise
 
     def create_session(self) -> str:
         """Creates a new routing session and returns sessionId."""
@@ -142,6 +157,11 @@ class FreeroutingClient:
             raise RuntimeError(f"Failed to enqueue job: {data}")
         return str(job_id)
 
+    def get_job(self, job_id: str) -> dict:
+        """Fetches full job metadata and effective configuration."""
+        res = self._get(f"/v1/jobs/{job_id}")
+        return res if isinstance(res, dict) else {}
+
     def update_settings(
         self,
         job_id: str,
@@ -151,15 +171,22 @@ class FreeroutingClient:
         max_passes: int = 1,
         copper_to_edge_clearance_um: int = 150
     ) -> dict:
-        """Configures router settings on the queued job before start."""
+        """Configures router settings on the queued job before start using dual snake_case / camelCase."""
         settings = {
+            "max_passes": max_passes,
+            "via_costs": via_costs,
+            "plane_via_costs": plane_via_costs,
+            "automatic_neckdown": automatic_neckdown,
+            "copper_to_edge_clearance_um": float(copper_to_edge_clearance_um),
+            "maxPasses": max_passes,
+            "automaticNeckdown": automatic_neckdown,
+            "copperToEdgeClearanceUm": float(copper_to_edge_clearance_um),
             "scoring": {
                 "viaCosts": via_costs,
-                "planeViaCosts": plane_via_costs
-            },
-            "automaticNeckdown": automatic_neckdown,
-            "maxPasses": max_passes,
-            "copperToEdgeClearanceUm": float(copper_to_edge_clearance_um)
+                "planeViaCosts": plane_via_costs,
+                "via_costs": via_costs,
+                "plane_via_costs": plane_via_costs
+            }
         }
         return self._post(f"/v1/jobs/{job_id}/settings", settings)
 
@@ -202,17 +229,20 @@ class FreeroutingClient:
             time.sleep(poll_interval)
         raise TimeoutError(f"Freerouting job {job_id} timed out after {timeout_sec}s")
 
+    def get_output(self, job_id: str) -> bytes:
+        """Retrieves raw output bytes (.ses) from the completed job."""
+        out_data = self._get(f"/v1/jobs/{job_id}/output")
+        if isinstance(out_data, dict) and "data" in out_data:
+            return base64.b64decode(out_data["data"])
+        elif isinstance(out_data, bytes):
+            return out_data
+        raise RuntimeError(f"Unexpected output format from /v1/jobs/{job_id}/output: {type(out_data)}")
+
     def download_ses(self, job_id: str, dest_path: str | Path) -> Path:
         """Downloads the routed Specctra session (.ses) file and saves it to disk."""
-        out_data = self._get(f"/v1/jobs/{job_id}/output")
+        ses_bytes = self.get_output(job_id)
         dest_p = Path(dest_path)
-        if isinstance(out_data, dict) and "data" in out_data:
-            ses_bytes = base64.b64decode(out_data["data"])
-            dest_p.write_bytes(ses_bytes)
-        elif isinstance(out_data, bytes):
-            dest_p.write_bytes(out_data)
-        else:
-            raise RuntimeError(f"Unexpected output format from /v1/jobs/{job_id}/output: {type(out_data)}")
+        dest_p.write_bytes(ses_bytes)
         return dest_p
 
     def route(

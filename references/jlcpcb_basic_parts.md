@@ -5,6 +5,8 @@ This catalog maintains the verified, zero-extended-fee (**Basic Part**) componen
 2. Map to official **KiCad IPC-7351 SMD footprints** (zero silkscreen overlap, proper courtyards, 100% physical compatibility).
 3. Incur **$0.00 extended component setup fees** at JLCPCB (saving ~$3 per unique part).
 
+> **Procurement & Verification Notice:** While these components represent highly standardized parts, JLCPCB Basic vs. Extended classifications and live inventory can evolve over time. Always cross-check the exact MPN and voltage/power ratings during Step 4 BOM review before placing production orders.
+
 ---
 
 ##1. Resistors (0805 & 0603 SMD)
@@ -20,19 +22,19 @@ This catalog maintains the verified, zero-extended-fee (**Basic Part**) componen
 | **1kΩ** | 0805 | `Device:R` | `Resistor_SMD:R_0805_2012Metric` | `C17513` | Basic Part | Transistor base / Pull-up |
 | **2.2kΩ** | 0805 | `Device:R` | `Resistor_SMD:R_0805_2012Metric` | `C17581` | Basic Part | I2C Fast-mode pull-up |
 | **4.7kΩ** | 0805 | `Device:R` | `Resistor_SMD:R_0805_2012Metric` | `C17673` | Basic Part | Standard I2C pull-up |
-| **5.1kΩ** | 0805 | `Device:R` | `Resistor_SMD:R_0805_2012Metric` | `C23186` | Basic Part | Type-C CC1/CC2 pull-down |
+| **5.1kΩ** | 0805 | `Device:R` | `Resistor_SMD:R_0805_2012Metric` | `C27834` | Basic Part | Type-C CC1/CC2 pull-down (UNI-ROYAL 0805W8F5101T5E) |
 | **10kΩ** | 0805 | `Device:R` | `Resistor_SMD:R_0805_2012Metric` | `C17414` | Basic Part | General pull-up / pull-down |
 | **47kΩ** | 0805 | `Device:R` | `Resistor_SMD:R_0805_2012Metric` | `C17714` | Basic Part | High-Z divider |
 | **100kΩ** | 0805 | `Device:R` | `Resistor_SMD:R_0805_2012Metric` | `C17407` | Basic Part | Voltage divider / Enable pull-up |
 | **1kΩ** | 0603 | `Device:R` | `Resistor_SMD:R_0603_1608Metric` | `C21190` | Basic Part | Compact 1k |
 | **4.7kΩ** | 0603 | `Device:R` | `Resistor_SMD:R_0603_1608Metric` | `C23163` | Basic Part | Compact I2C pull-up |
-| **5.1kΩ** | 0603 | `Device:R` | `Resistor_SMD:R_0603_1608Metric` | `C23186` | Basic Part | Compact Type-C CC |
+| **5.1kΩ** | 0603 | `Device:R` | `Resistor_SMD:R_0603_1608Metric` | `C23186` | Basic Part | Compact Type-C CC (UNI-ROYAL 0603WAF5101T5E) |
 | **10kΩ** | 0603 | `Device:R` | `Resistor_SMD:R_0603_1608Metric` | `C25804` | Basic Part | Compact 10k pull-up |
 | **100kΩ** | 0603 | `Device:R` | `Resistor_SMD:R_0603_1608Metric` | `C25803` | Basic Part | Compact 100k |
 
 ---
 
-##2. Capacitors (MLCC 0805 & 0603 SMD)
+## 2. Capacitors (MLCC 0805 & 0603 SMD)
 
 | Value | Voltage | Package | KiCad Symbol | KiCad IPC Footprint | LCSC Part # | JLCPCB Class | Description |
 |---|---|---|---|---|---|---|---|
@@ -41,11 +43,11 @@ This catalog maintains the verified, zero-extended-fee (**Basic Part**) componen
 | **1nF** | 50V | 0805 | `Device:C` | `Capacitor_SMD:C_0805_2012Metric` | `C1588` | Basic Part | Noise snubbing |
 | **10nF** | 50V | 0805 | `Device:C` | `Capacitor_SMD:C_0805_2012Metric` | `C1517` | Basic Part | Mid-band decoupling |
 | **100nF (0.1µF)** | 50V | 0805 | `Device:C` | `Capacitor_SMD:C_0805_2012Metric` | `C1525` | Basic Part | Standard IC bypass (Every VDD) |
-| **1µF** | 50V | 0805 | `Device:C` | `Capacitor_SMD:C_0805_2012Metric` | `C15849` | Basic Part | Local bulk decoupling |
+| **1µF** | 50V | 0805 | `Device:C` | `Capacitor_SMD:C_0805_2012Metric` | `C28323` | Basic Part | Local bulk decoupling (Samsung CL21B105KBFNNNE) |
 | **10µF** | 16V | 0805 | `Device:C` | `Capacitor_SMD:C_0805_2012Metric` | `C15850` | Basic Part | LDO Input/Output stabilizer |
 | **22µF** | 10V | 0805 | `Device:C` | `Capacitor_SMD:C_0805_2012Metric` | `C45783` | Basic Part | Regulator bulk filter |
 | **100nF** | 50V | 0603 | `Device:C` | `Capacitor_SMD:C_0603_1608Metric` | `C14663` | Basic Part | Compact IC bypass |
-| **1µF** | 25V | 0603 | `Device:C` | `Capacitor_SMD:C_0603_1608Metric` | `C15849` | Basic Part | Compact bulk |
+| **1µF** | 50V | 0603 | `Device:C` | `Capacitor_SMD:C_0603_1608Metric` | `C15849` | Basic Part | Compact bulk (Samsung CL10A105KB8NNNC) |
 | **10µF** | 10V | 0603 | `Device:C` | `Capacitor_SMD:C_0603_1608Metric` | `C19702` | Basic Part | Compact LDO filter |
 
 ---

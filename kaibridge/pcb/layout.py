@@ -71,7 +71,7 @@ try:
     res = _execute_in_process(r"{str(pcb_file)}", d.get("ops", []), d.get("board", {{}}), dry_run=d.get("dry_run", False))
     print("APPLY_OPS_RESULT:" + json.dumps(res), flush=True)
 except Exception as e:
-    print("APPLY_OPS_ERROR:" + traceback.format_exc(), flush=True)
+    print("APPLY_OPS_ERROR:" + json.dumps({{"error": traceback.format_exc()}}), flush=True)
 finally:
     os._exit(0)
 """
@@ -85,7 +85,11 @@ finally:
             if line.startswith("APPLY_OPS_RESULT:"):
                 return json.loads(line.replace("APPLY_OPS_RESULT:", ""))
             if line.startswith("APPLY_OPS_ERROR:"):
-                return {"success": False, "error": line.replace("APPLY_OPS_ERROR:", "")}
+                try:
+                    err_payload = json.loads(line.replace("APPLY_OPS_ERROR:", ""))
+                    return {"success": False, "error": err_payload.get("error", "Unknown subprocess error")}
+                except Exception:
+                    return {"success": False, "error": line.replace("APPLY_OPS_ERROR:", "")}
         return {"success": False, "error": res_sub.stderr.strip() or res_sub.stdout.strip()}
 
 
@@ -100,14 +104,14 @@ def _execute_in_process(
     applied = 0
     errors = []
 
-    # Clear options if requested
+    # Clear options if requested (use b.Delete to avoid SWIG type table corruption)
     if board_meta.get("clear_edge_cuts"):
         for drw in list(b.GetDrawings()):
             if drw.GetLayer() == pcbnew.Edge_Cuts:
-                b.Remove(drw)
+                b.Delete(drw)
     if board_meta.get("clear_tracks") or board_meta.get("unroute_all"):
         for t in list(b.GetTracks()):
-            b.Remove(t)
+            b.Delete(t)
 
     fps = {fp.GetReference(): fp for fp in b.GetFootprints()}
 
@@ -213,25 +217,22 @@ def _execute_in_process(
                 elif field_name.lower() == "reference":
                     fp.SetReference(field_value)
                 else:
-                    # Set or create custom field
-                    found = False
-                    for fld in fp.GetFields():
-                        if fld.GetName() == field_name:
-                            fld.SetText(field_value)
-                            found = True
-                            break
-                    if not found:
-                        new_field = pcbnew.PCB_FIELD(fp, fp.GetFieldCount(), field_name)
-                        new_field.SetText(field_value)
-                        new_field.SetVisible(False)
-                        fp.AddField(new_field)
+                    if hasattr(fp, "SetField"):
+                        fp.SetField(field_name, field_value)
+                    else:
+                        found = False
+                        for fld in fp.GetFields():
+                            if fld.GetName() == field_name:
+                                fld.SetText(field_value)
+                                found = True
+                                break
                 applied += 1
 
         # 4. Delete Footprint
         elif action in ("item.delete", "delete", "footprint.delete", "fp_delete", "remove_part"):
             fp = fps.get(ref)
             if fp:
-                b.Remove(fp)
+                b.Delete(fp)
                 del fps[ref]
                 applied += 1
 
@@ -250,7 +251,7 @@ def _execute_in_process(
             edge = pcbnew.Edge_Cuts
             for drw in list(b.GetDrawings()):
                 if drw.GetLayer() == edge:
-                    b.Remove(drw)
+                    b.Delete(drw)
             def add_edge_seg(x1, y1, x2, y2):
                 s = pcbnew.PCB_SHAPE(b)
                 s.SetShape(pcbnew.SHAPE_T_SEGMENT)
@@ -271,7 +272,7 @@ def _execute_in_process(
             edge = pcbnew.Edge_Cuts
             for drw in list(b.GetDrawings()):
                 if drw.GetLayer() == edge:
-                    b.Remove(drw)
+                    b.Delete(drw)
             all_fps = list(b.GetFootprints())
             if all_fps:
                 x0 = min(fp.GetBoundingBox().GetLeft() / 1e6 for fp in all_fps) - margin
@@ -303,7 +304,7 @@ def _execute_in_process(
             target_net = op.get("net")
             for t in list(b.GetTracks()):
                 if not target_net or (t.GetNet() and t.GetNet().GetNetname() == target_net):
-                    b.Remove(t)
+                    b.Delete(t)
             applied += 1
 
         # 8. Add Copper Track
@@ -354,7 +355,7 @@ def _execute_in_process(
                 match_net = not target_net or (z_netname == target_net) or (z.GetNet() and z.GetNet().GetNetname() == target_net)
                 match_layer = layer_id is None or z.GetLayer() == layer_id
                 if match_net and match_layer:
-                    b.Remove(z)
+                    b.Delete(z)
                     applied += 1
 
         # 11. Refill Zones
@@ -400,7 +401,7 @@ def _execute_in_process(
         elif action in ("board.prep_for_route", "prep_for_route"):
             for t in list(b.GetTracks()):
                 if not t.GetNet() or t.GetNet().GetNetCode() == 0:
-                    b.Remove(t)
+                    b.Delete(t)
             applied += 1
 
         # 14. Silkscreen Sanitation / Clean-up
@@ -432,6 +433,9 @@ def _execute_in_process(
                         ref_text.SetVisible(False)
             applied += 1
 
+        else:
+            errors.append(f"Unknown layout operation: '{action}'")
+
     b.BuildListOfNets()
     b.BuildConnectivity()
 
@@ -440,14 +444,20 @@ def _execute_in_process(
         # Check component collisions using true physical courtyards in memory without writing to disk
         fps_list = list(b.GetFootprints())
         def _get_crt_bbox(fp):
-            for l in (pcbnew.F_CrtYd, pcbnew.B_CrtYd):
+            if hasattr(fp, "GetCourtyard"):
+                for l in (pcbnew.F_CrtYd, pcbnew.B_CrtYd):
+                    try:
+                        c = fp.GetCourtyard(l)
+                        if c and not c.IsEmpty():
+                            return c.BBox()
+                    except Exception:
+                        pass
+            if hasattr(fp, "GetBoundingBox"):
                 try:
-                    c = fp.GetCourtyard(l)
-                    if c and not c.IsEmpty():
-                        return c.BBox()
+                    return fp.GetBoundingBox()
                 except Exception:
                     pass
-            return fp.GetBoundingBox()
+            return None
 
         for i in range(len(fps_list)):
             for j in range(i + 1, len(fps_list)):
@@ -455,13 +465,15 @@ def _execute_in_process(
                 fp_b = fps_list[j]
                 bb_a = _get_crt_bbox(fp_a)
                 bb_b = _get_crt_bbox(fp_b)
-                if bb_a.Intersects(bb_b):
-                    overlaps.append(f"{fp_a.GetReference()} <-> {fp_b.GetReference()}")
+                if bb_a and bb_b and bb_a.Intersects(bb_b):
+                    ref_a = fp_a.GetReference() if hasattr(fp_a, "GetReference") else f"fp_{i}"
+                    ref_b = fp_b.GetReference() if hasattr(fp_b, "GetReference") else f"fp_{j}"
+                    overlaps.append(f"{ref_a} <-> {ref_b}")
     else:
         pcbnew.SaveBoard(str(pcb_path), b)
 
     result = {
-        "success": applied > 0 or len(ops) == 0,
+        "success": (applied > 0 or len(ops) == 0) and len(errors) == 0,
         "dry_run": dry_run,
         "applied_ops_count": applied,
         "errors": errors

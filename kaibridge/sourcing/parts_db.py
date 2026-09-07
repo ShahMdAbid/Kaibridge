@@ -29,6 +29,7 @@ _GOLDEN_CACHE = {
     ("R", "1k", "0805"): {"lcsc": "C17513", "mfr": "Uniroyal", "mpn": "0805W8F1001T5E", "desc": "1kΩ ±1% 0805 Resistor"},
     ("R", "2.2k", "0805"): {"lcsc": "C17581", "mfr": "Uniroyal", "mpn": "0805W8F2201T5E", "desc": "2.2kΩ ±1% 0805 Resistor"},
     ("R", "4.7k", "0805"): {"lcsc": "C17673", "mfr": "Uniroyal", "mpn": "0805W8F4701T5E", "desc": "4.7kΩ ±1% 0805 Resistor"},
+    ("R", "5.1k", "0805"): {"lcsc": "C27834", "mfr": "Uniroyal", "mpn": "0805W8F5101T5E", "desc": "5.1kΩ ±1% 0805 Resistor"},
     ("R", "10k", "0805"): {"lcsc": "C17414", "mfr": "Uniroyal", "mpn": "0805W8F1002T5E", "desc": "10kΩ ±1% 0805 Resistor"},
     ("R", "20k", "0805"): {"lcsc": "C17568", "mfr": "Uniroyal", "mpn": "0805W8F2002T5E", "desc": "20kΩ ±1% 0805 Resistor"},
     ("R", "47k", "0805"): {"lcsc": "C17707", "mfr": "Uniroyal", "mpn": "0805W8F4702T5E", "desc": "47kΩ ±1% 0805 Resistor"},
@@ -40,6 +41,7 @@ _GOLDEN_CACHE = {
     ("R", "100R", "0603"): {"lcsc": "C22775", "mfr": "Uniroyal", "mpn": "0603WAF1000T5E", "desc": "100Ω ±1% 0603 Resistor"},
     ("R", "1k", "0603"): {"lcsc": "C21190", "mfr": "Uniroyal", "mpn": "0603WAF1001T5E", "desc": "1kΩ ±1% 0603 Resistor"},
     ("R", "4.7k", "0603"): {"lcsc": "C23162", "mfr": "Uniroyal", "mpn": "0603WAF4701T5E", "desc": "4.7kΩ ±1% 0603 Resistor"},
+    ("R", "5.1k", "0603"): {"lcsc": "C23186", "mfr": "Uniroyal", "mpn": "0603WAF5101T5E", "desc": "5.1kΩ ±1% 0603 Resistor"},
     ("R", "10k", "0603"): {"lcsc": "C25804", "mfr": "Uniroyal", "mpn": "0603WAF1002T5E", "desc": "10kΩ ±1% 0603 Resistor"},
     ("R", "100k", "0603"): {"lcsc": "C25803", "mfr": "Uniroyal", "mpn": "0603WAF1003T5E", "desc": "100kΩ ±1% 0603 Resistor"},
 
@@ -49,7 +51,7 @@ _GOLDEN_CACHE = {
     ("C", "1nF", "0805"): {"lcsc": "C1803", "mfr": "Samsung", "mpn": "CL21B102KBANNNC", "desc": "1nF ±10% 50V X7R 0805 Capacitor"},
     ("C", "10nF", "0805"): {"lcsc": "C1710", "mfr": "Samsung", "mpn": "CL21B103KBANNNC", "desc": "10nF ±10% 50V X7R 0805 Capacitor"},
     ("C", "100nF", "0805"): {"lcsc": "C1525", "mfr": "Samsung", "mpn": "CL21B104KBCNNNC", "desc": "100nF ±10% 50V X7R 0805 Capacitor"},
-    ("C", "1uF", "0805"): {"lcsc": "C15849", "mfr": "Samsung", "mpn": "CL21B105KBFNNNE", "desc": "1uF ±10% 50V X7R 0805 Capacitor"},
+    ("C", "1uF", "0805"): {"lcsc": "C28323", "mfr": "Samsung", "mpn": "CL21B105KBFNNNE", "desc": "1uF ±10% 50V X7R 0805 Capacitor"},
     ("C", "4.7uF", "0805"): {"lcsc": "C19666", "mfr": "Samsung", "mpn": "CL21A475KAQNNNE", "desc": "4.7uF ±10% 25V X5R 0805 Capacitor"},
     ("C", "10uF", "0805"): {"lcsc": "C15850", "mfr": "Samsung", "mpn": "CL21A106KOQNNNE", "desc": "10uF ±10% 16V X5R 0805 Capacitor"},
 

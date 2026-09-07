@@ -145,6 +145,10 @@ for fp in b.GetFootprints():
             pbw, pbh = pbh, pbw
         bw = max(bw, pbw)
         bh = max(bh, pbh)
+        if bw > pbw * 1.8 + 4.0:
+            bw = pbw + 2.5
+        if bh > pbh * 1.8 + 4.0:
+            bh = pbh + 2.5
 
     data[ref] = {{
         "pads": pads,
@@ -727,110 +731,35 @@ if __name__ == "__main__":
 
     opt = PlanarLayoutOptimizer(proj, board_width=bw, board_height=bh, origin_x=ox, origin_y=oy)
 
-    # If ops_file was missing or lacked footprint placement ops, auto-seed initial grid placement
+    # If ops_file was missing or lacked footprint placement ops, synthesize via Hierarchical Molecular Floorplanner
     has_places = any(op.get("op") in ("footprint.place", "place") for op in init_ops)
     if not has_places:
-        print("[*] No existing footprint placement found in ops.json -- auto-seeding 4-Zone floorplan layout...")
-        init_ops = [{"op": "board.set_size", "width": bw, "height": bh, "origin_x": ox, "origin_y": oy}]
-
-        # Classify connectors vs core components
-        input_conns = []
-        output_conns = []
-        other_conns = []
-        core_parts = []
-
-        for ref in opt.fp_data:
-            ref_u = ref.upper()
-            pdata = opt.design.get("parts", {}).get(ref, {})
-            val_u = str(pdata.get("value", "")).upper()
-            lib_u = str(pdata.get("lib_id", "")).upper()
-            is_conn = ref_u.startswith(("J", "CONN", "USB", "HDR", "HEADER", "JACK", "TERM")) or "CONNECTOR" in lib_u or "HEADER" in lib_u or "USB" in lib_u
-
-            if is_conn:
-                if any(k in ref_u or k in val_u or k in lib_u for k in ("USB", "IN", "VBUS", "VIN", "PWR_IN", "5V_IN", "DC")):
-                    input_conns.append(ref)
-                elif any(k in ref_u or k in val_u or k in lib_u for k in ("OUT", "HDR", "HEADER", "PIN", "GPIO", "BUS", "CAN", "RS485")):
-                    output_conns.append(ref)
-                else:
-                    other_conns.append(ref)
-            else:
-                core_parts.append(ref)
-
-        # Distribute unclassified connectors across West (Input) and East (Output) edges
-        if not input_conns and other_conns:
-            input_conns.append(other_conns.pop(0))
-        if not output_conns and other_conns:
-            output_conns.append(other_conns.pop(0))
-
-        # 1. Place Input Connectors on West (Left) Edge, facing outward
-        y_step = bh / (len(input_conns) + 1)
-        for idx, ref in enumerate(input_conns):
-            fp_w = opt.fp_data[ref]["width"]
-            px = round((ox + opt.margin + fp_w / 2.0) * 2.0) / 2.0
-            py = round((oy + (idx + 1) * y_step) * 2.0) / 2.0
-            pdata = opt.design.get("parts", {}).get(ref, {})
-            is_usb = "USB" in ref.upper() or "USB" in str(pdata).upper()
-            rot = 270 if is_usb else 180
-            init_ops.append({
-                "op": "footprint.place",
-                "ref": ref,
-                "x": px,
-                "y": py,
-                "rot": rot,
-                "locked": True
-            })
-
-        # 2. Place Output Connectors on East (Right) Edge, facing outward
-        y_step_out = bh / (len(output_conns) + 1)
-        for idx, ref in enumerate(output_conns):
-            fp_w = opt.fp_data[ref]["width"]
-            px = round((ox + bw - opt.margin - fp_w / 2.0) * 2.0) / 2.0
-            py = round((oy + (idx + 1) * y_step_out) * 2.0) / 2.0
-            init_ops.append({
-                "op": "footprint.place",
-                "ref": ref,
-                "x": px,
-                "y": py,
-                "rot": 270,
-                "locked": True
-            })
-
-        # 3. Place remaining other connectors distributed evenly on North / South edges
-        x_step_other = bw / (len(other_conns) + 1) if other_conns else bw / 2.0
-        for idx, ref in enumerate(other_conns):
-            fp_h = opt.fp_data[ref]["height"]
-            px = round((ox + (idx + 1) * x_step_other) * 2.0) / 2.0
-            py = round((oy + opt.margin + fp_h / 2.0) * 2.0) / 2.0
-            init_ops.append({
-                "op": "footprint.place",
-                "ref": ref,
-                "x": px,
-                "y": py,
-                "rot": 0,
-                "locked": True
-            })
-
-        # 4. Place Core ICs and Passives in center corridor (Zone 2 & 3)
-        cols = 3
-        avail_w = max(10.0, bw - 2 * opt.margin - 14.0)
-        spacing_x = avail_w / max(1, cols)
-        spacing_y = 6.0
-        c_idx = 0
-        r_idx = 0
-        for ref in core_parts:
-            px = round((ox + opt.margin + 8.0 + (c_idx + 0.5) * spacing_x) * 2.0) / 2.0
-            py = round((oy + opt.margin + (r_idx + 0.5) * spacing_y) * 2.0) / 2.0
-            init_ops.append({
-                "op": "footprint.place",
-                "ref": ref,
-                "x": px,
-                "y": py,
-                "rot": 0
-            })
-            c_idx += 1
-            if c_idx >= cols:
-                c_idx = 0
-                r_idx += 1
+        print("[*] No existing footprint placement found in ops.json -- synthesizing Hierarchical Molecular Floorplan...")
+        try:
+            from kaibridge.pcb.hierarchical_floorplan import HierarchicalFloorplanner
+            planner = HierarchicalFloorplanner(
+                fp_data=opt.fp_data,
+                design=opt.design,
+                nets=opt.nets,
+                board_width=bw,
+                board_height=bh,
+                origin_x=ox,
+                origin_y=oy,
+                margin=opt.margin
+            )
+            init_ops = planner.generate_floorplan()
+            print(f"[*] Hierarchical Floorplanner synthesized {len(init_ops)} optimized placement operations.")
+        except Exception as e:
+            print(f"[-] Hierarchical Floorplanner fallback: {e}")
+            init_ops = [{"op": "board.set_size", "width": bw, "height": bh, "origin_x": ox, "origin_y": oy}]
+            for idx, ref in enumerate(opt.fp_data):
+                init_ops.append({
+                    "op": "footprint.place",
+                    "ref": ref,
+                    "x": round((ox + opt.margin + 8.0 + (idx % 4) * 12.0) * 2.0) / 2.0,
+                    "y": round((oy + opt.margin + (idx // 4) * 10.0) * 2.0) / 2.0,
+                    "rot": 0
+                })
 
     best_ops, crossings = opt.optimize(init_ops, steps=args.steps, temp_init=args.temp)
 

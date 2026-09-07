@@ -1,43 +1,42 @@
-#Handling Stacked Symbol Pins in Kaibridge 2.0 `design.json`
+# Handling Stacked Symbol Pins & Multi-Pad Connections in Kaibridge `design.json`
 
-When defining nets in `design.json`, **do not list multiple pins for a component if those pins are physically stacked (share identical coordinates) in the KiCad symbol.**
-
----
-
-##The Issue
-
-Certain official KiCad symbols (such as microcontrollers or USB connectors) have multiple identical power or ground pins:
-- Example: `GND` on pins 3, 5, 21 for ATmega328P-PU
-- Example: `GND` on A1, A12, B1, B12 for USB-C Type-C connectors
-- Example: Shield/shell pins on mechanical connectors
-
-In many symbol libraries, these redundant power/ground pins are drawn directly on top of each other at identical X/Y coordinates to save visual space.
-
-If you list all stacked pins in a net array inside `design.json`:
-```json
-"GND": [
-  "U1.3",
-  "U1.5",
-  "U1.21"
-]
-```
-The schematic compiler (`json2sch.py` or `kaibridge_build_schematic`) attaches a net label to each declared pin coordinate. When pins share the exact same location, labels overlap on top of each other, cluttering the schematic visual and triggering potential label collision warnings.
+When defining nets in `design.json`, understand the critical distinction between **schematic visual pins** and **physical PCB footprint pads**.
 
 ---
 
-##The Solution
+## 1. The Issue: Schematic Stacking vs. Physical Footprints
 
-**Specify only the single visible primary pin** in `design.json`:
+Certain components have multiple physical pins for power, ground, or shielding:
+- **USB-C Receptacles:** Mirrored ground contacts (`A1`, `B12`, `A12`, `B1`), VBUS contacts (`A4`, `B9`, `A9`, `B12`), and shield/chassis pads (`SH`, `SH1`, `SH2`).
+- **Microcontrollers:** Multiple `GND` or `VDD` pins across package corners.
+- **Transistors / Regulators:** Heatsink tabs sharing pad numbers or electrical nets.
 
-```json
-"GND": [
-  "U1.3",
-  "C1.2",
-  "J1.1"
-]
-```
+### Schematic Level:
+In some symbol libraries, redundant ground/power pins are drawn directly on top of each other at identical X/Y coordinates. Declaring multiple overlapping pins at the exact same schematic coordinate can produce stacked visual labels.
 
-###Why This Works:
-1. **Schematic Cleanliness:** KiCad renders one clean, readable net label at pin 3 without overlapping text.
-2. **Internal Net Connection:** KiCad's symbol definition automatically associates the stacked pins internally. When `kicad_pcb_sync.py` (or `kaibridge_sync_to_pcb`) generates `.kicad_pcb`, all physical footprint pads (e.g. pads 3, 5, and 21) are correctly connected to `GND`.
-3. **Zero ERC Violations:** Headless ERC verifies that the power net is driven and continuous without duplicate pin errors.
+### PCB Layout Level:
+On the physical PCB, **every single copper pad must have its net assigned**. If a secondary ground pad (such as `B12` on a USB-C connector) is omitted from net connections and not aliased, it will remain floating in the PCB, creating unrouted airwires and failing DRC.
+
+---
+
+## 2. The Solution & Best Practices
+
+1. **Explicit Pad Connections:**
+   In `design.json`, ensure all physical terminals requiring copper connection are declared in `"connections"`. For USB-C connectors with distinct pads (`A1`, `B12`, `A12`, `B1`), declare the pads or use composite aliases:
+   ```json
+   "GND": {
+     "connections": ["J1.A1", "J1.B12", "J1.A12", "J1.B1", "U1.1", "C1.2"]
+   }
+   ```
+
+2. **Composite Alias Support in `sync.py`:**
+   Kaibridge's PCB synchronizer (`kaibridge/pcb/sync.py`) automatically matches exact pad numbers as well as composite aliases (e.g. declaring `"J1.A1/B12"` will automatically bind both physical pad `A1` and physical pad `B12` on the footprint).
+
+3. **Shield & No-Connect Pins:**
+   Unused or chassis shield pads (e.g. `J1.SH`, `J1.SH1-SH4`) must be explicitly declared in `"no_connect"` if left unconnected to prevent dangling pad warnings:
+   ```json
+   "no_connect": ["J1.SH"]
+   ```
+
+4. **Verify via DRC:**
+   After syncing the PCB and routing, always run `kicad_route.py --drc` or `python kicad_drc.py`. Any missed physical pads will be caught immediately as `unconnected_items`.

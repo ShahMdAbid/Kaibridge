@@ -58,14 +58,26 @@ def export_snapshot(project_dir: str | Path) -> str:
 
     return str(out_svg)
 
+def export_schematic_snapshot(project_dir: str | Path, fmt: str = "svg") -> str:
+    from kaibridge.pcb.preview import render_schematic_preview
+    res = render_schematic_preview(project_dir, fmt=fmt)
+    if not res.get("success"):
+        raise RuntimeError(f"Schematic export failed: {res.get('error', 'Unknown error')}")
+    return res["schematic_preview_path"]
+
 def main():
-    ap = argparse.ArgumentParser(description="Export vector SVG snapshot of PCB.")
+    ap = argparse.ArgumentParser(description="Export vector SVG snapshot of PCB or Schematic.")
     ap.add_argument("project_dir", help="KiCad project folder")
+    ap.add_argument("--schematic", action="store_true", help="Export schematic SVG preview instead of PCB layout")
     args = ap.parse_args()
 
     try:
-        svg_path = export_snapshot(args.project_dir)
-        print(f"[*] Snapshot saved to: {svg_path}")
+        if args.schematic:
+            svg_path = export_schematic_snapshot(args.project_dir)
+            print(f"[*] Schematic snapshot saved to: {svg_path}")
+        else:
+            svg_path = export_snapshot(args.project_dir)
+            print(f"[*] PCB snapshot saved to: {svg_path}")
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)

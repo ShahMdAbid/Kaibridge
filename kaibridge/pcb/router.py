@@ -175,6 +175,20 @@ def unroute_board(
         return {"success": False, "error": str(e)}
 
 
+def prep_for_route(board):
+    """Purges all existing tracks, vias, and copper zones from the board
+    prior to exporting DSN. Eliminates ghost zones, stale via obstacles,
+    and locked plane definitions in Specctra DSN.
+    """
+    for t in list(board.GetTracks()):
+        board.Delete(t)
+    for z in list(board.Zones()):
+        board.Delete(z)
+    board.BuildListOfNets()
+    board.BuildConnectivity()
+    return board
+
+
 def apply_dogbone_fanout(board, gnd_net_name: str = "GND") -> int:
     """Pre-places 0.6mm structural vias (0.3mm drill) and 0.25mm escape neck traces
     offset 1.0-1.2mm away from every SMD GND pad. Guarantees intact solder mask dams
@@ -340,7 +354,7 @@ def route_board(
     max_passes: Optional[int] = None,
     fanout_first: Optional[bool] = None,
     strategy: str = "auto",
-    via_costs: int = 140,
+    via_costs: int = 1000,
     plane_via_costs: int = 100,
     automatic_neckdown: bool = True,
     use_daemon: bool = True
@@ -382,6 +396,13 @@ def route_board(
     ses_file = proj_path / f"{stem}.ses"
     rules_file = proj_path / f"{stem}.rules"
 
+    # Always delete stale SES file to guarantee fresh routing results
+    if ses_file.exists():
+        try:
+            ses_file.unlink()
+        except Exception:
+            pass
+
     import gc
     gc.collect()
 
@@ -400,30 +421,31 @@ def route_board(
             chk_board = pcbnew.LoadBoard(str(pcb_file))
             fps = list(chk_board.GetFootprints())
             max_pads = max([fp.GetPadCount() for fp in fps] or [0])
-            active_nets = [n for n in chk_board.GetNetsByName().values() if n.GetNetname() not in ("", "GND")]
+            all_net_names = {n.GetNetname() for n in chk_board.GetNetsByName().values()}
+            active_nets = [n for n in all_net_names if n and n != ""]
+            copper_layers = chk_board.GetCopperLayerCount()
             del chk_board
             gc.collect()
-            if max_pads >= 24 or len(active_nets) > 20:
+            if copper_layers > 2 or max_pads >= 24 or len(active_nets) > 20 or "GND" not in all_net_names:
                 use_fanout = False
-                print(f"[*] Adaptive Router: High-density board detected (max IC pads: {max_pads}, active nets: {len(active_nets)}) -> Selected Strategy 2 (Dual-Layer Routing).")
+                reason = "4-layer stackup" if copper_layers > 2 else ("isolated/non-standard ground domains" if "GND" not in all_net_names else f"max IC pads: {max_pads}, active nets: {len(active_nets)}")
+                print(f"[*] Adaptive Router: Multi-domain or high-density board detected ({reason}) -> Selected Strategy 2 (Dual-Layer Routing).")
             else:
                 use_fanout = True
-                print(f"[*] Adaptive Router: Standard/discrete board detected (max IC pads: {max_pads}, active nets: {len(active_nets)}) -> Selected Strategy 1 (Dog-Bone Fanout First).")
         except Exception:
             use_fanout = False
+
+    if not use_fanout and via_costs == 1000:
+        via_costs = 50
 
     # 1. Export Specctra DSN (with optional Tier-1 Dog-Bone Fanout First)
     try:
         board = pcbnew.LoadBoard(str(pcb_file))
         # Always clean previous routing tracks, vias, AND zones before exporting DSN
-        # This prevents KiCad from exporting (plane GND (polygon B.Cu ...)) which locks B.Cu against signal routing
-        for t in list(board.GetTracks()):
-            board.Delete(t)
-        for z in list(board.Zones()):
-            board.Delete(z)
+        board = prep_for_route(board)
         if use_fanout:
             apply_dogbone_fanout(board, "GND")
-            pcbnew.SaveBoard(str(pcb_file), board)
+        pcbnew.SaveBoard(str(pcb_file), board)
         pcbnew.ExportSpecctraDSN(board, str(dsn_file))
         del board
         gc.collect()
@@ -464,6 +486,11 @@ def route_board(
                 rules_file.unlink()
             except Exception:
                 pass
+        # Ensure internal layers are active routing layers in Freerouting (not locked power planes)
+        dsn_text = dsn_file.read_text(encoding="utf-8")
+        if "(type power)" in dsn_text:
+            dsn_text = re.sub(r'\(type\s+power\)', '(type signal)', dsn_text)
+            dsn_file.write_text(dsn_text, encoding="utf-8")
 
     # 1.5. Pre-flight Specctra DSN Audit (Failproof Guard)
     dsn_audit = audit_dsn(dsn_file)
@@ -512,7 +539,7 @@ def route_board(
             proc_err = f"Daemon route failed: {e}"
 
     # Fallback / Direct Tier 1: Optimized CLI Pipeline
-    if not ses_file.exists() or freerouting_failed:
+    if not ses_file.exists() or freerouting_failed or not use_daemon:
         freerouting_failed = False
         proc_err = ""
         cpu_threads = max(1, (os.cpu_count() or 2) - 1)
@@ -615,19 +642,37 @@ def route_board(
             except Exception:
                 pass
 
-        pcbnew.SaveBoard(str(pcb_file), board)
-        
-        # Ensure .kicad_pro has standard JLCPCB rules
+        # Ensure .kicad_pro has standard JLCPCB rules (0.127mm for 2-layer, 0.09mm for 4-layer)
+        min_c = 0.127
         if pro_files:
             try:
                 pdata = json.loads(pro_files[0].read_text(encoding="utf-8"))
                 rules = pdata.setdefault("board", {}).setdefault("design_settings", {}).setdefault("rules", {})
-                rules["min_track_width"] = 0.15
-                rules["min_clearance"] = 0.15
+                num_cu = board.GetCopperLayerCount()
+                # Dynamically respect netclass minimum clearance if specified
+                netclass_min_c = 0.09 if num_cu > 2 else 0.127
+                try:
+                    for nc in pdata.get("net_settings", {}).get("classes", []):
+                        if "clearance" in nc and float(nc["clearance"]) > 0:
+                            netclass_min_c = min(netclass_min_c, float(nc["clearance"]))
+                except Exception:
+                    pass
+                min_w = 0.09 if num_cu > 2 else 0.127
+                min_c = netclass_min_c
+                rules["min_track_width"] = min_w
+                rules["min_clearance"] = min_c
                 rules["min_copper_edge_clearance"] = 0.15
                 pro_files[0].write_text(json.dumps(pdata, indent=2), encoding="utf-8")
             except Exception:
                 pass
+
+        try:
+            b_settings = board.GetDesignSettings()
+            b_settings.m_MinClearance = int(min_c * 1e6)
+        except Exception:
+            pass
+
+        pcbnew.SaveBoard(str(pcb_file), board)
 
         imported_count = len(list(board.GetTracks()))
         del board
@@ -751,8 +796,14 @@ def add_ground_plane(
         filler = pcbnew.ZONE_FILLER(board)
         filler.Fill(board.Zones())
 
-        board.BuildListOfNets()
-        board.BuildConnectivity()
+        # Ensure board internal min_clearance is preserved
+        try:
+            pdata = json.loads(pro_files[0].read_text(encoding="utf-8"))
+            min_c = pdata.get("board", {}).get("design_settings", {}).get("rules", {}).get("min_clearance", 0.127)
+            board.GetDesignSettings().m_MinClearance = int(float(min_c) * 1e6)
+        except Exception:
+            pass
+
         pcbnew.SaveBoard(str(pcb_file), board)
         del board
         gc.collect()

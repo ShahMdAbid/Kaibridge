@@ -5,6 +5,63 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Beta v2.4.1] - 2026-09-08
+
+### Changed & Streamlined
+- **Concise & Clean `SKILL.md` Workflow (Up to Schematic Generation):**
+  - Reordered procedural workflow: **Step 0 Bootstrap** (`kicad_lib_init.py`) immediately sets up project libraries and tables upon prompt receipt.
+  - Postponed formal BOM and netlist generation from Step 1 wishlist to **Step 4 Implementation Plan**, requiring ground-truth pin extraction from downloaded symbols (`kicad_pins.py`) first to eliminate pin-out hallucinations and premature design lock-in.
+  - Simplified EasyEDA active component download CLI commands to direct, cross-platform paths without shell-specific `Push-Location` or `$PWD`.
+  - Clarified ART-Gate as an adversarial cognitive review protocol applied during planning rather than an external CLI binary.
+  - Added **Recommended Default Placement Pipeline** in Step 8 (Anchor Placement → Apply Layout → Planar Optimization → Silkscreen Sanitation).
+  - Streamlined Step 8A by removing redundant embedded `ops.json` snippet, linking directly to canonical `ops_template.json` and Appendix A.
+
+### Added
+- **Vector Schematic Snapshot CLI (`pcb_snapshot.py --schematic`):** Added `--schematic` flag and `export_schematic_snapshot()` to `pcb_snapshot.py` to directly render vector SVG schematics to `<PROJECT_DIR>/kaibridge_dump/<NAME>_schematic.svg`.
+- **Audit Regression Test Suite (`tests/test_audit_fixes.py`):** Added unit tests covering DRC fail-closed behavior, composite pad matching, and LCSC passive disambiguation.
+
+### Fixed & Hardened
+- **Fail-Closed DRC Gate (`kaibridge/pcb/drc.py` & `kicad_route.py`):** Fixed potential false-PASS bug by purging stale `drc_report.json` prior to execution and enforcing strict fail-closed validation on missing or unparseable reports.
+- **Composite & Stacked Pad Matching (`kaibridge/pcb/sync.py`):** Replaced strict equality with `_matches_pad()`, supporting delimiter-separated aliases (`/`, `,`, `-`, `_`) so multi-pad contacts (e.g. Type-C `A1/B12`) properly connect to copper nets on PCB sync.
+- **LCSC Basic Parts & Footprint Mismatches (`references/jlcpcb_basic_parts.md` & `kaibridge/sourcing/parts_db.py`):**
+  - Resolved 0805 1µF 50V MLCC C-ID to Samsung `CL21B105KBFNNNE` (`C28323`), preserving `C15849` for 0603.
+  - Resolved 0805 5.1kΩ 1% resistor C-ID to UNI-ROYAL `0805W8F5101T5E` (`C27834`), preserving `C23186` for 0603.
+
+---
+
+## [Beta v2.4.0] - 2026-09-07
+
+### Added
+- **Proof-Carrying Compiler Architecture (`kaibridge.core.compiler`):** Unified 4-stage constructive hardware compiler (`compile_board`) that eliminates trial-and-error placement/routing loops.
+- **Integer Nanometer Domain IR (`kaibridge.core.ir`):** Immutable $1\text{nm} = 1\text{ unit}$ representation (`BoardIR`, `ComponentInstance`, `PadGeometry`, `NetHyperedge`) preventing floating-point geometric drift.
+- **Pre-Flight Invariant Proof Gates (E0–E6):**
+  - **E0–E2:** Requirements completeness, netlist parity, and fabrication floor verification.
+  - **E3 Pad-Pitch Solvability:** Algebraically proves $w_{\text{neck}} \le 2P - a - 2s$ in $<1$ms, halting deadlocks before routing.
+  - **E6 Separating Cut Gate:** Calculates exact throat capacity ($B_{\text{required}} = Nw + (N-1)s + b_L + b_R$) with formal deficit certificates.
+- **Characterized Electromagnetic Circuit Motifs (`kaibridge.core.motifs`):**
+  - Collinear shunt decoupling with solder mask dam preservation ($\ge 0.10$mm).
+  - Symmetrical crystal oscillator tanks ($\le 3.5$mm loop) with 4-vertex noise keepout polygons.
+  - Procedural necked-down escape stubs for fine-pitch IC pads, pre-routed and locked as `(type fix)`.
+- **Topological Channel & Routing Solvers:**
+  - $O(KN \log N)$ Fenwick tree inversion counter to eliminate bus braid crossings (`kaibridge.core.bus_order`).
+  - Analytical Quadratic Programming (QP) slack solver for corridor widening without coordinate guessing (`kaibridge.core.slack_solver`).
+  - Strict 2-layer $B.Cu$ ground return jumper bridge synthesis ($L_{\text{bridge}} \le 3.0$mm) with clearance moats (`kaibridge.core.bridge`).
+- **Comprehensive Organic Test Suite:** 23 automated end-to-end unit and integration tests running against live KiCad 10 and real Freerouting 2.4.1 in $<20$s (`tests/test_*.py`).
+- **First-Class Live Inspection & API Oracle Tooling:**
+  - **Live SWIG Oracle (`kicad_oracle.py`):** Previously internal/dormant reflection logic in `kaibridge.core.oracle` hardened into a first-class, instant (<4ms) CLI tool with exact method signatures, class inheritance trees, constants, and JSON export.
+  - **Live Board State Inspector (`kicad_inspect.py`):** Previously silent state extractor in `kaibridge.pcb.inspector` promoted to a canonical CLI tool (`--summary`, `--full`, `--json`), providing sub-second (<0.5s) extraction of live board bounds, footprint coordinates, rotations, locked states, nets, and design rules directly from `.kicad_pcb` for rapid iterative editing.
+
+### Changed
+- **System Rules & Protocols:** Overhauled `.agents/AGENTS.md` and `SKILL.md` to establish the Kaibridge 3.0 Proof-Carrying Hardware Compiler protocol over legacy Kaibridge 2.0 visual critique loops.
+- **4-Layer Dedicated Plane Inactivity:** Enforced `(layer_rule "In1.Cu" (active off))` and `(layer_rule "In2.Cu" (active off))` in Specctra DSN exports, guaranteeing zero signal tracks on internal power and ground planes.
+
+### Fixed & Hardened
+- **Adaptive Router Active Nets Resolution:** Fixed unhandled `NameError` in `route_board` (`len(active_nets)`), restoring Strategy 1 (Fanout-First: 0-signal-vias) and eliminating rogue vias and DRC clearance errors near IC pads.
+- **Windows Localhost Socket Resilience:** Added `Connection: close` headers and transient socket retry in `FreeroutingClient` to resolve `WinError 10054` on rapid sequential requests.
+- **Fine-Pitch IC Pad Clearance Deadlocks:** Resolved clearance violations across dense MCUs (STM32 LQFP-48 0.5mm pitch, RP2040 QFN-56 0.4mm pitch), achieving 0 DRC violations and 0 unconnected airwires across all production test boards.
+
+---
+
 ## [Beta v2.3.0] - 2026-09-06
 
 ### Added

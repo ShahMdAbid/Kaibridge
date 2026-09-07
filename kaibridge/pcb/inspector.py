@@ -193,13 +193,17 @@ print("INSPECT_SUB_RESULT:" + json.dumps(res))
         return {"success": False, "error": proc.stderr.strip() or proc.stdout.strip()}
 
     proj = Path(project_dir).resolve()
-    pcb_files = list(proj.glob("*.kicad_pcb"))
-    if not pcb_files:
-        return {"success": False, "error": f"No .kicad_pcb file found in {proj}"}
+    if proj.is_file() and proj.suffix == ".kicad_pcb":
+        pcb_file = proj
+        proj = proj.parent
+    else:
+        pcb_files = list(proj.glob("*.kicad_pcb"))
+        if not pcb_files:
+            return {"success": False, "error": f"No .kicad_pcb file found in {proj}"}
+        pcb_file = pcb_files[0]
 
     import gc
     gc.collect()
-    pcb_file = pcb_files[0]
     board = pcbnew.LoadBoard(str(pcb_file))
 
     # Board outline bounds
@@ -284,4 +288,19 @@ print("INSPECT_SUB_RESULT:" + json.dumps(res))
     import gc
     gc.collect()
     return state
+
+
+if __name__ == "__main__":
+    import argparse
+    ap = argparse.ArgumentParser(description="Live KiCad PCB State Inspector")
+    ap.add_argument("project_dir", help="Path to KiCad project directory or .kicad_pcb file")
+    ap.add_argument("--summary", action="store_true", default=True, help="Extract summary state (footprints, nets, rules; default)")
+    ap.add_argument("--full", action="store_true", help="Extract full state (including all individual tracks, vias, zones)")
+    ap.add_argument("--json", action="store_true", help="Output raw JSON response")
+    args = ap.parse_args()
+
+    mode = "full" if args.full else "summary"
+    res = get_board_state(args.project_dir, mode=mode)
+    print(json.dumps(res, indent=2, default=str))
+
 

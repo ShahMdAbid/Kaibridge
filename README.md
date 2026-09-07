@@ -1,12 +1,12 @@
 <div align="center">
   <h1>Kaibridge</h1>
-  <p><b>An end-to-end open-source Model Context Protocol connecting AI agents to KiCad — enabling fully headless PCB design: architecting circuits from natural language, sourcing verified components, compiling multi-sheet schematics, optimizing planar placement with closed-loop visual audits, and executing hierarchical routing alongside a human engineer in the loop.</b></p>
+  <p><b>An end-to-end open-source Model Context Protocol connecting AI agents to KiCad — enabling fully headless PCB design: architecting circuits from natural language, sourcing verified components, compiling multi-sheet schematics, optimizing planar placement, and executing deterministic routing alongside a human engineer in the loop.</b></p>
 
 [![License: AGPL v3.0](https://img.shields.io/badge/License-AGPL_v3.0-blue.svg)](LICENSE)
 [![KiCad](https://img.shields.io/badge/KiCad-10-blue?logo=kicad)](https://www.kicad.org/)
 [![Java](https://img.shields.io/badge/Java-25_LTS-EA2D2E?logo=openjdk&logoColor=white)](https://adoptium.net/)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/Version-v2.2.1-green.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/Version-v3.0.0-green.svg)](CHANGELOG.md)
 [![Last Commit](https://img.shields.io/github/last-commit/ShahMdAbid/Kaibridge?logo=github&color=2ea043)](https://github.com/ShahMdAbid/Kaibridge/commits)
 
 </div>
@@ -96,22 +96,21 @@ flowchart TD
         ERCGate -->|"0 Errors (Passed)"| SchSVG
     end
 
-    subgraph Phase4 ["Phase 4: Two-Stage Placement & Geometry Gate"]
+    subgraph Phase4 ["Phase 4: Planar Placement & Geometry Gate"]
         SyncPCB["<b>Headless PCB Sync</b><br/>kicad_pcb_sync.py (F8)<br/>Footprints & nets"]
         OpsTemplate["<b>ops_template.json</b><br/>Placement schema"]
-        LayoutSpec["<b>Layout Spec</b><br/>ops.json<br/>Functional zoning"]
+        LayoutSpec["<b>Layout Spec</b><br/>ops.json<br/>Universal 4-zone floorplan"]
 
-        subgraph SubGeom ["Geometry Gate & Verification"]
-            PlanarOpt["<b>Stage 7A: Planar Optimizer</b><br/>kicad_planar_optimizer.py<br/>Simulated Annealing & Kruskal MST<br/>&gt;85% ratsnest crossing cut"]
+        subgraph SubGeom ["Geometry Gate & Planar Optimization"]
+            PlanarOpt["<b>Planar Optimizer</b><br/>kicad_planar_optimizer.py<br/>Simulated Annealing & Kruskal MST<br/>&gt;85% ratsnest crossing cut"]
             GridQuant["<b>Grid Quantization</b><br/>0.5mm manufacturing grid"]
             DryRun{"<b>Collision Audit</b><br/>--dry-run check"}
             CommitLayout["<b>Commit Placement</b><br/>kicad_layout.py"]
-            LockParts["<b>Lock Critical Parts</b><br/>LCK-01: Crystals, RF & IO"]
+            LockParts["<b>Lock Critical Footprints</b><br/>LCK-01: Connectors, Motifs & ICs"]
         end
 
         Snapshot["<b>Checkpoint 2 Snapshot</b><br/>pcb_snapshot.py<br/>Vector Board SVG"]
-        Human2{"<b>Stage 7B: Visual Audit Gate</b><br/>Connector facing, silk hygiene<br/>& corridor clearance"}
-        CritiqueFix["<b>Critique Adjustments</b><br/>Refine coordinates & rotation"]
+        Human2{"<b>Visual Audit Gate</b><br/>Connector facing, silk hygiene<br/>& mechanical clearance"}
 
         SchSVG --> SyncPCB
         SyncPCB --> LayoutSpec
@@ -124,18 +123,15 @@ flowchart TD
         CommitLayout --> LockParts
         LockParts --> Snapshot
         Snapshot --> Human2
-        Human2 -->|"Needs adjustment"| CritiqueFix
-        CritiqueFix -->|"Update spec"| LayoutSpec
     end
 
-    subgraph Phase5 ["Phase 5: 3-Tier Hierarchical Routing & DRC"]
-        Fanout["<b>Tier 1: Dog-Bone Fanout First</b><br/>SMD GND escape stubs & vias<br/>Zero Via-in-Pad (DFM safe)"]
-        DSNAudit["<b>Pre-Flight DSN Audit</b><br/>Clearance harmonization (250µm)<br/>GND stripped from Specctra DSN"]
-        Freeroute["<b>Tier 2: Planar Signal Routing</b><br/>Freerouting 2.4.1 (Java 25 LTS)<br/>150µm keepout, 0 signal vias"]
+    subgraph Phase5 ["Phase 5: Deterministic Routing & DRC Release"]
+        Fanout["<b>Adaptive Strategy Routing</b><br/>kicad_route.py<br/>Strategy 1: Dog-Bone Fanout First<br/>Strategy 2: Dual-Layer with Auto-Fallback"]
+        DSNAudit["<b>Pre-Flight DSN Audit</b><br/>Clearance harmonization (250µm)<br/>Stale tracks & zones purged"]
+        Freeroute["<b>Planar Signal Routing</b><br/>Freerouting 2.4.1 (Java 25 LTS)<br/>REST Daemon (Port 37864), 150µm keepout"]
         SESMerge["<b>Merge Traces</b><br/>SES import to .kicad_pcb"]
-        GNDPlane["<b>Tier 3: Solid Ground Flood</b><br/>Solid B.Cu copper plane<br/>0.3mm clearance, continuous pour"]
-        DRCGate{"<b>KiCad DRC Gate</b><br/>0 Clearance Violations<br/>0 Unconnected Nets"}
-        RouteFix["<b>Route Optimization</b><br/>Clearance & fanout adjust"]
+        GNDPlane["<b>Solid Ground Flood</b><br/>Continuous copper plane with island removal<br/>B.Cu (2-layer) / In1 & In2 (4-layer)"]
+        DRCGate{"<b>KiCad DRC Release Gate</b><br/>0 Clearance Violations<br/>0 Unconnected Nets"}
         RoutedPCB["<b>Checkpoint 3 Verified</b><br/>DRC-clean .kicad_pcb"]
 
         Human2 -->|"Approved"| Fanout
@@ -144,28 +140,22 @@ flowchart TD
         Freeroute --> SESMerge
         SESMerge --> GNDPlane
         GNDPlane --> DRCGate
-        DRCGate -->|"Violations"| RouteFix
-        RouteFix -->|"Refine"| Fanout
-        DRCGate -->|"Passed (0 DRC)"| RoutedPCB
+        DRCGate -->|"0 DRC Errors"| RoutedPCB
     end
 
     subgraph Phase6 ["Phase 6: JLCPCB Production Export"]
         ExportEngine["<b>Production Exporter</b><br/>export_jlcpcb.py"]
-        GerberZip["<b>gerbers.zip</b><br/>Gerber & Drill Files"]
-        BOMCSV["<b>bom_jlcpcb.csv</b><br/>Grouped with LCSC IDs"]
-        CPLCSV["<b>cpl_jlcpcb.csv</b><br/>Pick & Place Centroids"]
+        ProdBundle["<b>Production Bundle</b><br/>Gerber ZIP, BOM & CPL Centroids"]
 
         RoutedPCB --> ExportEngine
-        ExportEngine --> GerberZip
-        ExportEngine --> BOMCSV
-        ExportEngine --> CPLCSV
+        ExportEngine --> ProdBundle
     end
 
     class Human1,Human2 human;
     class SchSVG,Snapshot,RoutedPCB checkpoint;
-    class Prompt,Plan,DesignJSON,LayoutSpec,GerberZip,BOMCSV,CPLCSV artifact;
+    class Prompt,Plan,DesignJSON,LayoutSpec,ProdBundle artifact;
     class DesTemplate,OpsTemplate template;
-    class ART,Passives,Actives,NetclassRules,FixSch,PlanarOpt,GridQuant,LockParts,CritiqueFix,Fanout,SESMerge,GNDPlane,RouteFix process;
+    class ART,Passives,Actives,NetclassRules,FixSch,PlanarOpt,GridQuant,LockParts,Fanout,SESMerge,GNDPlane process;
     class ERCGate,DryRun,DRCGate gate;
     class Bootstrap,Sourcing,PinExtract,Compiler,SyncPCB,CommitLayout,DSNAudit,Freeroute,ExportEngine tool;
 ```
@@ -200,7 +190,7 @@ flowchart TD
 
 ## AI Disclosure
 
-This project was developed with the support of AI-assisted coding tools. AI tools were used to accelerate development — creative decisions, hardware testing, and architecture remain entirely with the author(s).
+This project was developed with the support of AI-assisted coding tools. AI tools were used to accelerate development — creative decisions and architecture remain entirely with the author(s).
 
 
 ## Disclaimer

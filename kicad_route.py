@@ -44,7 +44,7 @@ def main(argv=None):
     ap.add_argument("--no-fanout-first", action="store_true", default=None, help="Force Dual-Layer routing protocol (Strategy 2)")
     ap.add_argument("--layers", type=int, choices=[2, 4], default=2, help="Number of copper layers (2 or 4, default: 2)")
     ap.add_argument("--drc", action="store_true", help="Run KiCad DRC check and output violations")
-    ap.add_argument("--via-costs", type=int, default=140, help="Via cost penalty for multilayer routing (default: 140)")
+    ap.add_argument("--via-costs", type=int, default=1000, help="Via cost penalty for multilayer routing (default: 1000)")
     ap.add_argument("--no-daemon", action="store_true", help="Disable persistent REST daemon and force direct CLI execution")
     ap.add_argument("--no-neckdown", action="store_true", help="Disable automatic neckdown entering fine-pitch IC pads")
     args = ap.parse_args(argv)
@@ -94,8 +94,9 @@ def main(argv=None):
     print(f"  Method       : {route_res.get('method', 'Freerouting 2.4.1')}")
     print(f"  Tracks/Vias  : SES imported into .kicad_pcb")
 
-    # 2. Add GND plane if requested
-    if args.pour_gnd:
+    def _execute_copper_pours():
+        if not args.pour_gnd:
+            return
         if args.layers == 4:
             print("\n[*] Pouring 4-layer copper planes: In1.Cu (GND), In2.Cu (+3V3/Power), B.Cu (GND)...")
             add_ground_plane(project_dir, net="GND", layer="In1.Cu", clearance_mm=0.3)
@@ -104,6 +105,7 @@ def main(argv=None):
             if not design_file.exists():
                 design_file = project_dir / "design.json"
             power_net = "+3V3"
+            gnd_net = "GND"
             if design_file.exists():
                 try:
                     d = json.loads(design_file.read_text(encoding="utf-8"))
@@ -112,17 +114,38 @@ def main(argv=None):
                         if candidate in nets:
                             power_net = candidate
                             break
+                    for candidate in ("GND", "GND_POWER", "GND_LOGIC", "AGND", "DGND", "0V"):
+                        if candidate in nets:
+                            gnd_net = candidate
+                            break
                 except Exception:
                     pass
             add_ground_plane(project_dir, net=power_net, layer="In2.Cu", clearance_mm=0.3)
-            pour_res = add_ground_plane(project_dir, net="GND", layer="B.Cu", clearance_mm=0.3)
+            pour_res = add_ground_plane(project_dir, net=gnd_net, layer="B.Cu", clearance_mm=0.3)
         else:
-            print("\n[*] Pouring solid GND copper plane on B.Cu...")
-            pour_res = add_ground_plane(project_dir, net="GND", layer="B.Cu", clearance_mm=0.3)
+            design_file = project_dir / "kaibridge_dump" / "design.json"
+            if not design_file.exists():
+                design_file = project_dir / "design.json"
+            gnd_net = "GND"
+            if design_file.exists():
+                try:
+                    d = json.loads(design_file.read_text(encoding="utf-8"))
+                    nets = d.get("nets", {})
+                    for candidate in ("GND", "GND_POWER", "GND_LOGIC", "AGND", "DGND", "0V"):
+                        if candidate in nets:
+                            gnd_net = candidate
+                            break
+                except Exception:
+                    pass
+            print(f"\n[*] Pouring solid {gnd_net} copper plane on B.Cu...")
+            pour_res = add_ground_plane(project_dir, net=gnd_net, layer="B.Cu", clearance_mm=0.3)
         if pour_res.get("success"):
-            print("  Status: GND copper zone filled with 0.3mm clearance")
+            print(f"  Status: {gnd_net} copper zone filled with 0.3mm clearance")
         else:
             print(f"  Warning: Ground pour failed: {pour_res.get('error')}")
+
+    # 2. Add GND plane if requested
+    _execute_copper_pours()
 
     # 3. Run DRC if requested
     if args.drc:
@@ -133,7 +156,7 @@ def main(argv=None):
         violations = drc_res.get("violations", [])
 
         # Auto-fallback: If Strategy 1 left unconnected airwires, automatically recover via Strategy 2
-        if unconn > 0 and (strategy == "auto" or route_res.get("fanout_first_used")):
+        if unconn > 0 and route_res.get("fanout_first_used"):
             print(f"\n[!] Strategy 1 left {unconn} unrouted nets. Automatically recovering via Strategy 2 (Dual-Layer Routing)...")
             rules_file = project_dir / f"{project_dir.name}.rules"
             if rules_file.exists():
@@ -148,28 +171,30 @@ def main(argv=None):
                 timeout_sec=args.timeout,
                 copper_edge_clearance_um=args.edge_clearance_um,
                 strict_drc=True,
-                max_passes=args.max_passes or 5,
+                max_passes=args.max_passes or 10,
                 fanout_first=False,
                 strategy="dual-layer"
             )
 
-            if args.pour_gnd:
-                add_ground_plane(project_dir, net="GND", layer="B.Cu", clearance_mm=0.3)
-
+            _execute_copper_pours()
             drc_res = run_drc(project_dir)
 
         clr_errs = drc_res.get("geometric_clearance_errors", 0)
         unconn = drc_res.get("unconnected_airwires_count", 0)
         warns = drc_res.get("clearance_warnings", 0)
         err_violations = drc_res.get("error_violations", [])
-        warn_violations = drc_res.get("warning_violations", [])
+        if drc_res.get("error") or not drc_res.get("report_valid", True):
+            print(f"\n  [!] DRC Execution Failure: {drc_res.get('error', 'DRC report missing or malformed')}", file=sys.stderr)
+            for v in drc_res.get("error_violations", []):
+                print(f"    - {v}", file=sys.stderr)
+            return 1
 
         print("\n=== DRC Verification Report ===")
         print(f"  Clearance Errors  : {clr_errs}")
         print(f"  Unconnected Nets  : {unconn}")
         print(f"  Warnings          : {warns}")
 
-        if clr_errs > 0 or unconn > 0:
+        if clr_errs > 0 or unconn > 0 or not drc_res.get("passed", False):
             print("\n  [!] ERRORS / UNCONNECTED ITEMS:")
             for v in err_violations[:10]:
                 print(f"    - {v}")
