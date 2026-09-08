@@ -47,10 +47,10 @@ This reference document contains the exhaustive, deterministic recovery procedur
 | Error / Failure Symptom | Root Cause | Exact Deterministic Remedy |
 |---|---|---|
 | **`AttributeError: 'SwigPyObject' has no attribute...`** | Ghost C++ pointer or invalid SWIG wrapper retained across operations | Call `del board; gc.collect()`. Execute board mutations in isolated subprocesses via `load_kicad_python()`. |
-| **`ModuleNotFoundError: No module named 'pcbnew'`** | Running script from standard Python interpreter rather than KiCad's bundled Python | Ensure backend tools call `load_kicad_python()` to dispatch to KiCad's bundled Python 3.11 environment (`C:\Program Files\KiCad\10.0\bin\python.exe`). Or use Kaibridge MCP tools (`kaibridge_apply_ops_layout`) instead of raw SWIG scripts. |
-| **`sqlite3.OperationalError: no such table: parts`** | Raw SQL queries assuming generic table/column names in `easyeda-std.elib` | Canonical schema: Table `devices` (`uuid`, `title`), Table `attributes` (`device_uuid`, `key`, `value` where `key='Supplier Part'` contains LCSC ID). Use `kaibridge_lookup_lcsc_part` or join `devices` with `attributes WHERE key='Supplier Part'`. |
+| **`ModuleNotFoundError: No module named 'pcbnew'`** | Running script from standard Python interpreter rather than KiCad's bundled Python | Ensure backend tools call `load_kicad_python()` to dispatch to KiCad's bundled Python environment. Or use dedicated Kaibridge CLI tools (`kicad_layout.py`) instead of raw SWIG scripts. |
+| **`sqlite3.OperationalError: no such table: parts`** | Raw SQL queries assuming generic table/column names in `easyeda-std.elib` | Canonical schema: Table `devices` (`uuid`, `title`), Table `attributes` (`device_uuid`, `key`, `value` where `key='Supplier Part'` contains LCSC ID). Use CLI tools or join `devices` with `attributes WHERE key='Supplier Part'`. |
 | **File Open Warning: `Project is already open...`** | Orphaned `~*.lck` lock files left by interrupted KiCad process | Kill lingering Python/KiCad background processes and delete `~*.lck` files from project folder. |
-| **Corrupt / 0-byte `.kicad_pcb` file** | Write operation aborted abruptly mid-save | Call `kaibridge_restore_snapshot(tag="<previous_checkpoint>")` or restore backup `.kicad_pcb` from `kaibridge_dump/`. Never rebuild from scratch. |
+| **Corrupt / 0-byte `.kicad_pcb` file** | Write operation aborted abruptly mid-save | Restore backup `.kicad_pcb` from `kaibridge_dump/`. Never rebuild from scratch. |
 
 ---
 

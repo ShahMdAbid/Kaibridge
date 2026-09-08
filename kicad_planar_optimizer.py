@@ -154,7 +154,10 @@ for fp in b.GetFootprints():
         "pads": pads,
         "width": bw,
         "height": bh,
-        "locked": fp.IsLocked()
+        "locked": bool(fp.IsLocked()),
+        "x": round(pos.x / 1e6, 3),
+        "y": round(pos.y / 1e6, 3),
+        "rot": round(rot, 1)
     }}
 print("JSON_START" + json.dumps(data) + "JSON_END")
 '''
@@ -490,16 +493,39 @@ class PlanarLayoutOptimizer:
         cooling: float = 0.9988
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Simulated annealing to minimize cross-net airwire intersections."""
+        # Seed state from live PCB footprints
         state = {}
+        for ref, fp_info in self.fp_data.items():
+            state[ref] = {
+                "x": fp_info.get("x", 120.0),
+                "y": fp_info.get("y", 120.0),
+                "rot": fp_info.get("rot", 0.0),
+                "locked": bool(fp_info.get("locked", False))
+            }
+
+        # Overlay any candidate ops if explicitly provided
         for op in initial_ops:
-            if op.get("op") == "footprint.place":
+            action = op.get("op") or op.get("action")
+            if action in ("footprint.place", "place") and "ref" in op:
                 ref = op["ref"]
-                state[ref] = {
-                    "x": op.get("x", 120.0),
-                    "y": op.get("y", 120.0),
-                    "rot": op.get("rot", 0.0),
-                    "locked": bool(op.get("locked", False))
-                }
+                if ref in state:
+                    if "x" in op or "pos" in op:
+                        x = float(op["pos"][0]) if "pos" in op else float(op.get("x", state[ref]["x"]))
+                        y = float(op["pos"][1]) if "pos" in op else float(op.get("y", state[ref]["y"]))
+                        state[ref]["x"] = x
+                        state[ref]["y"] = y
+                    if "rot" in op or "rotation" in op:
+                        state[ref]["rot"] = float(op.get("rot", op.get("rotation", state[ref]["rot"])))
+                    if "locked" in op:
+                        state[ref]["locked"] = bool(op["locked"])
+            elif action in ("footprint.lock", "lock") and "ref" in op:
+                ref = op["ref"]
+                if ref in state:
+                    state[ref]["locked"] = bool(op.get("locked", True))
+            elif action in ("footprint.unlock", "unlock") and "ref" in op:
+                ref = op["ref"]
+                if ref in state:
+                    state[ref]["locked"] = False
 
         best_state = {r: dict(v) for r, v in state.items()}
         current_state = {r: dict(v) for r, v in state.items()}
@@ -511,9 +537,23 @@ class PlanarLayoutOptimizer:
 
         print(f"[*] Initial State: Cross-Net Crossings = {cur_cross}, Overlaps = {cur_ov}, HPWL = {cur_hpwl:.1f}mm, Cost = {current_cost:.1f}")
 
+        unlocked_refs = [r for r, d in state.items() if not d["locked"]]
+        if not unlocked_refs:
+            print("[!] All components are locked. Preserving current live layout without mutation.")
+            out_ops = [{"op": "board.set_size", "width": self.board_w, "height": self.board_h, "origin_x": self.ox, "origin_y": self.oy}]
+            for r, d in state.items():
+                out_ops.append({
+                    "op": "footprint.place",
+                    "ref": r,
+                    "x": round(d["x"] * 2.0) / 2.0,
+                    "y": round(d["y"] * 2.0) / 2.0,
+                    "rot": d["rot"],
+                    "locked": d["locked"]
+                })
+            return out_ops, cur_cross
+
         t0 = time.time()
         T = temp_init
-        unlocked_refs = [r for r, d in state.items() if not d["locked"]]
         passives = [r for r in unlocked_refs if r.startswith(('R', 'C', 'D', 'L', 'Q', 'J'))]
         if len(passives) < 2:
             passives = list(unlocked_refs)
@@ -712,8 +752,16 @@ if __name__ == "__main__":
     if ops_file.exists():
         try:
             with open(ops_file, "r", encoding="utf-8") as f:
-                init_ops = json.load(f)
+                loaded = json.load(f)
+            if isinstance(loaded, dict) and "ops" in loaded:
+                init_ops = loaded["ops"]
+            elif isinstance(loaded, list):
+                init_ops = loaded
+            else:
+                init_ops = []
             for op in init_ops:
+                if not isinstance(op, dict):
+                    continue
                 if op.get("op") == "board.set_size":
                     bw = float(op.get("width", op.get("width_mm", bw)))
                     bh = float(op.get("height", op.get("height_mm", bh)))

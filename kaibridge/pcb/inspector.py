@@ -13,6 +13,7 @@ Aligned with Kaibridge 2.0 headless architecture:
 from __future__ import annotations
 
 import json
+import math
 import hashlib
 import subprocess
 from pathlib import Path
@@ -290,17 +291,192 @@ print("INSPECT_SUB_RESULT:" + json.dumps(res))
     return state
 
 
+def get_spatial_occupancy(
+    project_dir: str | Path,
+    grid_step: float = 0.5,
+    margin: float = 1.5,
+    clearance: float = 0.5
+) -> Dict[str, Any]:
+    """Calculates physical component dimensions, 2D board occupancy grid, and
+    identifies maximal contiguous free rectangular pockets available for component placement.
+    """
+    state = get_board_state(project_dir, mode="summary")
+    if not state.get("success"):
+        return state
+
+    bounds = state.get("board_bounds_mm") or {}
+    if not bounds or bounds.get("w", 0) <= 0 or bounds.get("h", 0) <= 0:
+        return {"success": False, "error": "No valid board outline (Edge.Cuts) found."}
+
+    x0 = bounds["x0"]
+    y0 = bounds["y0"]
+    x1 = bounds["x1"]
+    y1 = bounds["y1"]
+    bw = bounds["w"]
+    bh = bounds["h"]
+
+    # Component geometry catalog
+    components = {}
+    fps = state.get("footprints", [])
+    for fp in fps:
+        ref = fp.get("reference")
+        if not ref:
+            continue
+        c_box = fp.get("courtyard_mm")
+        pos = fp.get("position_mm") or {"x": 0.0, "y": 0.0}
+        if c_box:
+            w = c_box.get("w", 2.0)
+            h = c_box.get("h", 2.0)
+            box = [
+                c_box.get("x0", pos["x"] - w / 2.0),
+                c_box.get("y0", pos["y"] - h / 2.0),
+                c_box.get("x1", pos["x"] + w / 2.0),
+                c_box.get("y1", pos["y"] + h / 2.0)
+            ]
+        else:
+            w = 2.5
+            h = 2.5
+            box = [pos["x"] - w / 2.0, pos["y"] - h / 2.0, pos["x"] + w / 2.0, pos["y"] + h / 2.0]
+
+        is_on_board = not (box[2] < x0 or box[0] > x1 or box[3] < y0 or box[1] > y1)
+        components[ref] = {
+            "reference": ref,
+            "value": fp.get("value", ""),
+            "width_mm": round(w, 2),
+            "height_mm": round(h, 2),
+            "position_mm": pos,
+            "rotation_deg": fp.get("rotation_deg", 0.0),
+            "is_locked": fp.get("is_locked", False),
+            "on_board": is_on_board,
+            "bbox_mm": [round(b, 2) for b in box]
+        }
+
+    # Board inner envelope
+    bx0 = x0 + margin
+    by0 = y0 + margin
+    bx1 = x1 - margin
+    by1 = y1 - margin
+
+    if bx1 <= bx0 or by1 <= by0:
+        return {"success": False, "error": f"Board too small for margin={margin}mm"}
+
+    cols = max(1, int(round((bx1 - bx0) / grid_step)))
+    rows = max(1, int(round((by1 - by0) / grid_step)))
+
+    occ = [[False for _ in range(cols)] for _ in range(rows)]
+
+    # Mark occupied cells (only for components on board)
+    for comp in components.values():
+        if not comp.get("on_board", True):
+            continue
+        cb = comp["bbox_mm"]
+        min_c = max(0, int(math.floor((cb[0] - clearance / 2.0 - bx0) / grid_step)))
+        max_c = min(cols - 1, int(math.ceil((cb[2] + clearance / 2.0 - bx0) / grid_step)))
+        min_r = max(0, int(math.floor((cb[1] - clearance / 2.0 - by0) / grid_step)))
+        max_r = min(rows - 1, int(math.ceil((cb[3] + clearance / 2.0 - by0) / grid_step)))
+        for r in range(min_r, max_r + 1):
+            for c in range(min_c, max_c + 1):
+                occ[r][c] = True
+
+    total_cells = rows * cols
+    occupied_cells = sum(sum(1 for c in row if c) for row in occ)
+    free_cells = total_cells - occupied_cells
+    board_area = round(bw * bh, 2)
+    inner_area = round((bx1 - bx0) * (by1 - by0), 2)
+    occ_pct = round((occupied_cells / total_cells) * 100.0, 1)
+
+    # Maximal Empty Rectangles using histogram method
+    heights = [0] * cols
+    candidate_rects = []
+    min_cells = max(1, int(2.0 / grid_step))
+    for r in range(rows):
+        for c in range(cols):
+            if not occ[r][c]:
+                heights[c] += 1
+            else:
+                heights[c] = 0
+
+        stack = []
+        for c in range(cols + 1):
+            h_val = heights[c] if c < cols else 0
+            start = c
+            while stack and stack[-1][1] > h_val:
+                prev_idx, prev_h = stack.pop()
+                w_cells = c - prev_idx
+                if w_cells >= min_cells and prev_h >= min_cells:
+                    top_r = r - prev_h + 1
+                    area_cells = w_cells * prev_h
+                    candidate_rects.append((area_cells, prev_idx, top_r, w_cells, prev_h))
+                start = prev_idx
+            stack.append((start, h_val))
+
+    # Sort candidates by area descending and filter overlapping
+    candidate_rects.sort(key=lambda x: x[0], reverse=True)
+    claimed = [[False for _ in range(cols)] for _ in range(rows)]
+    free_pockets = []
+
+    for area_cells, c_start, r_start, w_cells, h_cells in candidate_rects:
+        overlap_cnt = 0
+        for r in range(r_start, r_start + h_cells):
+            for c in range(c_start, c_start + w_cells):
+                if claimed[r][c]:
+                    overlap_cnt += 1
+        overlap_ratio = overlap_cnt / area_cells
+        if overlap_ratio > 0.25:
+            continue
+
+        for r in range(r_start, r_start + h_cells):
+            for c in range(c_start, c_start + w_cells):
+                claimed[r][c] = True
+
+        px0 = round(bx0 + c_start * grid_step, 2)
+        py0 = round(by0 + r_start * grid_step, 2)
+        pw = round(w_cells * grid_step, 2)
+        ph = round(h_cells * grid_step, 2)
+        free_pockets.append({
+            "x0": px0,
+            "y0": py0,
+            "x1": round(px0 + pw, 2),
+            "y1": round(py0 + ph, 2),
+            "width_mm": pw,
+            "height_mm": ph,
+            "area_mm2": round(pw * ph, 2)
+        })
+        if len(free_pockets) >= 8:
+            break
+
+    return {
+        "success": True,
+        "board_file": state.get("pcb_file"),
+        "board_bounds_mm": bounds,
+        "occupancy_stats": {
+            "board_area_mm2": board_area,
+            "inner_routable_area_mm2": inner_area,
+            "occupied_percentage": occ_pct,
+            "free_percentage": round(100.0 - occ_pct, 1),
+            "grid_step_mm": grid_step
+        },
+        "components": components,
+        "free_pockets": free_pockets
+    }
+
+
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser(description="Live KiCad PCB State Inspector")
     ap.add_argument("project_dir", help="Path to KiCad project directory or .kicad_pcb file")
     ap.add_argument("--summary", action="store_true", default=True, help="Extract summary state (footprints, nets, rules; default)")
     ap.add_argument("--full", action="store_true", help="Extract full state (including all individual tracks, vias, zones)")
+    ap.add_argument("--free-space", action="store_true", help="Extract spatial occupancy and free rectangular pockets")
     ap.add_argument("--json", action="store_true", help="Output raw JSON response")
     args = ap.parse_args()
 
-    mode = "full" if args.full else "summary"
-    res = get_board_state(args.project_dir, mode=mode)
+    if args.free_space:
+        res = get_spatial_occupancy(args.project_dir)
+    else:
+        mode = "full" if args.full else "summary"
+        res = get_board_state(args.project_dir, mode=mode)
     print(json.dumps(res, indent=2, default=str))
+
 
 

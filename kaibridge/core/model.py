@@ -415,8 +415,14 @@ def _is_rail(name, declared):
         return True
     return name.upper().startswith(RAIL_PREFIX)
 
-def _styles(design, declared):
+def _styles(design, declared, prefer_global_labels: bool = False):
     """Decide every label kind exactly once, here."""
+    checks = design.checks or {}
+    prefer_global = (prefer_global_labels or
+                     _flag(checks, "prefer_global_labels", False) or
+                     _flag(design.meta, "prefer_global_labels", False) or
+                     _flag(design.meta, "global_labels", False))
+
     for net in design.nets.values():
         seen = []
         for conn in net.conns:
@@ -428,15 +434,16 @@ def _styles(design, declared):
         if net.style == "auto":
             if net.rail:
                 net.style = "global"
+            elif prefer_global and len(seen) > 1:
+                net.style = "global"
             elif len(seen) > 1:
                 net.style = "hierarchical"
             else:
                 net.style = "local"
-        elif net.style == "hierarchical" and not design.hierarchical:
+        elif net.style == "hierarchical" and (not design.hierarchical or len(seen) <= 1):
             net.style = "local"
             design.warnings.append(
-                f"net '{net.name}': hierarchical downgraded to local, the "
-                f"design has only one sheet")
+                f"net '{net.name}': hierarchical downgraded to local, touches only {len(seen)} sheet(s)")
         if len(seen) > 1 and net.style == "local":
             net.style = "global"
             design.warnings.append(
@@ -519,7 +526,7 @@ def _validate(design, lib):
                               f"'{anchor.sheet}', but {ref} is on '{part.sheet}'")
         part.near = anchor_ref + "." + resolve_pin(anchor, pin, f"parts.{ref}.near")
 
-def load(raw, lib):
+def load(raw, lib, prefer_global_labels: bool = False):
     """The only entry point. Raises DesignError with a fixable message."""
     if not isinstance(raw, dict):
         raise DesignError("design.json must be a JSON object")
@@ -559,7 +566,7 @@ def load(raw, lib):
                     sheets=sheets,
                     no_connect=no_connect,
                     warnings=warnings)
-    _styles(design, {_text(n) for n in (raw.get("power_flags") or [])})
+    _styles(design, {_text(n) for n in (raw.get("power_flags") or [])}, prefer_global_labels=prefer_global_labels)
     _validate(design, lib)
     return design
 

@@ -1,140 +1,148 @@
-# Kaibridge 2.0 Command & Tool Reference
+# Kaibridge 3.0 CLI Command & Tool Reference
 
-This document describes the **25 dedicated MCP tools** (23 canonical + 2 explicit aliases) exposed by `server.py` via native STDIO JSON-RPC 2.0. These form the primary autonomous interface for AI agents operating in Antigravity IDE, Claude Desktop, Cursor, or any MCP-compatible environment.
-
----
-
-## 1. Complete MCP Tool Catalog (25 Tools)
-
-All project-level tools accept `project_dir` as their first parameter (absolute path to the KiCad project folder).
-
-### A. Project & Component Sourcing (4 Tools)
-| Tool | Purpose |
-|---|---|
-| `kaibridge_init_project` | Create project folder, `.kicad_pro`, empty `.kicad_pcb`, sym-lib/fp-lib tables, and `kaibridge_dump/`. |
-| `kaibridge_lookup_lcsc_part` | Fast (<1ms) offline query of JLCPCB Basic Parts catalog from local SQLite DB by query, category, or package. |
-| `kaibridge_fetch_lcsc_component` | Download symbol, footprint, and 3D model from EasyEDA/LCSC into local project libraries with retry. |
-| `kaibridge_query_symbol_pins` | Extract exact pin numbers, names, electrical types, and default footprints from `.kicad_sym`. |
-
-### B. Schematic Compilation & Preview (2 Tools)
-| Tool | Purpose |
-|---|---|
-| `kaibridge_build_schematic` | Compile declarative `design.json` into hierarchical `.kicad_sch` with netclasses, and run headless ERC. |
-| `kaibridge_render_schematic_preview` | Export high-resolution vector SVG snapshot of compiled schematic for multimodal visual review. |
-
-### C. Headless PCB Layout & Physics (7 Tools)
-| Tool | Purpose |
-|---|---|
-| `kaibridge_sync_to_pcb` | Headless F8: instantiate footprints into `.kicad_pcb` and bind nets/ratsnest. |
-| `kaibridge_optimize_planar_layout` | Simulated Annealing macro-optimizer: solves Kruskal MST crossings (>85% reduction), dynamically pairs decoupling caps/crystals, auto-seeds from board if `ops.json` absent, and auto-commits to board. |
-| `kaibridge_apply_ops_layout` | Apply discrete placement operations (`ops.json`) with 0.5mm grid snap and in-memory `dry_run` simulation. |
-| `kaibridge_autoplace_pcb` | Execute geometric component autoplacement based on net topology and connector perimeters. |
-| `kaibridge_auto_relax_layout` | Physics-based 2D spring repulsion solver to iteratively separate overlapping component courtyards. |
-| `kaibridge_render_pcb_preview` | Export top-view PNG and vector SVG layout snapshots, returning structural board analytics. |
-| `kaibridge_placement_audit` | Audit component boundaries, edge clearance violations, and courtyard collisions against the Geometry Gate (alias: `kaibridge_audit_placement`). |
-
-### D. Autorouting & Copper Zones (3 Tools)
-| Tool | Purpose |
-|---|---|
-| `kaibridge_route_pcb` | Headless Freerouting 2.4.1 autorouting with DSN track width audit, 150µm edge keepout, and strict DRC. |
-| `kaibridge_unroute_pcb` | Rip up / delete copper tracks, vias, and optional copper zones. |
-| `kaibridge_add_ground_plane` | Add and fill ground copper zones (`B.Cu` / `F.Cu`) with exact `Edge.Cuts` boundary clipping and solid thermal relief (`ZONE_CONNECTION_FULL`). |
-
-### E. Structural Introspection & Rollback (4 Tools)
-| Tool | Purpose |
-|---|---|
-| `kaibridge_get_board_state` | Extract structural JSON summary of board components, bounding boxes, and routing status (alias: `kaibridge_inspect_board`). |
-| `kaibridge_snapshot_board` | Create timestamped board snapshot with SHA-256 fingerprint for recovery. |
-| `kaibridge_diff_board` | Compute spatial and topological diff between two board snapshots or against active board. |
-| `kaibridge_restore_snapshot` | Deterministic rollback to a previous snapshot state if layout or routing fails. |
-
-### F. Live API Grounding & Verification (2 Tools)
-| Tool | Purpose |
-|---|---|
-| `kaibridge_api_oracle` | Live introspection of KiCad host `pcbnew.py` C++ SWIG wrapper (<4ms) to query methods, classes, and constants. |
-| `kaibridge_run_drc` | Run headless Design Rules Check via `kicad-cli` and parse clearance violations and unrouted airwires. |
-
-### G. Production & Manufacturing (1 Tool)
-| Tool | Purpose |
-|---|---|
-| `kaibridge_export_production` | Generate 100% factory-ready JLCPCB bundle (Gerber ZIP, Drill, BOM CSV with LCSC IDs [filtering DNP parts], and CPL Pick & Place CSV). |
-
-### H. Canonical Tool Aliases (2 Tools)
-| Alias Tool | Canonical Function | Note |
-|---|---|---|
-| `kaibridge_inspect_board` | `kaibridge_get_board_state` | Exact alias for structural inspection. |
-| `kaibridge_audit_placement` | `kaibridge_placement_audit` | Exact alias for courtyard/clearance audit. |
+This document provides the complete technical reference for the standalone CLI tools and Python engine in Kaibridge 3.0.
 
 ---
 
-##2. Layout Ops Reference (`kaibridge_apply_ops_layout`)
+## 1. Canonical CLI Tool Suite
 
-The layout engine accepts a list of discrete operations via `ops.json`. Coordinates are automatically quantized to a **0.5mm grid**.
+Kaibridge operates headlessly through dedicated command-line utilities covering every stage of hardware synthesis:
 
-###Supported Discrete Operations (16 Ops):
-```text
-footprint.place      footprint.move       footprint.rotate     footprint.lock
-footprint.unlock     footprint.set_field  footprint.delete     board.set_size
-board.fit_outline    board.prep_for_route track.add            track.set_width
-via.add              zone.delete          zone.refill          net.delete_routing
+### Step 0: Project Bootstrap
+```powershell
+python kicad_lib_init.py "projects/<NAME>" -n kaibridge [--layers 2|4]
 ```
+- Creates `<NAME>.kicad_pro`, `<NAME>.kicad_pcb`, and `kaibridge_dump/`.
+- Configures local project symbol and footprint library tables (`sym-lib-table`, `fp-lib-table`).
+- Configures JLCPCB design rules and initializes `warning.md`.
 
-###In-Memory Simulation (`dry_run`):
-Pass `"dry_run": true` to simulate layout operations in memory and detect courtyard collisions without writing changes to disk:
-```json
-{
-  "dry_run": true,
-  "ops": [
-    { "op": "footprint.place", "ref": "U1", "x": 25.0, "y": 20.0, "rot": 0 },
-    { "op": "footprint.place", "ref": "C1", "x": 22.0, "y": 20.0, "rot": 90 }
-  ]
-}
+### Step 2: Component Sourcing
+```powershell
+# Active ICs, sensors, and connectors (Symbol + Footprint)
+easyeda2kicad --lcsc_id <LCSC_ID> --symbol --footprint --output "projects/<NAME>/libs/kaibridge" --overwrite --project-relative
+
+# Background 3D Model Fetch (STEP + WRL)
+python kicad_3d.py "projects/<NAME>" <LCSC_ID>... --bg --interval 5
 ```
+- Fetches verified manufacturer symbols and footprints directly to `libs/kaibridge`.
+- Downloads 3D mechanical models in a non-blocking queue.
 
-###Key Rules:
-- `board.set_size`: Parameters `width`, `height`, `origin_x`, `origin_y` (all in mm). Creates clean rectangular `Edge.Cuts`.
-- `board.fit_outline`: Parameter `margin` (mm). Automatically fits `Edge.Cuts` around placed footprints.
-- `footprint.set_field`: Parameters `ref`, `field` (e.g. `"LCSC"`, `"Value"`), and `value`.
-- `track.set_width`: Can target by `net`, `netclass`, `uuid`, or globally across all tracks.
+### Step 3: Ground-Truth Pin & Footprint Extraction
+```powershell
+# For downloaded symbols in project library:
+python kicad_pins.py "projects/<NAME>\libs\kaibridge.kicad_sym" -s <SYMBOL_NAME> --json
+
+# For stock KiCad native library symbols:
+python kicad_pins.py --native <LIBRARY_NAME> -s <SYMBOL_NAME> --json
+```
+- Extracts physical pin numbers, pin names, electrical types, and default footprints.
+- Prevents hallucinated or guessed pin connections.
+
+### Step 6: Schematic Compilation & Electrical Rules Check (ERC)
+```powershell
+# Pre-flight dry-run check (zero writes)
+python json2sch.py "projects/<NAME>" --dry-run
+
+# Compile schematic, configure netclasses, run ERC, and export SVG preview
+python json2sch.py "projects/<NAME>" --erc --svg [--heal-pins]
+```
+- Compiles `design.json` into KiCad 10 S-expression schematics (`.kicad_sch`).
+- Configures netclasses and track width rules in `.kicad_pro`.
+- Runs `kicad-cli sch erc --severity-all` to enforce 0 electrical errors.
+- Exports a vector SVG schematic preview to `kaibridge_dump/`.
+
+### Step 7: Headless Netlist Synchronization (F8)
+```powershell
+python kicad_pcb_sync.py "projects/<NAME>"
+```
+- Synchronizes footprints, component values, and net ratsnest into `.kicad_pcb`.
+- Reconciles compiler metadata (`kaibridge_build.json`) including synthetic bypass capacitors.
+
+### Step 8: Staged Component Placement & Push-and-Shove
+```powershell
+# Apply layout operations with elastic push-and-shove relaxation
+python kicad_layout.py "projects/<NAME>" "projects/<NAME>/kaibridge_dump/ops.json" --shove
+
+# Clean up silkscreen text overlapping copper pads
+python kicad_layout.py "projects/<NAME>" --sanitize-silk
+
+# Verify zero collisions in-memory (zero disk writes)
+python kicad_layout.py "projects/<NAME>" --dry-run
+```
+- Executes discrete placement operations with 0.5mm grid snapping.
+- Resolves courtyard overlaps elastically without moving locked perimeter connectors.
+
+### Step 9: Inspection & 3D Visual Suite
+```powershell
+# Summary table of placed components
+python kicad_inspect.py "projects/<NAME>" --summary
+
+# 2D Spatial Occupancy & Available Free Rectangular Pockets
+python kicad_inspect.py "projects/<NAME>" --free-space
+
+# Comprehensive 9-Angle 3D Vision Suite (Top + 4 Corners + 4 Side Edges)
+python pcb_snapshot.py "projects/<NAME>" --3d
+
+# Full export (2D vector SVG + complete 9-angle 3D suite)
+python pcb_snapshot.py "projects/<NAME>" --all
+```
+- Analyzes board density and identifies open rectangular corridors.
+- Renders high-resolution 2D SVGs and 9 unclipped 3D perspective views.
+
+### Step 10: Headless Autorouting & DRC
+```powershell
+# 2-layer board routing with continuous ground plane and DRC check
+python kicad_route.py "projects/<NAME>" --pour-gnd --drc
+
+# 4-layer board routing
+python kicad_route.py "projects/<NAME>" --layers 4 --pour-gnd --drc
+
+# Strip all routed traces and zones (if re-placement is needed)
+python kicad_route.py "projects/<NAME>" --unroute
+```
+- Integrates Freerouting 2.4.1 background daemon with adaptive routing strategies.
+- Prunes dangling micro-stubs (<0.08mm).
+- Floods solid continuous ground copper planes (`B.Cu` / inner planes) with island removal.
+- Runs `kicad-cli pcb drc --severity-all` to confirm 0 clearance errors and 0 unconnected airwires.
+
+### Step 11: Production Export for JLCPCB
+```powershell
+python export_jlcpcb.py "projects/<NAME>"
+```
+- Generates complete RS-274X Gerber zip and Excellon drill archives.
+- Produces JLCPCB-formatted BOM CSV with 100% verified LCSC Part Numbers.
+- Generates CPL pick-and-place CSV with DFM-ROT auto-rotation compensation.
 
 ---
 
-##3. Python Module Execution (`kaibridge`)
+## 2. Python Engine API (`kaibridge`)
 
-All tools are natively accessible in Python or via MCP server:
+All capabilities can be called directly within Python:
 
 ```python
-from kaibridge.pcb import apply_ops, route_board, add_ground_plane, export_production_files, sync_schematic_to_pcb
-from kaibridge.schematic import compile_schematic
-from kaibridge.sourcing import lookup_by_lcsc, fetch_lcsc
+from kaibridge.schematic.compiler import compile_schematic
+from kaibridge.pcb.sync import sync_schematic_to_pcb
+from kaibridge.pcb.layout import apply_ops
+from kaibridge.pcb.gatekeeper import placement_audit
+from kaibridge.pcb.router import route_board
+from kaibridge.pcb.export import export_production_files
 
 # 1. Compile schematic
-res = compile_schematic(project_dir="C:/projects/demo", apply_netclasses=True, run_erc=True)
+sch_res = compile_schematic(project_dir="projects/demo", apply_netclasses=True, run_erc=True)
 
 # 2. Sync to PCB (headless F8)
-res = sync_schematic_to_pcb(project_dir="C:/projects/demo")
+sync_res = sync_schematic_to_pcb(project_dir="projects/demo")
 
-# 3. Layout operations with in-memory simulation
-res = apply_ops(project_dir="C:/projects/demo", ops_data=ops_list, dry_run=True)
+# 3. Apply layout with in-memory dry-run verification
+layout_res = apply_ops(project_dir="projects/demo", ops_data=ops_list, dry_run=False, shove=True)
 
-# 4. Headless routing (Freerouting 2.4.1) & ground pour
-res = route_board(project_dir="C:/projects/demo")
-res = add_ground_plane(project_dir="C:/projects/demo", net="GND", layer="B.Cu", clearance_mm=0.3)
+# 4. Gatekeeper verification
+audit_res = placement_audit(project_dir="projects/demo")
+assert audit_res["route_ready"]
+
+# 5. Route board with Freerouting & pour ground
+route_res = route_board(project_dir="projects/demo", pour_gnd=True, run_drc=True)
+
+# 6. Export manufacturing bundle
+export_res = export_production_files(project_dir="projects/demo")
 ```
-
----
-
-##4. Canonical Root CLI Tools
-
-Alongside the MCP interface, the repository provides 8 standalone root CLI tools:
-
-| CLI Command | Purpose |
-|---|---|
-| `python kicad_lib_init.py "projects/<NAME>" -n kaibridge` | Instant project bootstrap & library plumbing (< 0.2s) |
-| `python kicad_pins.py "projects/<NAME>\libs\kaibridge.kicad_sym" -s <SYM> --json` | Zero-hallucinated pinout and footprint extraction (< 0.1s) |
-| `python json2sch.py "projects/<NAME>" --apply-netclasses --erc` | Declarative schematic compilation & automated ERC gate |
-| `python kicad_pcb_sync.py "projects/<NAME>"` | Headless F8 netlist and footprint synchronization |
-| `python kicad_layout.py "projects/<NAME>" [ops.json] [--dry-run]` | Declarative layout placement & in-memory collision check |
-| `python pcb_snapshot.py "projects/<NAME>"` | Vector SVG layout snapshot export for visual review |
-| `python kicad_route.py "projects/<NAME>" --pour-gnd --drc` | Headless Freerouting, ground copper pour & DRC verification |
-| `python export_jlcpcb.py "projects/<NAME>"` | 100% factory-ready JLCPCB production bundle export |

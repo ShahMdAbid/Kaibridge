@@ -669,6 +669,7 @@ def route_board(
         try:
             b_settings = board.GetDesignSettings()
             b_settings.m_MinClearance = int(min_c * 1e6)
+            b_settings.m_TrackMinWidth = int(min_w * 1e6)
         except Exception:
             pass
 

@@ -174,8 +174,8 @@ def _sheet(design, layout, version, child, frame, page, project,
     py = frame.y + SHEET_PIN_TOP
     for name in layout.pins.get(child.id) or []:
         node.append(["pin", Quoted(name), "bidirectional",
-                     ["at", _n(x), _n(py), "0"],
-                     _effects(version, justify=["left"]),
+                     ["at", _n(x), _n(py), "180"],
+                     _effects(version, justify=["right"]),
                      ["uuid", Quoted(uid(design.design_id, "sheetpin",
                                          f"{child.id}:{name}"))]])
         py += SHEET_PIN_PITCH

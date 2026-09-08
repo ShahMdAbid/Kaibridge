@@ -17,16 +17,11 @@ Kaibridge 2.0 leverages `kicad-cli` and `pcbnew` to generate a 100% factory-comp
 
 ---
 
-##2. Execution (CLI & MCP)
+## 2. Execution
 
-- **Mode A (Root CLI):**
-  ```powershell
-  python export_jlcpcb.py "projects/<Project_Name>"
-  ```
-- **Mode B (MCP Tool):**
-  ```python
-  kaibridge_export_production(project_dir="<PROJECT_DIR>")
-  ```
+```powershell
+python export_jlcpcb.py "projects/<Project_Name>"
+```
 
 ###Output Location:
 All production files are exported to `<PROJECT_DIR>/production_output/`:

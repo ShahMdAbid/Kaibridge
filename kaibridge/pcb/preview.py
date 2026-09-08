@@ -7,7 +7,7 @@ import sys
 import json
 import subprocess
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 from ..core.paths import load_cli, load_kicad_python
 
@@ -167,3 +167,114 @@ def render_schematic_preview(
         "format": fmt,
         "output": res.stdout.strip()
     }
+
+
+NINE_VIEWS_CONFIG: Dict[str, Dict[str, Any]] = {
+    "top": {
+        "desc": "Top Orthogonal View (0°)",
+        "args": ["--side", "top", "--zoom", "0.85"]
+    },
+    "corner_front_left": {
+        "desc": "Front-Left (SW) Isometric 45°",
+        "args": ["--perspective", "--rotate", "-45,0,45", "--zoom", "0.80"]
+    },
+    "corner_front_right": {
+        "desc": "Front-Right (SE) Isometric 45°",
+        "args": ["--perspective", "--rotate", "-45,0,-45", "--zoom", "0.80"]
+    },
+    "corner_back_right": {
+        "desc": "Back-Right (NE) Isometric 45°",
+        "args": ["--perspective", "--rotate", "-45,0,-135", "--zoom", "0.80"]
+    },
+    "corner_back_left": {
+        "desc": "Back-Left (NW) Isometric 45°",
+        "args": ["--perspective", "--rotate", "-45,0,135", "--zoom", "0.80"]
+    },
+    "side_front": {
+        "desc": "Front (South) Edge Elevation 30°",
+        "args": ["--perspective", "--rotate", "-30,0,0", "--zoom", "0.80"]
+    },
+    "side_right": {
+        "desc": "Right (East) Edge Elevation 30°",
+        "args": ["--perspective", "--rotate", "-30,0,-90", "--zoom", "0.80"]
+    },
+    "side_back": {
+        "desc": "Back (North) Edge Elevation 30°",
+        "args": ["--perspective", "--rotate", "-30,0,180", "--zoom", "0.80"]
+    },
+    "side_left": {
+        "desc": "Left (West) Edge Elevation 30°",
+        "args": ["--perspective", "--rotate", "-30,0,90", "--zoom", "0.80"]
+    },
+}
+
+
+def render_3d_suite(
+    project_dir: str | Path,
+    views: Optional[List[str]] = None,
+    width: int = 1600,
+    height: int = 900
+) -> Dict[str, Any]:
+    """Renders the comprehensive 9-angle 3D visual inspection suite via kicad-cli.
+    Provides calibrated zoom (0.80-0.85) to guarantee unclipped board borders from every angle:
+      - 1 Top View (0°)
+      - 4 Corner Views (Isometric 45° from SW, SE, NE, NW)
+      - 4 Side Views (30° elevation facing Front, Right, Back, Left edges)
+    """
+    proj_path = Path(project_dir).resolve()
+    pro_files = list(proj_path.glob("*.kicad_pro"))
+    if not pro_files:
+        return {"success": False, "error": f"No .kicad_pro found in {project_dir}"}
+
+    stem = pro_files[0].stem
+    pcb_file = proj_path / f"{stem}.kicad_pcb"
+    if not pcb_file.exists():
+        return {"success": False, "error": f"PCB file not found: {pcb_file}"}
+
+    dump_dir = proj_path / "kaibridge_dump" / "3d_views"
+    dump_dir.mkdir(parents=True, exist_ok=True)
+
+    cli = load_cli()
+    if not cli:
+        return {"success": False, "error": "kicad-cli executable not found"}
+
+    target_views = views if views else list(NINE_VIEWS_CONFIG.keys())
+    rendered = {}
+    failed = []
+
+    for vname in target_views:
+        if vname not in NINE_VIEWS_CONFIG:
+            continue
+        cfg = NINE_VIEWS_CONFIG[vname]
+        out_png = dump_dir / f"{vname}.png"
+        if out_png.exists():
+            try:
+                out_png.unlink()
+            except Exception:
+                pass
+
+        cmd = [
+            str(cli), "pcb", "render",
+            "--width", str(width),
+            "--height", str(height),
+            "-o", str(out_png)
+        ] + cfg["args"] + [str(pcb_file)]
+
+        res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", check=False)
+        if res.returncode == 0 and out_png.exists() and out_png.stat().st_size > 0:
+            rendered[vname] = {
+                "path": str(out_png),
+                "desc": cfg["desc"]
+            }
+        else:
+            err = res.stderr.strip() or res.stdout.strip() or 'render failed (missing or empty image)'
+            failed.append(f"{vname}: {err}")
+
+    return {
+        "success": len(rendered) > 0 and len(failed) == 0,
+        "total_rendered": len(rendered),
+        "views": rendered,
+        "failed": failed,
+        "output_dir": str(dump_dir)
+    }
+

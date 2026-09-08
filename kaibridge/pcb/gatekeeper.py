@@ -231,7 +231,7 @@ print("AUDIT_SUB_RESULT:" + json.dumps(res))
         "outside_outline": outside,
         "footprints_without_courtyard": no_courtyard,
         "netclasses_without_track_width": zero_width,
-        "route_ready": bool(bounds) and len(overlaps) == 0 and len(zero_width) == 0,
+        "route_ready": bool(bounds) and len(overlaps) == 0 and len(outside) == 0 and len(zero_width) == 0,
         "footprint_boxes": [
             {"ref": b.ref, "x0": b.x0, "y0": b.y0, "x1": b.x1, "y1": b.y1,
              "cx": b.cx, "cy": b.cy, "rot": b.rot, "locked": b.locked, "source": b.source}

@@ -27,9 +27,14 @@ temp_ops_*.json
 .coverage
 htmlcov/
 
-# Projects workspace (strictly local)
+# Projects workspace & KiCad design artifacts (strictly local)
 projects/
 **/projects/
+*.kicad_pro
+*.kicad_pcb
+*.kicad_sch
+fp-lib-table
+sym-lib-table
 
 # VS Code & IDE files
 .history/
@@ -38,9 +43,8 @@ projects/
 .idea/
 
 # Heavy binary databases (>100MB), jars & release archives
-data/*.elib
-data/*.elib.zip
-data/easyeda-std.elib*
+data/
+**/data/
 *.zip
 **/*.zip
 *.jar
@@ -73,8 +77,10 @@ $RECYCLE.BIN/
 *.tmp
 *.temp
 
-# Private notes / architectural analysis
+# Private notes / architectural analysis & internal bundles
 references/architectural_landscape_and_contributions.md
+bundle_for_llm.py
+*bundle*.txt
 
 
 

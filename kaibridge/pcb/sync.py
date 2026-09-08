@@ -96,11 +96,15 @@ def _execute_pcbnew_sync(proj_path_str: str, pcb_file_str: str, design_file_str:
         board = pcbnew.BOARD()
         board.SetFileName(str(pcb_file))
 
-    if not design_file.exists():
+    build_file = proj_path / "kaibridge_dump" / "kaibridge_build.json"
+    if build_file.exists():
+        with open(build_file, "r", encoding="utf-8-sig") as f:
+            data = json.load(f)
+    elif design_file.exists():
+        with open(design_file, "r", encoding="utf-8-sig") as f:
+            data = json.load(f)
+    else:
         return {"success": False, "error": f"design.json missing at {design_file}"}
-
-    with open(design_file, "r", encoding="utf-8-sig") as f:
-        data = json.load(f)
 
     parts_dict = {}
     if "parts" in data and isinstance(data["parts"], dict):
@@ -150,6 +154,7 @@ def _execute_pcbnew_sync(proj_path_str: str, pcb_file_str: str, design_file_str:
     nets_data = data.get("nets", {})
     nets_bound = 0
     pads_connected = 0
+    unmatched_pads = []
 
     net_items = []
     if isinstance(nets_data, dict):
@@ -190,10 +195,16 @@ def _execute_pcbnew_sync(proj_path_str: str, pcb_file_str: str, design_file_str:
 
             fp = existing_fps.get(ref) or board.FindFootprintByReference(ref)
             if fp:
+                matched = False
                 for p in fp.Pads():
                     if _matches_pad(p.GetNumber(), pad_num):
                         p.SetNet(net_info)
                         pads_connected += 1
+                        matched = True
+                if not matched:
+                    unmatched_pads.append(f"{ref}.{pad_num} (net: {net_name})")
+            else:
+                unmatched_pads.append(f"Missing footprint: {ref}")
 
     board.BuildListOfNets()
     board.BuildConnectivity()
@@ -211,7 +222,9 @@ def _execute_pcbnew_sync(proj_path_str: str, pcb_file_str: str, design_file_str:
         "footprint_count": total_fps,
         "new_footprints": added_count,
         "nets_bound": nets_bound,
-        "pads_connected": pads_connected
+        "pads_connected": pads_connected,
+        "unmatched_pads_count": len(unmatched_pads),
+        "unmatched_pads": unmatched_pads[:10]
     }
 
 

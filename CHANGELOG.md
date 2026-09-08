@@ -5,27 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Beta v2.4.1] - 2026-09-08
-
-### Changed & Streamlined
-- **Concise & Clean `SKILL.md` Workflow (Up to Schematic Generation):**
-  - Reordered procedural workflow: **Step 0 Bootstrap** (`kicad_lib_init.py`) immediately sets up project libraries and tables upon prompt receipt.
-  - Postponed formal BOM and netlist generation from Step 1 wishlist to **Step 4 Implementation Plan**, requiring ground-truth pin extraction from downloaded symbols (`kicad_pins.py`) first to eliminate pin-out hallucinations and premature design lock-in.
-  - Simplified EasyEDA active component download CLI commands to direct, cross-platform paths without shell-specific `Push-Location` or `$PWD`.
-  - Clarified ART-Gate as an adversarial cognitive review protocol applied during planning rather than an external CLI binary.
-  - Added **Recommended Default Placement Pipeline** in Step 8 (Anchor Placement → Apply Layout → Planar Optimization → Silkscreen Sanitation).
-  - Streamlined Step 8A by removing redundant embedded `ops.json` snippet, linking directly to canonical `ops_template.json` and Appendix A.
+## [Beta v2.5.0] - 2026-09-09
 
 ### Added
-- **Vector Schematic Snapshot CLI (`pcb_snapshot.py --schematic`):** Added `--schematic` flag and `export_schematic_snapshot()` to `pcb_snapshot.py` to directly render vector SVG schematics to `<PROJECT_DIR>/kaibridge_dump/<NAME>_schematic.svg`.
-- **Audit Regression Test Suite (`tests/test_audit_fixes.py`):** Added unit tests covering DRC fail-closed behavior, composite pad matching, and LCSC passive disambiguation.
+- **Staged Component Ingestion & 2D Free-Space Inspector:** Deterministic layout flow with staging lot isolation, edge connector locks, real-time pocket mapping (`kicad_inspect.py --free-space`), and push-and-shove relaxation.
+- **9-Angle 3D Vision Suite (`pcb_snapshot.py --3d`):** Unclipped 9-perspective render suite (orthogonal top, 4x 45° corner isometrics, 4x 30° edge elevations) for pre-routing visual sign-off.
+- **Fail-Closed Gatekeeper Proof (`kaibridge.pcb.gatekeeper`):** Pre-routing audit guaranteeing closed outlines, zero courtyard overlaps, zero out-of-bounds parts, and complete netclasses before routing.
+
+### Changed
+- **Canonical Schema 3 & Multi-Sheet Hierarchy (`design_template.json`):** Upgraded `design_template.json` to Schema 3 with explicit `sheets` and `groups` declarations. This guarantees clean multi-sheet hierarchical schematic generation for complex circuits, prevents single-sheet overcrowding and artificial paper-stretching workarounds, and eliminates reverse-engineering of stale legacy dump folders.
+- **Evidence-First Synthesis Pipeline (`SKILL.md`):** Reordered workflow to strictly enforce ground-truth pin extraction before design planning and multi-sheet netlist compilation.
 
 ### Fixed & Hardened
-- **Fail-Closed DRC Gate (`kaibridge/pcb/drc.py` & `kicad_route.py`):** Fixed potential false-PASS bug by purging stale `drc_report.json` prior to execution and enforcing strict fail-closed validation on missing or unparseable reports.
-- **Composite & Stacked Pad Matching (`kaibridge/pcb/sync.py`):** Replaced strict equality with `_matches_pad()`, supporting delimiter-separated aliases (`/`, `,`, `-`, `_`) so multi-pad contacts (e.g. Type-C `A1/B12`) properly connect to copper nets on PCB sync.
-- **LCSC Basic Parts & Footprint Mismatches (`references/jlcpcb_basic_parts.md` & `kaibridge/sourcing/parts_db.py`):**
-  - Resolved 0805 1µF 50V MLCC C-ID to Samsung `CL21B105KBFNNNE` (`C28323`), preserving `C15849` for 0603.
-  - Resolved 0805 5.1kΩ 1% resistor C-ID to UNI-ROYAL `0805W8F5101T5E` (`C27834`), preserving `C23186` for 0603.
+- **Fail-Closed Geometry & DRC Gates:** Fixed false-positive passes in `--dry-run` and verified strict boundary containment (`outside_outline_count == 0`) in `route_ready`.
+- **Centroid-Based Push & Shove:** Upgraded collision avoidance to true bounding-box centroids (`cx, cy`), eliminating spatial drift on asymmetric connectors.
+- **Transactional Persistence:** Gated `.kicad_pcb` writes behind zero-error checks to prevent corrupted layout commits.
+- **Toolchain & Sync Hardening:** Reconciled live PCB state seeding in planar optimization, resolved synthetic decoupling net binding in Step 7 PCB sync, and auto-classified mechanical peg holes to prevent false annular ring DRC errors.
 
 ---
 

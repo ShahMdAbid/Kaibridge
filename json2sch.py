@@ -42,6 +42,8 @@ def main(argv=None):
                     help="auto-heal unspecified pin types in project libraries (default: true)")
     ap.add_argument("--no-heal-pins", action="store_false", dest="heal_pins",
                     help="do not auto-heal pin types")
+    ap.add_argument("--global-labels", action="store_true",
+                    help="use global labels for all inter-sheet signals instead of hierarchical sheet pins")
     ap.add_argument("--svg", action="store_true",
                     help="also export vector SVG schematic preview to kaibridge_dump/")
     args = ap.parse_args(argv)
@@ -58,7 +60,8 @@ def main(argv=None):
         apply_netclasses=args.apply_netclasses,
         run_erc=args.erc,
         dry_run=args.dry_run,
-        auto_heal_pins=args.heal_pins
+        auto_heal_pins=args.heal_pins,
+        prefer_global_labels=args.global_labels
     )
 
     if not res.get("success") and not res.get("dry_run"):

@@ -53,6 +53,11 @@ def main(argv=None):
         action="store_true",
         help="Hide all component values from silkscreen, preserving reference designators"
     )
+    ap.add_argument(
+        "--shove",
+        action="store_true",
+        help="Enable elastic Component Push-and-Shove collision relaxation: gently displace unlocked colliding parts into free space"
+    )
     args = ap.parse_args(argv)
 
     project_dir = Path(args.project_dir).expanduser().resolve()
@@ -96,19 +101,31 @@ def main(argv=None):
         ops_data = json.load(f)
 
     mode_str = "DRY RUN (In-Memory Simulation)" if args.dry_run else "COMMITTED TO DISK"
+    if args.shove:
+        mode_str += " + PUSH-AND-SHOVE RELAXATION"
     print(f"[*] Applying layout operations from: {ops_path.name} [{mode_str}]")
 
-    res = apply_ops(project_dir, ops_data, dry_run=args.dry_run)
+    res = apply_ops(project_dir, ops_data, dry_run=args.dry_run, shove=args.shove)
 
-    if not res.get("success") and not args.dry_run:
-        print(f"Error: {res.get('error', 'Layout operations failed')}", file=sys.stderr)
+    if not res.get("success"):
+        err_msg = res.get("error") or "; ".join(res.get("errors", [])) or "Layout operations failed"
+        print(f"Error: {err_msg}", file=sys.stderr)
         return 1
 
     applied = res.get("applied_ops_count", 0)
     print("\n=== Layout Operations Result ===")
     print(f"  Operations Applied : {applied}")
 
+    shove_info = res.get("push_and_shove")
+    if shove_info and shove_info.get("shove_applied"):
+        print(f"  Push-and-Shove     : {shove_info.get('displaced_count', 0)} colliding part(s) elastically relocated into free space:")
+        for disp in shove_info.get("displaced", [])[:8]:
+            print(f"    - {disp['ref']}: {disp['from']} -> {disp['to']} (delta: {disp['delta_mm']} mm)")
+
     if args.dry_run:
+        if "collisions_detected" not in res:
+            print("Error: Backend dry-run failed to return collision audit data", file=sys.stderr)
+            return 1
         collisions = res.get("collisions_detected", 0)
         pairs = res.get("collision_pairs", [])
         print(f"  Courtyard Collisions: {collisions}")
@@ -118,7 +135,7 @@ def main(argv=None):
                 print(f"    - {pair}")
             if len(pairs) > 10:
                 print(f"    ... and {len(pairs) - 10} more.")
-            print("\n  [!] Resolve courtyard overlaps in ops.json before committing.\n")
+            print("\n  [!] Resolve courtyard overlaps in ops.json or use --shove to relax.\n")
             return 1
         else:
             print("  Status: ZERO COLLISIONS (Geometry Gate Verified)")

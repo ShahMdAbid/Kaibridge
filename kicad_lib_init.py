@@ -102,6 +102,19 @@ def init_libraries(project_dir: str | Path, name: str = "kaibridge", layers: int
     dump_dir = project / "kaibridge_dump"
     dump_dir.mkdir(parents=True, exist_ok=True)
 
+    warning_file = dump_dir / "warning.md"
+    if not warning_file.exists():
+        warning_file.write_text(
+            "# Hardware Synthesis Warnings & Audit Log\n\n"
+            "This log tracks all automated symbol modifications, pin healing actions, "
+            "and electrical sanity audits performed during synthesis.\n\n"
+            "## 1. Symbol Pin Modifications\n"
+            "_No pin modifications logged yet._\n\n"
+            "## 2. Electrical & ERC Audit Notes\n"
+            "_No electrical warnings logged yet._\n",
+            encoding="utf-8"
+        )
+
     pro_files = list(project.glob("*.kicad_pro"))
     if not pro_files:
         stem = project.name

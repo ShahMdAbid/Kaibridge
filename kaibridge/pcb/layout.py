@@ -6,6 +6,7 @@ tracks, vias, and copper zones with 0.5mm clean quantization.
 import os
 import sys
 import json
+import math
 import subprocess
 from pathlib import Path
 from typing import Dict, Any, List, Optional
@@ -15,10 +16,12 @@ from ..core.paths import load_kicad_python
 def apply_ops(
     project_dir: str | Path,
     ops_data: Dict[str, Any] | List[Dict[str, Any]] | str | Path,
-    dry_run: bool = False
+    dry_run: bool = False,
+    shove: bool = False
 ) -> Dict[str, Any]:
     """Applies a list of layout operations defined in ops.json or a dictionary/list.
     If dry_run is True, simulates all operations in memory and runs a collision audit without writing to disk.
+    If shove is True, automatically activates elastic Component Push-and-Shove collision relaxation.
     """
     proj_path = Path(project_dir).resolve()
     if not proj_path.exists():
@@ -50,16 +53,19 @@ def apply_ops(
     is_dry = dry_run or (isinstance(raw, dict) and bool(raw.get("dry_run", False)))
     ops_list = raw.get("ops", raw.get("operations", [])) if isinstance(raw, dict) else raw
     board_meta = raw.get("board", {}) if isinstance(raw, dict) else {}
+    is_shove = shove or (isinstance(raw, dict) and bool(raw.get("shove", False))) or (isinstance(board_meta, dict) and bool(board_meta.get("shove", False)))
+    if not is_shove and isinstance(ops_list, list):
+        is_shove = any(isinstance(op, dict) and bool(op.get("shove", False)) for op in ops_list)
 
     try:
         import pcbnew
-        return _execute_in_process(pcb_file, ops_list, board_meta, dry_run=is_dry)
+        return _execute_in_process(pcb_file, ops_list, board_meta, dry_run=is_dry, shove=is_shove)
     except ImportError:
         kicad_python = load_kicad_python()
         dump_dir = proj_path / "kaibridge_dump"
         dump_dir.mkdir(parents=True, exist_ok=True)
         temp_ops = dump_dir / "temp_ops_payload.json"
-        temp_ops.write_text(json.dumps({"ops": ops_list, "board": board_meta, "dry_run": is_dry}), encoding="utf-8")
+        temp_ops.write_text(json.dumps({"ops": ops_list, "board": board_meta, "dry_run": is_dry, "shove": is_shove}), encoding="utf-8")
         
         runner = f"""
 import sys, json, os, traceback
@@ -68,7 +74,7 @@ from kaibridge.pcb.layout import _execute_in_process
 try:
     with open(r"{str(temp_ops)}", "r", encoding="utf-8") as f:
         d = json.load(f)
-    res = _execute_in_process(r"{str(pcb_file)}", d.get("ops", []), d.get("board", {{}}), dry_run=d.get("dry_run", False))
+    res = _execute_in_process(r"{str(pcb_file)}", d.get("ops", []), d.get("board", {{}}), dry_run=d.get("dry_run", False), shove=d.get("shove", False))
     print("APPLY_OPS_RESULT:" + json.dumps(res), flush=True)
 except Exception as e:
     print("APPLY_OPS_ERROR:" + json.dumps({{"error": traceback.format_exc()}}), flush=True)
@@ -93,16 +99,227 @@ finally:
         return {"success": False, "error": res_sub.stderr.strip() or res_sub.stdout.strip()}
 
 
+def apply_component_push_and_shove(
+    board,
+    moved_refs: List[str],
+    clearance: float = 0.5,
+    margin: float = 1.5,
+    max_iterations: int = 50
+) -> Dict[str, Any]:
+    """Elastic Component Push-and-Shove Collision Relaxation.
+    When component A is placed/moved and collides with unlocked component B,
+    B is elastically shoved along the minimum penetration vector into free space.
+    If B collides with C, the shove cascades to C (ripple effect).
+    Components with locked=True are immovable bedrock and cannot be displaced.
+    All shoved positions are clamped inside board margins and snapped to the 0.5mm grid.
+    """
+    import pcbnew
+
+    edge_drawings = [d for d in board.GetDrawings() if d.GetLayer() == pcbnew.Edge_Cuts]
+    if edge_drawings:
+        x0 = min(d.GetBoundingBox().GetLeft() for d in edge_drawings) / 1e6
+        y0 = min(d.GetBoundingBox().GetTop() for d in edge_drawings) / 1e6
+        x1 = max(d.GetBoundingBox().GetRight() for d in edge_drawings) / 1e6
+        y1 = max(d.GetBoundingBox().GetBottom() for d in edge_drawings) / 1e6
+    else:
+        bb = board.ComputeBoundingBox()
+        x0 = bb.GetX() / 1e6
+        y0 = bb.GetY() / 1e6
+        x1 = (bb.GetX() + bb.GetWidth()) / 1e6
+        y1 = (bb.GetY() + bb.GetHeight()) / 1e6
+
+    min_x = x0 + margin
+    max_x = x1 - margin
+    min_y = y0 + margin
+    max_y = y1 - margin
+
+    fps = {fp.GetReference(): fp for fp in board.GetFootprints()}
+    if not fps:
+        return {"shove_applied": False, "displaced_count": 0, "displaced": []}
+
+    def _extract_box(fp):
+        pos = fp.GetPosition()
+        ox = pos.x / 1e6
+        oy = pos.y / 1e6
+        c_box = None
+        if hasattr(fp, "GetCourtyard"):
+            for l in (pcbnew.F_CrtYd, pcbnew.B_CrtYd):
+                try:
+                    poly = fp.GetCourtyard(l)
+                    if poly and not poly.IsEmpty():
+                        c_box = poly.BBox()
+                        break
+                except Exception:
+                    pass
+        if c_box:
+            bw = c_box.GetWidth() / 1e6
+            bh = c_box.GetHeight() / 1e6
+            cx = c_box.GetCenter().x / 1e6
+            cy = c_box.GetCenter().y / 1e6
+        else:
+            pad_boxes = [pad.GetBoundingBox() for pad in fp.Pads()]
+            if pad_boxes:
+                px0 = min(pad_b.GetLeft() for pad_b in pad_boxes) / 1e6
+                px1 = max(pad_b.GetRight() for pad_b in pad_boxes) / 1e6
+                py0 = min(pad_b.GetTop() for pad_b in pad_boxes) / 1e6
+                py1 = max(pad_b.GetBottom() for pad_b in pad_boxes) / 1e6
+                bw = max(px1 - px0, 1.2)
+                bh = max(py1 - py0, 1.2)
+                cx = (px0 + px1) / 2.0
+                cy = (py0 + py1) / 2.0
+            else:
+                bb = fp.GetBoundingBox()
+                bw = bb.GetWidth() / 1e6
+                bh = bb.GetHeight() / 1e6
+                cx = bb.GetCenter().x / 1e6
+                cy = bb.GetCenter().y / 1e6
+        bw = max(bw, 1.2)
+        bh = max(bh, 1.2)
+        off_x = cx - ox
+        off_y = cy - oy
+        return {
+            "ox": ox, "oy": oy,
+            "cx": cx, "cy": cy,
+            "off_x": off_x, "off_y": off_y,
+            "w": bw, "h": bh,
+            "locked": bool(fp.IsLocked())
+        }
+
+    state = {ref: _extract_box(fp) for ref, fp in fps.items()}
+    initial_positions = {ref: (d["ox"], d["oy"]) for ref, d in state.items()}
+
+    active_shove_occurred = False
+    def _is_on_board(b_box, ref_name):
+        if ref_name in moved_refs:
+            return True
+        return (b_box["cx"] >= x0 - 1.0 and b_box["cx"] <= x1 + 1.0 and
+                b_box["cy"] >= y0 - 1.0 and b_box["cy"] <= y1 + 1.0)
+
+    for iteration in range(max_iterations):
+        overlap_found = False
+        refs = list(state.keys())
+
+        for i in range(len(refs)):
+            rA = refs[i]
+            bA = state[rA]
+            if not _is_on_board(bA, rA):
+                continue
+            for j in range(i + 1, len(refs)):
+                rB = refs[j]
+                bB = state[rB]
+                if not _is_on_board(bB, rB):
+                    continue
+
+                dx = bB["cx"] - bA["cx"]
+                dy = bB["cy"] - bA["cy"]
+                pen_x = (bA["w"] / 2.0 + bB["w"] / 2.0 + clearance) - abs(dx)
+                pen_y = (bA["h"] / 2.0 + bB["h"] / 2.0 + clearance) - abs(dy)
+
+                if pen_x > 0.05 and pen_y > 0.05:
+                    overlap_found = True
+                    active_shove_occurred = True
+
+                    lockA = bA["locked"]
+                    lockB = bB["locked"]
+                    if lockA and lockB:
+                        continue
+
+                    push_axis_x = pen_x < pen_y
+
+                    if lockA:
+                        shove_ref = rB
+                        push_dir_x = 1.0 if dx >= 0 else -1.0
+                        push_dir_y = 1.0 if dy >= 0 else -1.0
+                    elif lockB:
+                        shove_ref = rA
+                        push_dir_x = -1.0 if dx >= 0 else 1.0
+                        push_dir_y = -1.0 if dy >= 0 else 1.0
+                    else:
+                        if rA in moved_refs and rB not in moved_refs:
+                            shove_ref = rB
+                            push_dir_x = 1.0 if dx >= 0 else -1.0
+                            push_dir_y = 1.0 if dy >= 0 else -1.0
+                        elif rB in moved_refs and rA not in moved_refs:
+                            shove_ref = rA
+                            push_dir_x = -1.0 if dx >= 0 else 1.0
+                            push_dir_y = -1.0 if dy >= 0 else 1.0
+                        else:
+                            shove_ref = None
+                            sign_x = 1.0 if dx >= 0 else -1.0
+                            sign_y = 1.0 if dy >= 0 else -1.0
+                            shift_x = (pen_x / 2.0 + 0.25) * sign_x
+                            shift_y = (pen_y / 2.0 + 0.25) * sign_y
+                            if push_axis_x:
+                                bB["cx"] += shift_x
+                                bA["cx"] -= shift_x
+                            else:
+                                bB["cy"] += shift_y
+                                bA["cy"] -= shift_y
+
+                    if shove_ref:
+                        target = state[shove_ref]
+                        dist_x = (pen_x + 0.4) * push_dir_x
+                        dist_y = (pen_y + 0.4) * push_dir_y
+
+                        if push_axis_x:
+                            test_x = target["cx"] + dist_x
+                            if test_x - target["w"] / 2.0 < min_x or test_x + target["w"] / 2.0 > max_x:
+                                push_axis_x = False
+
+                        if push_axis_x:
+                            target["cx"] += dist_x
+                        else:
+                            target["cy"] += dist_y
+
+                    for r in (rA, rB):
+                        if not state[r]["locked"]:
+                            state[r]["cx"] = max(min_x + state[r]["w"] / 2.0, min(max_x - state[r]["w"] / 2.0, state[r]["cx"]))
+                            state[r]["cy"] = max(min_y + state[r]["h"] / 2.0, min(max_y - state[r]["h"] / 2.0, state[r]["cy"]))
+
+        if not overlap_found:
+            break
+
+    displaced_summary = []
+    for ref, b_data in state.items():
+        if b_data["locked"]:
+            continue
+        init_ox, init_oy = initial_positions[ref]
+        # Reconstruct footprint origin from displaced courtyard center
+        new_ox = b_data["cx"] - b_data["off_x"]
+        new_oy = b_data["cy"] - b_data["off_y"]
+        qx = round(new_ox * 2.0) / 2.0
+        qy = round(new_oy * 2.0) / 2.0
+
+        if abs(qx - init_ox) > 0.05 or abs(qy - init_oy) > 0.05:
+            fp = fps[ref]
+            fp.SetPosition(pcbnew.VECTOR2I(pcbnew.FromMM(qx), pcbnew.FromMM(qy)))
+            displaced_summary.append({
+                "ref": ref,
+                "from": [round(init_ox, 2), round(init_oy, 2)],
+                "to": [round(qx, 2), round(qy, 2)],
+                "delta_mm": [round(qx - init_ox, 2), round(qy - init_oy, 2)]
+            })
+
+    return {
+        "shove_applied": active_shove_occurred,
+        "displaced_count": len(displaced_summary),
+        "displaced": displaced_summary
+    }
+
+
+
 def _execute_in_process(
     pcb_path: str | Path,
     ops: List[Dict[str, Any]],
     board_meta: Dict[str, Any],
-    dry_run: bool = False
+    dry_run: bool = False,
+    shove: bool = False
 ) -> Dict[str, Any]:
     import pcbnew
     b = pcbnew.LoadBoard(str(pcb_path))
     applied = 0
     errors = []
+    moved_refs = []
 
     # Clear options if requested (use b.Delete to avoid SWIG type table corruption)
     if board_meta.get("clear_edge_cuts"):
@@ -116,13 +333,17 @@ def _execute_in_process(
     fps = {fp.GetReference(): fp for fp in b.GetFootprints()}
 
     for op in ops:
-        action = op.get("op", "")
-        ref = op.get("ref")
+        action = op.get("op", op.get("action", ""))
+        ref = op.get("ref", "")
 
         # 1. Place / Move Footprint
-        if action in ("footprint.place", "place", "fp_place", "footprint.move", "move"):
+        if action in ("footprint.place", "place", "fp_place", "footprint.move", "move", "item.place", "item.move", "set_pos"):
             fp = fps.get(ref)
             if fp:
+                if op.get("shove"):
+                    shove = True
+                if ref:
+                    moved_refs.append(ref)
                 if "pos" in op and isinstance(op["pos"], (list, tuple)) and len(op["pos"]) >= 2:
                     x = float(op["pos"][0])
                     y = float(op["pos"][1])
@@ -436,6 +657,10 @@ def _execute_in_process(
         else:
             errors.append(f"Unknown layout operation: '{action}'")
 
+    shove_info = None
+    if shove:
+        shove_info = apply_component_push_and_shove(b, moved_refs)
+
     b.BuildListOfNets()
     b.BuildConnectivity()
 
@@ -470,14 +695,20 @@ def _execute_in_process(
                     ref_b = fp_b.GetReference() if hasattr(fp_b, "GetReference") else f"fp_{j}"
                     overlaps.append(f"{ref_a} <-> {ref_b}")
     else:
-        pcbnew.SaveBoard(str(pcb_path), b)
+        can_commit = (applied > 0 or len(ops) == 0) and len(errors) == 0
+        if can_commit:
+            pcbnew.SaveBoard(str(pcb_path), b)
 
+    can_commit = (applied > 0 or len(ops) == 0) and len(errors) == 0
     result = {
-        "success": (applied > 0 or len(ops) == 0) and len(errors) == 0,
+        "success": can_commit,
         "dry_run": dry_run,
-        "applied_ops_count": applied,
+        "applied_ops_count": applied if can_commit else 0,
         "errors": errors
     }
+    if shove_info:
+        result["push_and_shove"] = shove_info
+
     if dry_run:
         result["simulated"] = True
         result["collisions_detected"] = len(overlaps)

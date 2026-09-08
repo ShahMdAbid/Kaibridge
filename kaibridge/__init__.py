@@ -2,7 +2,7 @@
 Kaibridge 2.0: Autonomous, headless KiCad 10 hardware design automation engine.
 Pure MCP & Python architecture for schematic compilation, placement, routing, and manufacturing.
 """
-__version__ = "2.0.0"
+__version__ = "2.5.0"
 
 import atexit
 import os

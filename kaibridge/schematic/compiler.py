@@ -23,7 +23,8 @@ def compile_schematic(
     apply_netclasses: bool = True,
     run_erc: bool = True,
     dry_run: bool = False,
-    auto_heal_pins: bool = True
+    auto_heal_pins: bool = True,
+    prefer_global_labels: bool = False
 ) -> Dict[str, Any]:
     """Compiles design.json into full hierarchical .kicad_sch schematics in-process."""
     folder = Path(project_dir).resolve()
@@ -55,7 +56,7 @@ def compile_schematic(
         if libs_dir.exists():
             for sym_f in libs_dir.glob("*.kicad_sym"):
                 try:
-                    heal_symbol_pins(sym_f)
+                    heal_symbol_pins(sym_f, project_dir=folder)
                 except Exception:
                     pass
 
@@ -67,7 +68,7 @@ def compile_schematic(
 
     try:
         raw_data = json.loads(design_path.read_text(encoding="utf-8-sig"))
-        design = load(raw_data, lib)
+        design = load(raw_data, lib, prefer_global_labels=prefer_global_labels)
     except DesignError as e:
         return {"success": False, "error": f"Design error: {e}"}
     except Exception as e:
@@ -243,9 +244,10 @@ def _update_netclasses_in_pro(pro_path: Path, netclasses: Dict[str, Any], design
         pass
 
 
-def heal_symbol_pins(sym_path: str | Path) -> int:
+def heal_symbol_pins(sym_path: str | Path, project_dir: Optional[Path] = None) -> int:
     """Heals unspecified pin electrical types in KiCad symbol library based on pin names.
     Eliminates [pin_to_pin] unspecified ERC warnings while preserving KiCad validity.
+    Transparently logs all alterations to kaibridge_dump/warning.md.
     Returns number of pins updated.
     """
     p = Path(sym_path).resolve()
@@ -263,12 +265,15 @@ def heal_symbol_pins(sym_path: str | Path) -> int:
 
     seen_power_out = set()
     updates = 0
+    healed_records = []
+    current_sym_name = p.stem
 
     def _replace_pin(m):
-        nonlocal updates
+        nonlocal updates, current_sym_name
         prefix = m.group(1)
         body = m.group(2)
         name = m.group(3).strip().upper()
+        num = m.group(4).strip()
 
         new_type = "unspecified"
 
@@ -297,29 +302,69 @@ def heal_symbol_pins(sym_path: str | Path) -> int:
 
         if new_type != "unspecified":
             updates += 1
+            healed_records.append(f"- **Symbol:** `{current_sym_name}` | **Pin {num}** (`{name}`): `unspecified` → `{new_type}`")
             return f"{prefix}{new_type}{body}"
         return m.group(0)
 
-    sym_re = re.compile(r'(\(symbol\s+"[^"]+".*?\n  \))', re.DOTALL)
+    sym_re = re.compile(r'(\(symbol\s+"([^"]+)".*?\n  \))', re.DOTALL)
 
     def _process_symbol(sm):
-        nonlocal seen_power_out
+        nonlocal seen_power_out, current_sym_name
+        current_sym_name = sm.group(2)
         seen_power_out = set()
         return pin_block_re.sub(_replace_pin, sm.group(1))
 
     new_text = sym_re.sub(_process_symbol, text)
     if updates > 0:
         p.write_text(new_text, encoding="utf-8")
+
+        # Transparently log to kaibridge_dump/warning.md
+        pdir = project_dir
+        if not pdir and p.parent.name == "libs":
+            pdir = p.parent.parent
+        if pdir:
+            dump_dir = Path(pdir) / "kaibridge_dump"
+            dump_dir.mkdir(parents=True, exist_ok=True)
+            w_file = dump_dir / "warning.md"
+            lines = [
+                f"\n### Auto-Healed Pins in `{p.name}`\n",
+                f"The following {updates} pins were converted from EasyEDA `unspecified` to typed pins:\n"
+            ] + [r + "\n" for r in healed_records]
+            if not w_file.exists():
+                header = (
+                    "# Hardware Synthesis Warnings & Audit Log\n\n"
+                    "This log tracks all automated symbol modifications, pin healing actions, "
+                    "and electrical sanity audits performed during synthesis.\n\n"
+                    "## 1. Symbol Pin Modifications\n"
+                )
+                w_file.write_text(header + "".join(lines) + "\n## 2. Electrical & ERC Audit Notes\n_No electrical warnings logged yet._\n", encoding="utf-8")
+            else:
+                existing = w_file.read_text(encoding="utf-8")
+                if "_No pin modifications logged yet._" in existing:
+                    existing = existing.replace("_No pin modifications logged yet._", "".join(lines).strip())
+                    w_file.write_text(existing, encoding="utf-8")
+                else:
+                    with w_file.open("a", encoding="utf-8") as f:
+                        f.write("".join(lines))
+
     return updates
 
 
 def _execute_erc(sch_path: Path, project_dir: Path) -> Dict[str, Any]:
     cli = load_cli()
     if not cli:
-        return {"errors": 0, "warnings": 0, "error_violations": [], "warning_violations": [], "violations": []}
+        return {"errors": 1, "warnings": 0, "error_violations": ["kicad-cli executable not found"], "warning_violations": [], "violations": []}
     dump_dir = project_dir / "kaibridge_dump"
     dump_dir.mkdir(parents=True, exist_ok=True)
     report_path = dump_dir / "erc_report.json"
+    
+    # Purge any stale report before running
+    if report_path.exists():
+        try:
+            report_path.unlink()
+        except Exception:
+            pass
+
     cmd = [
         str(cli), "sch", "erc",
         str(sch_path),
@@ -328,9 +373,16 @@ def _execute_erc(sch_path: Path, project_dir: Path) -> Dict[str, Any]:
         "--severity-all"
     ]
     try:
-        subprocess.run(cmd, capture_output=True, text=True, check=False)
+        res = subprocess.run(cmd, capture_output=True, text=True, check=False)
         if not report_path.exists():
-            return {"errors": 0, "warnings": 0, "error_violations": [], "warning_violations": [], "violations": []}
+            err_msg = f"kicad-cli sch erc failed to generate report (exit code {res.returncode}): {res.stderr.strip()}"
+            return {
+                "errors": 1,
+                "warnings": 0,
+                "error_violations": [err_msg],
+                "warning_violations": [],
+                "violations": ["ERC report missing"]
+            }
         data = json.loads(report_path.read_text(encoding="utf-8-sig"))
         errors = 0
         warnings = 0

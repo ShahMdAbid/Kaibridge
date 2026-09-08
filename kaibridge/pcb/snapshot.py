@@ -112,12 +112,12 @@ def snapshot_board(project_dir: str | Path, tag: str = "") -> Dict[str, Any]:
 
 
 def _resolve_snapshot_file(snap_dir: Path, query: str, ext: str = ".json") -> Optional[Path]:
-    """Resolves a snapshot path by filename, tag, or partial match."""
+    """Resolves a snapshot path by filename, tag, or partial match matching ext."""
     p = Path(query)
-    if p.is_file():
+    if p.is_file() and p.suffix.lower() == ext.lower():
         return p
     direct = snap_dir / query
-    if direct.is_file():
+    if direct.is_file() and direct.suffix.lower() == ext.lower():
         return direct
     if not query.endswith(ext):
         with_ext = snap_dir / f"{query}{ext}"
@@ -162,6 +162,10 @@ def restore_snapshot(
         if not cand:
             # If JSON was provided, look for corresponding .kicad_pcb
             cand_json = _resolve_snapshot_file(snap_dir, snapshot_file, ext=".json")
+            if not cand_json:
+                p = Path(snapshot_file)
+                if p.is_file() and p.suffix.lower() == ".json":
+                    cand_json = p
             if cand_json:
                 pcb_peer = cand_json.with_suffix(".kicad_pcb")
                 if pcb_peer.is_file():
@@ -179,7 +183,7 @@ def restore_snapshot(
         if snaps:
             target_pcb_snap = snaps[-1]
 
-    if not target_pcb_snap or not target_pcb_snap.is_file():
+    if not target_pcb_snap or not target_pcb_snap.is_file() or target_pcb_snap.suffix.lower() != ".kicad_pcb":
         return {
             "success": False,
             "error": f"No valid .kicad_pcb snapshot found matching tag='{tag}' or file='{snapshot_file}' in {snap_dir}"

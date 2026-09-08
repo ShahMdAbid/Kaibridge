@@ -65,22 +65,47 @@ def export_schematic_snapshot(project_dir: str | Path, fmt: str = "svg") -> str:
         raise RuntimeError(f"Schematic export failed: {res.get('error', 'Unknown error')}")
     return res["schematic_preview_path"]
 
+def export_3d_snapshot(project_dir: str | Path, views: list | None = None) -> dict:
+    from kaibridge.pcb.preview import render_3d_suite
+    res = render_3d_suite(project_dir, views=views)
+    if not res.get("success"):
+        raise RuntimeError(f"3D render failed: {res.get('error') or res.get('failed')}")
+    return res
+
 def main():
-    ap = argparse.ArgumentParser(description="Export vector SVG snapshot of PCB or Schematic.")
+    ap = argparse.ArgumentParser(description="Export vector SVG & 9-angle 3D perspective snapshots of PCB or Schematic.")
     ap.add_argument("project_dir", help="KiCad project folder")
     ap.add_argument("--schematic", action="store_true", help="Export schematic SVG preview instead of PCB layout")
+    ap.add_argument("--3d", dest="three_d", action="store_true", help="Export complete 9-angle 3D vision suite (Top, 4 Corners, 4 Sides)")
+    ap.add_argument("--all", action="store_true", help="Export both 2D SVG layout and complete 9-angle 3D vision suite")
+    ap.add_argument("--angle", help="Export a specific 3D angle (e.g. corner_front_left, side_front, top)")
     args = ap.parse_args()
 
     try:
         if args.schematic:
             svg_path = export_schematic_snapshot(args.project_dir)
             print(f"[*] Schematic snapshot saved to: {svg_path}")
+        elif args.all:
+            svg_path = export_snapshot(args.project_dir)
+            print(f"[*] 2D PCB snapshot saved to: {svg_path}")
+            res = export_3d_snapshot(args.project_dir)
+            print(f"[*] 3D Vision Suite saved ({res['total_rendered']} views) to: {res['output_dir']}")
+            for k, v in res["views"].items():
+                print(f"    - {k}: {v['desc']}")
+        elif args.three_d or args.angle:
+            target_views = [args.angle] if args.angle else None
+            res = export_3d_snapshot(args.project_dir, views=target_views)
+            print(f"[*] 3D Vision Suite saved ({res['total_rendered']} view(s)) to: {res['output_dir']}")
+            for k, v in res["views"].items():
+                print(f"    - {k}: {v['desc']}")
         else:
             svg_path = export_snapshot(args.project_dir)
             print(f"[*] PCB snapshot saved to: {svg_path}")
+            print(f"    [Tip] Run with --3d to generate the full 9-angle 3D perspective suite for visual inspection.")
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
 if __name__ == "__main__":
     main()
+

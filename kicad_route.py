@@ -183,6 +183,7 @@ def main(argv=None):
         unconn = drc_res.get("unconnected_airwires_count", 0)
         warns = drc_res.get("clearance_warnings", 0)
         err_violations = drc_res.get("error_violations", [])
+        warn_violations = drc_res.get("warning_violations", [])
         if drc_res.get("error") or not drc_res.get("report_valid", True):
             print(f"\n  [!] DRC Execution Failure: {drc_res.get('error', 'DRC report missing or malformed')}", file=sys.stderr)
             for v in drc_res.get("error_violations", []):
