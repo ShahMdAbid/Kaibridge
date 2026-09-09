@@ -52,7 +52,11 @@ def apply_ops(
 
     is_dry = dry_run or (isinstance(raw, dict) and bool(raw.get("dry_run", False)))
     ops_list = raw.get("ops", raw.get("operations", [])) if isinstance(raw, dict) else raw
-    board_meta = raw.get("board", {}) if isinstance(raw, dict) else {}
+    board_meta = dict(raw.get("board", {})) if isinstance(raw, dict) and isinstance(raw.get("board"), dict) else {}
+    if isinstance(raw, dict):
+        for key in ("clear_tracks", "unroute_all", "delete_all_tracks", "clear_all_tracks", "unroute", "clear_zones", "remove_zones"):
+            if raw.get(key) is not None and key not in board_meta:
+                board_meta[key] = raw[key]
     is_shove = shove or (isinstance(raw, dict) and bool(raw.get("shove", False))) or (isinstance(board_meta, dict) and bool(board_meta.get("shove", False)))
     if not is_shove and isinstance(ops_list, list):
         is_shove = any(isinstance(op, dict) and bool(op.get("shove", False)) for op in ops_list)
@@ -344,9 +348,15 @@ def _execute_in_process(
         for drw in list(b.GetDrawings()):
             if drw.GetLayer() == pcbnew.Edge_Cuts:
                 b.Delete(drw)
-    if board_meta.get("clear_tracks") or board_meta.get("unroute_all"):
+                applied += 1
+    if any(board_meta.get(k) for k in ("clear_tracks", "unroute_all", "delete_all_tracks", "clear_all_tracks", "unroute")):
         for t in list(b.GetTracks()):
             b.Delete(t)
+            applied += 1
+    if any(board_meta.get(k) for k in ("clear_zones", "remove_zones")):
+        for z in list(b.Zones()):
+            b.Delete(z)
+            applied += 1
 
     fps = {fp.GetReference(): fp for fp in b.GetFootprints()}
 
@@ -425,7 +435,7 @@ def _execute_in_process(
         elif action in ("footprint.rotate", "rotate", "fp_rotate"):
             fp = fps.get(ref)
             if fp:
-                rot = float(op.get("rot", op.get("rotation", op.get("angle", 0.0))))
+                rot = float(op.get("rot", op.get("rotation", op.get("angle", op.get("deg", 0.0)))))
                 if op.get("relative", False):
                     cur_rot = fp.GetOrientationDegrees()
                     fp.SetOrientationDegrees(cur_rot + rot)
@@ -538,12 +548,63 @@ def _execute_in_process(
                 add_edge_seg(x0, y0 + h, x0, y0)
                 applied += 1
 
-        # 7. Unroute / Clear Tracks
-        elif action in ("net.delete_routing", "unroute_net", "unroute", "clear_tracks", "ripup"):
+        # 7. Unroute / Clear Tracks / Delete All Tracks / Clear Zones
+        elif action in (
+            "track.delete_all", "tracks.delete_all", "delete_all_tracks", "clear_all_tracks",
+            "tracks.clear", "track.clear", "clear_tracks", "unroute_all", "board.unroute",
+            "board.clear_tracks", "net.delete_routing", "unroute_net", "unroute", "ripup",
+            "track.delete", "tracks.delete", "zone.delete_all", "zones.delete_all",
+            "zone.clear", "zones.clear", "clear_zones", "remove_zones", "zone.delete"
+        ):
             target_net = op.get("net")
-            for t in list(b.GetTracks()):
-                if not target_net or (t.GetNet() and t.GetNet().GetNetname() == target_net):
-                    b.Delete(t)
+            target_layer = op.get("layer")
+            layer_id = None
+            if target_layer == "B.Cu":
+                layer_id = pcbnew.B_Cu
+            elif target_layer == "F.Cu":
+                layer_id = pcbnew.F_Cu
+            elif target_layer:
+                try:
+                    layer_id = b.GetLayerID(target_layer)
+                except Exception:
+                    layer_id = None
+
+            def _matches_net(item, net_name):
+                if not net_name:
+                    return True
+                try:
+                    if hasattr(item, "GetNetname") and item.GetNetname():
+                        return item.GetNetname() == net_name
+                    if hasattr(item, "GetNet") and item.GetNet():
+                        return item.GetNet().GetNetname() == net_name
+                    if hasattr(item, "GetNetCode"):
+                        nc = item.GetNetCode()
+                        net_obj = b.FindNet(nc)
+                        if net_obj:
+                            return net_obj.GetNetname() == net_name
+                except Exception:
+                    pass
+                return False
+
+            is_zone_only = action in (
+                "zone.delete_all", "zones.delete_all", "zone.clear", "zones.clear",
+                "clear_zones", "remove_zones", "zone.delete"
+            )
+
+            deleted_tracks = 0
+            if not is_zone_only:
+                for t in list(b.GetTracks()):
+                    if _matches_net(t, target_net) and (layer_id is None or t.GetLayer() == layer_id):
+                        b.Delete(t)
+                        deleted_tracks += 1
+
+            deleted_zones = 0
+            if is_zone_only or op.get("remove_zones", False) or op.get("clear_zones", False):
+                for z in list(b.Zones()):
+                    if _matches_net(z, target_net) and (layer_id is None or z.GetLayer() == layer_id):
+                        b.Delete(z)
+                        deleted_zones += 1
+
             applied += 1
 
         # 8. Add Copper Track

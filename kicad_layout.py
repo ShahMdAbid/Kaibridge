@@ -58,6 +58,18 @@ def main(argv=None):
         action="store_true",
         help="Enable elastic Component Push-and-Shove collision relaxation: gently displace unlocked colliding parts into free space"
     )
+    ap.add_argument(
+        "--clear-tracks",
+        "--unroute",
+        action="store_true",
+        dest="clear_tracks",
+        help="Clear/unroute all copper tracks and vias from the board"
+    )
+    ap.add_argument(
+        "--clear-zones",
+        action="store_true",
+        help="Clear all copper zones/pours from the board"
+    )
     args = ap.parse_args(argv)
 
     project_dir = Path(args.project_dir).expanduser().resolve()
@@ -74,10 +86,13 @@ def main(argv=None):
             print("  Status: Silkscreen successfully cleaned and updated in .kicad_pcb.")
         else:
             print(f"  Warning: Silkscreen sanitation reported: {s_res.get('error', 'unknown error')}")
-        if not args.ops_file:
+        if not args.ops_file and not (args.clear_tracks or args.clear_zones):
             return 0
 
     ops_path = None
+    ops_data = None
+    ops_name = "in-memory ops"
+
     if args.ops_file:
         ops_path = Path(args.ops_file).expanduser().resolve()
         if not ops_path.exists():
@@ -90,6 +105,9 @@ def main(argv=None):
             ops_path = cand1
         elif cand2.exists():
             ops_path = cand2
+        elif args.clear_tracks or args.clear_zones:
+            ops_data = {"board": {"clear_tracks": args.clear_tracks, "clear_zones": args.clear_zones}, "ops": []}
+            ops_name = "CLI flags (--clear-tracks / --clear-zones)"
         else:
             print(
                 f"Error: No ops.json found at {cand1} or {cand2}. Provide path explicitly.",
@@ -97,13 +115,25 @@ def main(argv=None):
             )
             return 1
 
-    with open(ops_path, "r", encoding="utf-8") as f:
-        ops_data = json.load(f)
+    if ops_path:
+        with open(ops_path, "r", encoding="utf-8") as f:
+            ops_data = json.load(f)
+        if args.clear_tracks:
+            if isinstance(ops_data, dict):
+                ops_data.setdefault("board", {})["clear_tracks"] = True
+            elif isinstance(ops_data, list):
+                ops_data.insert(0, {"op": "track.delete_all"})
+        if args.clear_zones:
+            if isinstance(ops_data, dict):
+                ops_data.setdefault("board", {})["clear_zones"] = True
+            elif isinstance(ops_data, list):
+                ops_data.insert(0, {"op": "zone.delete_all"})
+        ops_name = ops_path.name
 
     mode_str = "DRY RUN (In-Memory Simulation)" if args.dry_run else "COMMITTED TO DISK"
     if args.shove:
         mode_str += " + PUSH-AND-SHOVE RELAXATION"
-    print(f"[*] Applying layout operations from: {ops_path.name} [{mode_str}]")
+    print(f"[*] Applying layout operations from: {ops_name} [{mode_str}]")
 
     res = apply_ops(project_dir, ops_data, dry_run=args.dry_run, shove=args.shove)
 

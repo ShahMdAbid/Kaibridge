@@ -19,7 +19,7 @@ _ROOT = os.path.dirname(os.path.abspath(__file__))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-from kaibridge.pcb.router import route_board, add_ground_plane
+from kaibridge.pcb.router import route_board, add_ground_plane, unroute_board
 from kaibridge.pcb.drc import run_drc
 
 
@@ -46,13 +46,24 @@ def main(argv=None):
     ap.add_argument("--drc", action="store_true", help="Run KiCad DRC check and output violations")
     ap.add_argument("--via-costs", type=int, default=1000, help="Via cost penalty for multilayer routing (default: 1000)")
     ap.add_argument("--no-daemon", action="store_true", help="Disable persistent REST daemon and force direct CLI execution")
-    ap.add_argument("--no-neckdown", action="store_true", help="Disable automatic neckdown entering fine-pitch IC pads")
+    ap.add_argument("--preserve-locked", action="store_true", default=False, help="Preserve locked tracks (e.g. pre-routed differential pairs) during autorouting")
+    ap.add_argument("--unroute", action="store_true", help="Unroute and delete all tracks, vias, and ground planes")
     args = ap.parse_args(argv)
 
     project_dir = Path(args.project_dir).expanduser().resolve()
     if not project_dir.is_dir():
         print(f"Error: {project_dir} is not a directory", file=sys.stderr)
         return 1
+
+    if args.unroute:
+        print(f"[*] Unrouting board in: {project_dir.name}...")
+        res = unroute_board(project_dir, remove_zones=True)
+        if res.get("success"):
+            print(f"[+] Unroute complete: removed {res.get('removed_tracks', 0)} tracks/vias and {res.get('removed_zones', 0)} zones.")
+            return 0
+        else:
+            print(f"[-] Unroute failed: {res.get('error')}", file=sys.stderr)
+            return 1
 
     # Resolve strategy from flags
     strategy = args.strategy
@@ -82,7 +93,8 @@ def main(argv=None):
         strategy=strategy,
         via_costs=args.via_costs,
         automatic_neckdown=not args.no_neckdown,
-        use_daemon=not args.no_daemon
+        use_daemon=not args.no_daemon,
+        preserve_locked=args.preserve_locked
     )
 
 
@@ -93,6 +105,10 @@ def main(argv=None):
     print("\n=== Autorouting Complete ===")
     print(f"  Method       : {route_res.get('method', 'Freerouting 2.4.1')}")
     print(f"  Tracks/Vias  : SES imported into .kicad_pcb")
+
+    diff_audit = route_res.get("diff_pair_audit")
+    if diff_audit and diff_audit.get("formatted_table"):
+        print("\n" + diff_audit["formatted_table"])
 
     def _execute_copper_pours():
         if not args.pour_gnd:
@@ -173,7 +189,8 @@ def main(argv=None):
                 strict_drc=True,
                 max_passes=args.max_passes or 10,
                 fanout_first=False,
-                strategy="dual-layer"
+                strategy="dual-layer",
+                preserve_locked=args.preserve_locked
             )
 
             _execute_copper_pours()

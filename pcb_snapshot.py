@@ -77,14 +77,31 @@ def main():
     ap.add_argument("project_dir", help="KiCad project folder")
     ap.add_argument("--schematic", action="store_true", help="Export schematic SVG preview instead of PCB layout")
     ap.add_argument("--3d", dest="three_d", action="store_true", help="Export complete 9-angle 3D vision suite (Top, 4 Corners, 4 Sides)")
-    ap.add_argument("--all", action="store_true", help="Export both 2D SVG layout and complete 9-angle 3D vision suite")
+    ap.add_argument("--all", action="store_true", help="Export both 2D PCB snapshot and complete 9-angle 3D vision suite")
+    ap.add_argument("--inspect", "--dual", dest="inspect", action="store_true", help="Export high-contrast Reference Designator HUD map & side-by-side Dual View")
+    ap.add_argument("--tag", help="Capture a timestamped board state snapshot with human-readable tag (e.g. pre_sync, pre_route)")
     ap.add_argument("--angle", help="Export a specific 3D angle (e.g. corner_front_left, side_front, top)")
     args = ap.parse_args()
 
     try:
-        if args.schematic:
+        if args.tag:
+            from kaibridge.pcb.snapshot import snapshot_board
+            snap_res = snapshot_board(args.project_dir, tag=args.tag)
+            if not snap_res.get("success"):
+                raise RuntimeError(f"Snapshot failed: {snap_res.get('error')}")
+            print(f"[*] Board snapshot saved: {snap_res.get('snapshot_file')}")
+            return
+        elif args.schematic:
             svg_path = export_schematic_snapshot(args.project_dir)
             print(f"[*] Schematic snapshot saved to: {svg_path}")
+        elif args.inspect:
+            from kaibridge.pcb.preview import render_pcb_preview
+            res = render_pcb_preview(args.project_dir)
+            if not res.get("success"):
+                raise RuntimeError(f"Inspect preview failed: {res.get('error')}")
+            print(f"[*] Photorealistic PCB : {res.get('png_snapshot')}")
+            print(f"[*] Component HUD Map  : {res.get('component_map_png')}")
+            print(f"[*] Side-by-Side Dual  : {res.get('dual_view_png')}")
         elif args.all:
             svg_path = export_snapshot(args.project_dir)
             print(f"[*] 2D PCB snapshot saved to: {svg_path}")

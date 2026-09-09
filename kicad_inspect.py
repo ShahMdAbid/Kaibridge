@@ -31,6 +31,7 @@ def main():
     ap.add_argument("--summary", action="store_true", default=True, help="Extract summary state (footprints, nets, rules; default)")
     ap.add_argument("--full", action="store_true", help="Extract full state (including all individual tracks, vias, zones)")
     ap.add_argument("--free-space", action="store_true", help="Analyze board spatial occupancy and report maximal free rectangular pockets")
+    ap.add_argument("--audit", "--route-ready", dest="audit", action="store_true", help="Execute fail-closed Gatekeeper Route-Readiness Proof (placement audit)")
     ap.add_argument("--json", action="store_true", help="Output raw JSON instead of human-readable summary")
     args = ap.parse_args()
 
@@ -46,6 +47,26 @@ def main():
     if not proj_dir.is_dir():
         print(f"Error: {proj_dir} is not a directory.", file=sys.stderr)
         sys.exit(1)
+
+    if args.audit:
+        from kaibridge.pcb.gatekeeper import placement_audit
+        res = placement_audit(proj_dir)
+        if args.json:
+            print(json.dumps(res, indent=2, default=str))
+        else:
+            print("\n================================================================================================")
+            print(" [KAIBRIDGE GATEKEEPER ROUTE-READINESS PROOF]")
+            print("================================================================================================")
+            print(f"  Project           : {proj_dir.name}")
+            print(f"  Outline Closed    : {res.get('outline_closed')}")
+            print(f"  Overlap Count     : {res.get('overlap_count')}")
+            print(f"  Outside Outline   : {res.get('outside_outline_count')}")
+            missing_nc = res.get('netclasses_without_track_width', [])
+            print(f"  Missing Netclasses: {missing_nc if missing_nc else 'None (All configured)'}")
+            ready = res.get('route_ready', False)
+            print(f"  Route Readiness   : {'[VERIFIED - ROUTE READY]' if ready else '[FAIL - NOT READY]'}")
+            print("================================================================================================\n")
+        sys.exit(0 if res.get('route_ready') else 1)
 
     if args.free_space:
         res = get_spatial_occupancy(proj_dir)

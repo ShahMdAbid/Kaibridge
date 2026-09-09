@@ -39,7 +39,9 @@ from kaibridge.pcb import (
     snapshot_board,
     diff_board,
     restore_snapshot,
-    optimize_placement
+    optimize_placement,
+    audit_differential_pairs,
+    detect_differential_pairs
 )
 
 SERVER_INFO = {
@@ -394,6 +396,18 @@ TOOLS_LIST = [
             "properties": {
                 "project_dir": {"type": "string", "description": "Absolute path where the new KiCad project will be created."},
                 "project_name": {"type": "string", "description": "Name of the project. If omitted, the folder name is used."}
+            },
+            "required": ["project_dir"]
+        }
+    },
+    {
+        "name": "kaibridge_audit_diff_pairs",
+        "description": "Audit differential pair 3D track lengths, via barrel height, and timing skew (ps) against high-speed tolerances (e.g. CAN, USB, Ethernet).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project_dir": {"type": "string", "description": "Absolute path to the KiCad project directory."},
+                "thickness": {"type": "number", "description": "PCB substrate thickness in mm (default: 1.6)."}
             },
             "required": ["project_dir"]
         }
@@ -760,6 +774,10 @@ def handle_tool_call(name: str, args: dict) -> dict:
         elif name == "kaibridge_init_project":
             pname = args.get("project_name")
             return _init_project(proj_path, pname)
+
+        elif name == "kaibridge_audit_diff_pairs":
+            thickness = float(args.get("thickness", 1.6))
+            return audit_differential_pairs(proj_path, board_thickness_mm=thickness)
 
         else:
             return {"error": f"Unknown tool: {name}"}

@@ -175,12 +175,13 @@ def unroute_board(
         return {"success": False, "error": str(e)}
 
 
-def prep_for_route(board):
-    """Purges all existing tracks, vias, and copper zones from the board
-    prior to exporting DSN. Eliminates ghost zones, stale via obstacles,
-    and locked plane definitions in Specctra DSN.
+def prep_for_route(board, preserve_locked: bool = False):
+    """Purges unlocked tracks, vias, and copper zones from the board
+    prior to exporting DSN. Preserves locked tracks (e.g. pre-routed differential pairs).
     """
     for t in list(board.GetTracks()):
+        if preserve_locked and t.IsLocked():
+            continue
         board.Delete(t)
     for z in list(board.Zones()):
         board.Delete(z)
@@ -357,7 +358,8 @@ def route_board(
     via_costs: int = 1000,
     plane_via_costs: int = 100,
     automatic_neckdown: bool = True,
-    use_daemon: bool = True
+    use_daemon: bool = True,
+    preserve_locked: bool = False
 ) -> Dict[str, Any]:
     """Exports DSN, runs Java Freerouting v2.4.1 (Tier 2 Daemon or Tier 1 Optimized CLI)
     with robust edge clearance, dynamic via penalization, and strict DRC,
@@ -378,7 +380,8 @@ def route_board(
             "via_costs": via_costs,
             "plane_via_costs": plane_via_costs,
             "automatic_neckdown": automatic_neckdown,
-            "use_daemon": use_daemon
+            "use_daemon": use_daemon,
+            "preserve_locked": preserve_locked
         })
 
 
@@ -408,6 +411,17 @@ def route_board(
 
     # Preflight: Sync netclass patterns to .kicad_pro so ExportSpecctraDSN writes differential widths
     _ensure_netclass_patterns(proj_path, pro_files[0])
+
+    # Preflight Diff Pairs: Detect and sync differential pair netclasses
+    from .diff_pair import (
+        detect_differential_pairs,
+        audit_differential_pairs,
+        inject_diff_pair_dsn_rules,
+        sync_diff_pair_netclasses
+    )
+    diff_specs = detect_differential_pairs(proj_path)
+    if diff_specs:
+        sync_diff_pair_netclasses(pro_files[0], diff_specs)
 
     # 0. Resolve Routing Strategy
     if strategy == "fanout-first" or fanout_first is True:
@@ -441,8 +455,8 @@ def route_board(
     # 1. Export Specctra DSN (with optional Tier-1 Dog-Bone Fanout First)
     try:
         board = pcbnew.LoadBoard(str(pcb_file))
-        # Always clean previous routing tracks, vias, AND zones before exporting DSN
-        board = prep_for_route(board)
+        # Clean previous unlocked routing tracks, vias, AND zones before exporting DSN
+        board = prep_for_route(board, preserve_locked=preserve_locked)
         if use_fanout:
             apply_dogbone_fanout(board, "GND")
         pcbnew.SaveBoard(str(pcb_file), board)
@@ -451,6 +465,10 @@ def route_board(
         gc.collect()
     except Exception as e:
         return {"success": False, "error": f"Failed to export DSN: {e}"}
+
+    # Inject differential pair coupling rules into DSN for Freerouting
+    if diff_specs and dsn_file.exists():
+        inject_diff_pair_dsn_rules(dsn_file, diff_specs)
 
     if not dsn_file.exists():
         return {"success": False, "error": "Failed to export Specctra DSN file."}
@@ -613,8 +631,10 @@ def route_board(
     try:
         gc.collect()
         board = pcbnew.LoadBoard(str(pcb_file))
-        # Clear existing tracks first
+        # Clear existing tracks first (preserving locked tracks if requested)
         for t in list(board.GetTracks()):
+            if preserve_locked and t.IsLocked():
+                continue
             board.Delete(t)
         pcbnew.ImportSpecctraSES(board, str(ses_file))
         
@@ -681,13 +701,21 @@ def route_board(
     except Exception as e:
         return {"success": False, "error": f"Failed to import SES: {e}"}
 
+    # 4. Post-route Differential Pair & Skew Audit
+    diff_audit = None
+    if diff_specs:
+        diff_audit = audit_differential_pairs(proj_path)
+        if diff_audit.get("formatted_table"):
+            print("\n" + diff_audit["formatted_table"] + "\n")
+
     return {
         "success": True,
         "method": routing_method,
         "tracks_imported": imported_count,
         "pcb_file": str(pcb_file),
         "ses_file": str(ses_file),
-        "fanout_first_used": use_fanout
+        "fanout_first_used": use_fanout,
+        "diff_pair_audit": diff_audit
     }
 
 

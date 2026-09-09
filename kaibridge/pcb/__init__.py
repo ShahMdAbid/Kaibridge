@@ -15,6 +15,16 @@ from .swap_optimizer import (
     optimize_placement,
 )
 
+from .diff_pair import (
+    DiffPairSpec,
+    detect_differential_pairs,
+    audit_differential_pairs,
+    tune_differential_pair_skew,
+    format_diff_pair_table,
+    inject_diff_pair_dsn_rules,
+    sync_diff_pair_netclasses,
+)
+
 __all__ = [
     "sync_schematic_to_pcb",
     "apply_ops",
@@ -36,4 +46,11 @@ __all__ = [
     "IsomorphicSwapRotateOptimizer",
     "OptimizerConfig",
     "optimize_placement",
+    "DiffPairSpec",
+    "detect_differential_pairs",
+    "audit_differential_pairs",
+    "tune_differential_pair_skew",
+    "format_diff_pair_table",
+    "inject_diff_pair_dsn_rules",
+    "sync_diff_pair_netclasses",
 ]

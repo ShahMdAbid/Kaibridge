@@ -14,9 +14,7 @@ description: Procedural handbook for Kaibridge 3.0 — headless KiCad 10 hardwar
 > - 🛑 **Human Checkpoint 3:** 3D Mechanical Freeze, ISRRO-X Planning & Speed Selection (Step 9A)
 > - **Step 9B–10:** ISRRO-X Physics Optimization → Headless Freerouting & Ground Pour
 > - 🛑 **Human Checkpoint 4:** Pre-Production & Manufacturing Sign-off (Step 11)
-
 ---
-
 ## Step 0: Bootstrap Project
 
 **What:** Creates the KiCad 10 project directory with `.kicad_pro`, empty `.kicad_pcb`, `.kicad_sch`, library tables (`fp-lib-table`, `sym-lib-table`), and `kaibridge_dump/` folder immediately upon receiving the user's prompt.
@@ -48,7 +46,7 @@ python kicad_lib_init.py "projects/<NAME>" -n kaibridge --layers 4
 
 **Process:**
 1. Parse the user's prompt for: functional goals, target IC(s), voltage rails, interfaces (UART, SPI, I²C, USB), connector types, and mechanical constraints (board size, mounting holes).
-2. Identify candidate active ICs / connectors and map them to target LCSC IDs (ask user if ambiguous).
+2. Identify candidate active ICs / connectors and map them to target LCSC IDs (Steps 0, 1, 2, and 3 execute autonomously in sequence without pausing; human sign-off is at Step 4 Checkpoint 1).
 3. Consult [`references/art_gate_protocol.md`](references/art_gate_protocol.md) (adversarial cognitive checklist to stress-test inrush, brownouts, and polarity during planning).
 4. Consult [`references/adversarial_dfm_checklist.md`](references/adversarial_dfm_checklist.md) for high-level domain constraints (`PWR`, `IND`, `MCU`, `MECH`).
 
@@ -91,12 +89,12 @@ python kicad_3d.py "projects/<NAME>" <LCSC_ID_1> <LCSC_ID_2> ... --bg --interval
 
 **Batch Download:** When multiple active ICs are needed, download them in sequence:
 ```powershell
-easyeda2kicad --lcsc_id C6186 --symbol --footprint --output "projects/<NAME>/libs/kaibridge" --overwrite --project-relative
-easyeda2kicad --lcsc_id C99652 --symbol --footprint --output "projects/<NAME>/libs/kaibridge" --overwrite --project-relative
-easyeda2kicad --lcsc_id C84681 --symbol --footprint --output "projects/<NAME>/libs/kaibridge" --overwrite --project-relative
+# Download each active IC / connector identified in Step 1:
+easyeda2kicad --lcsc_id <LCSC_ID_1> --symbol --footprint --output "projects/<NAME>/libs/kaibridge" --overwrite --project-relative
+easyeda2kicad --lcsc_id <LCSC_ID_2> --symbol --footprint --output "projects/<NAME>/libs/kaibridge" --overwrite --project-relative
 
-# Then fire-and-forget 3D in background:
-python kicad_3d.py "projects/<NAME>" C6186 C99652 C84681 --bg --interval 5
+# Then fire-and-forget 3D models in background:
+python kicad_3d.py "projects/<NAME>" <LCSC_ID_1> <LCSC_ID_2> ... --bg --interval 5
 ```
 
 ### 2B. Standard Passives (Native KiCad + JLCPCB ID Binding)
@@ -209,13 +207,13 @@ Present the completed 6-section blueprint to the user. The agent MUST NOT write 
 ### Critical Rules for `design.json`:
 1. **Canonical Schema:** Follow [`design_template.json`](design_template.json) (`schema: 3`, `meta`, `board`, `netclasses`, `parts`, `nets`).
 2. **Power Flags (ERC Prevention):**
-   - External inputs (`VBUS`, `VIN`, `GND`) → Declare in `"power_flags"`.
-   - Post-protection rails (`VIN_FUSED`) → Declare in `"power_flags"`.
-   - Active regulator outputs (`+3V3`, `+5V`) → **DO NOT** declare in `"power_flags"` (regulator pin is already `power_out`; adding flag causes `[pin_to_pin]` ERC collision).
+   - External inputs (e.g. `VBUS`, `VIN`, `12V_IN`, `GND`) → Declare in `"power_flags"`.
+   - Post-protection rails (e.g. `VIN_FUSED`) → Declare in `"power_flags"`.
+   - Active regulator outputs (e.g. `+3V3`, `+5V`, or any regulated rail) → **DO NOT** declare in `"power_flags"` (regulator pin is already `power_out`; adding flag causes `[pin_to_pin]` ERC collision).
 3. **Pin & Footprint Fidelity:**
    - Pins in `"connections"` MUST use pin numbers (e.g. `"U1.3"`, `"R1.1"`), never pin names.
    - Footprints must match exact strings extracted in Step 3 (e.g. `"kaibridge:SOT-223-3_TabPin2"`).
-4. **Fine-Pitch ICs (≤ 0.5mm pitch):** Max power track width 0.25mm, clearance 0.20mm to prevent routing deadlocks ([reference](references/trackwidth_clearence_viasize.md)).
+4. **Fine-Pitch ICs & Neckdown Clearance:** For any IC where pad pitch $< (\text{Power Track Width} + \text{Clearance})$ (e.g. LGA-8 BME280 at 0.65mm pitch vs 0.50mm power track + 0.20mm clearance = 0.70mm required): set power track width entering pads to $\le 0.25\text{mm}$ or ensure automatic neckdown is enabled to prevent clearance deadlocks ([reference](references/trackwidth_clearence_viasize.md)).
 5. **Multi-Pad Contacts (USB-C / Power):** Ensure all physical pads needing copper connection are declared in `"connections"` (exact or composite aliases like `A1/B12`); shield pins (`SH`) in `"no_connect"` ([reference](references/stacked_pins_fix.md)).
 6. **Hierarchical Sheets & Groups:** For complex boards (> 25 parts), use `"sheets"` and `"group"` tags as demonstrated in `design_template.json`.
 
@@ -244,14 +242,15 @@ python json2sch.py "projects/<NAME>" --erc --svg --netlist
 - Bill of Materials (BOM) saved to `<PROJECT>/kaibridge_dump/bom.csv`
 - Pure 1-line netlist connectivity (`NET <NAME> : <Ref.Pin> ...`) printed to console for instant cross-AI review (ChatGPT/Claude/DeepSeek)
 
-### 6B. Standalone Netlist & BOM Export (kicad-cli)
+### 6B. Standalone Netlist & BOM Export
 If exporting or re-generating netlist / BOM independently without recompiling:
 ```powershell
-# Export complete XML Netlist (Components + Pin Connectivity):
-& "C:\Program Files\KiCad\10.0\bin\kicad-cli.exe" sch export netlist --format kicadxml -o "projects/<NAME>/kaibridge_dump/netlist.xml" "projects/<NAME>/<NAME>.kicad_sch"
+# Export complete XML Netlist (Components + Pin Connectivity) & BOM CSV:
+python json2sch.py "projects/<NAME>" --netlist
 
-# Export Bill of Materials (BOM CSV):
-& "C:\Program Files\KiCad\10.0\bin\kicad-cli.exe" sch export bom -o "projects/<NAME>/kaibridge_dump/bom.csv" "projects/<NAME>/<NAME>.kicad_sch"
+# Or directly via kicad-cli on system PATH:
+kicad-cli sch export netlist --format kicadxml -o "projects/<NAME>/kaibridge_dump/netlist.xml" "projects/<NAME>/<NAME>.kicad_sch"
+kicad-cli sch export bom -o "projects/<NAME>/kaibridge_dump/bom.csv" "projects/<NAME>/<NAME>.kicad_sch"
 ```
 
 **Audit Transparency (`warning.md`):**
@@ -277,7 +276,7 @@ The agent MUST pause for user confirmation before syncing components to the PCB.
 
 ### 7A. Pre-Sync Board Snapshot (If modifying an existing board)
 ```powershell
-python -c "import json,sys; from kaibridge.pcb.snapshot import snapshot_board; r=snapshot_board(sys.argv[1],tag='pre_sync'); print(json.dumps(r,indent=2))" "projects/<NAME>"
+python pcb_snapshot.py "projects/<NAME>" --tag pre_sync
 ```
 
 ### 7B. Execute Netlist Reconciliation
@@ -329,16 +328,17 @@ Scan the schematic BOM / footprint list from `kicad_inspect.py --summary`. Ident
 
 #### Decision 4: Connector Placement & Orientation
 
-Place each connector so its **mating face (mouth/opening) faces outward** past the board edge:
+Place each connector so its **mating face (mouth/opening) faces outward** past the board edge.
+*(Note: KiCad screen coordinates have $Y$ increasing downwards. Rotating $+90^\circ$ turns towards $+Y$ (downward), and $+270^\circ$ turns towards $-Y$ (upward))*:
 
-| Connector Position | Mouth Faces | Rotation Heuristic |
+| Connector Position | Mouth Faces Outward | Rotation Heuristic (KiCad Native) |
 |---|---|---|
-| Left edge | $-X$ (outward left) | Try `rot: 180` or `rot: 270`; verify with 3D |
-| Right edge | $+X$ (outward right) | Try `rot: 0`; verify with 3D |
-| Top edge | $-Y$ (outward up) | Try `rot: 90`; verify with 3D |
-| Bottom edge | $+Y$ (outward down) | Try `rot: 270`; verify with 3D |
+| Left edge | $-X$ (outward left) | Try `rot: 180` (or `rot: 270`); verify with 2D/3D |
+| Right edge | $+X$ (outward right) | Try `rot: 0` |
+| Top edge | $-Y$ (outward up) | Try `rot: 270` (or `rot: 0` depending on footprint) |
+| Bottom edge | $+Y$ (outward down) | Try `rot: 90` (or `rot: 180` depending on footprint) |
 
-> **⚠ Rotation is footprint-dependent.** Different footprint libraries orient the body differently. The above are starting heuristics. You **MUST** render `pcb_snapshot.py --angle top` after placing each connector and visually confirm the mouth faces outward. If it faces inward, add/subtract 180°.
+> **⚠ Rotation is footprint-dependent.** Different footprint libraries orient the base body differently. The above are starting heuristics. You **MUST** render `python pcb_snapshot.py "projects/<NAME>" --inspect` or `--3d` after placing connectors and visually confirm the mouth faces outward. If it faces inward, add/subtract 180°.
 
 **Always set `"locked": true`** on perimeter connectors. Locked parts are immune to push-and-shove displacement.
 
@@ -350,9 +350,9 @@ Write `<PROJECT>/kaibridge_dump/ops.json` with:
 
 ```powershell
 python kicad_layout.py "projects/<NAME>"
-python pcb_snapshot.py "projects/<NAME>" --angle top
+python pcb_snapshot.py "projects/<NAME>" --inspect
 ```
-**Gate:** View `top.png`. Every connector mouth must face outward. If any is inverted → fix rotation in `ops.json` → re-apply → re-render until correct.
+**Gate:** View `dual_view.png` or `top.png`. Every connector mouth must face outward. If any is inverted → fix rotation in `ops.json` → re-apply → re-render until correct.
 
 ---
 
@@ -392,7 +392,7 @@ Follow these proximity rules when choosing coordinates:
 - **Decoupling caps:** Within ≤ 2.5mm of the target IC's power pin (VIN side caps near VIN, VOUT side caps near VOUT).
 - **Pull-up/pull-down resistors:** Adjacent to the connector or IC pin they serve.
 - **LED + current-limiting resistor pairs:** Group together near the board perimeter or in an indicator cluster.
-- **Crystal + load caps:** Within ≤ 5mm of MCU oscillator pins.
+- **Crystal + load caps (if present):** Within ≤ 5mm of MCU oscillator pins.
 
 > **Tip:** You do not need perfect coordinates. Place passives in the approximate neighborhood of their parent IC. The push-and-shove solver will elastically resolve any overlaps.
 
@@ -439,15 +439,21 @@ Hides bulky value labels and auto-hides reference designators that overlap coppe
 
 ---
 
-### 8F. Phase 5 — 9-Angle 3D Visual Audit
+### 8F. Phase 5 — 2D Component HUD Map & 9-Angle 3D Visual Audit
 
 ```powershell
+# 1. High-contrast 2D Reference Designator HUD Map & Side-by-Side Dual View:
+python pcb_snapshot.py "projects/<NAME>" --inspect
+
+# 2. Complete 9-Angle 3D Vision Suite:
 python pcb_snapshot.py "projects/<NAME>" --3d
 ```
-Renders 9 unclipped perspective views to `<PROJECT>/kaibridge_dump/3d_views/`:
-- `top.png` — Top orthogonal
-- `corner_front_left.png`, `corner_front_right.png`, `corner_back_left.png`, `corner_back_right.png` — 45° isometric corners
-- `side_front.png`, `side_back.png`, `side_left.png`, `side_right.png` — 30° edge elevations
+
+**Inspection Artifacts Generated (`kaibridge_dump/`):**
+- `<NAME>_top.png` — Clean photorealistic top render (100% production clean, zero silk-pad collisions).
+- `<NAME>_component_map.png` — High-contrast component HUD map with concise, non-overlapping color-coded reference badges (`U1`, `U2`, `SW1`, `C6`, `R10`), enabling natural language pair-programming without opening KiCad GUI.
+- `<NAME>_dual_view.png` — Side-by-side comparison (Panel 1: Photorealistic Board, Panel 2: Reference Designator Map).
+- `3d_views/` — 9 unclipped perspective views (`top.png`, 4 isometric corners at 45°, 4 edge elevations at 30°).
 
 **Sign-off Checklist (must pass ALL before routing):**
 1. ✅ Every connector mouth faces outward with unobstructed mating clearance
@@ -466,24 +472,25 @@ Renders 9 unclipped perspective views to `<PROJECT>/kaibridge_dump/3d_views/`:
 ### 9A. 3D Mechanical Freeze & Visual Audit (Human Interception Gate)
 
 ```powershell
+python pcb_snapshot.py "projects/<NAME>" --inspect
 python pcb_snapshot.py "projects/<NAME>" --3d
 ```
-The agent generates 9-angle 3D views (`top.png`, isometric corners) into `<PROJECT>/kaibridge_dump/3d_views/` and **MUST present them to the user with the following 3 mandatory questions**:
+The agent presents the dual-view inspection map and 9-angle 3D views into `<PROJECT>/kaibridge_dump/` and **MUST present them to the user with the following 3 mandatory questions**:
 
 1. **Connector Mouth Orientation:**
-   - Are all perimeter connectors (USB-C, Pin Headers, Screw Terminals) facing strictly **OUTWARD** towards the board edge with unobstructed mating clearance?
+   - Are all board edge / perimeter connectors (e.g., USB, headers, screw terminals, barrel jacks, if present) facing strictly **OUTWARD** towards the board edge with unobstructed mating clearance?
    - *(If inverted, adjust rotation in `ops.json` by adding/subtracting 180°, re-apply with `python kicad_layout.py`, and re-render)*.
-2. **RF Antenna & Thermal Clearance:**
-   - Is the ESP32 / RF module antenna protruding or facing the board edge with clean ground keepout?
-   - Are regulator/transistor heatsink tabs oriented away from sensitive silicon?
+2. **RF Antenna & Thermal Clearance (If applicable to this design):**
+   - If an onboard RF module / PCB antenna (e.g. ESP32, nRF, LoRa) is present, is it protruding past or facing the board edge with clean ground keepout?
+   - Are regulator/transistor heatsink tabs oriented away from heat-sensitive silicon?
 3. **Anchor Locking & Routing Speed Choice:**
-   - Which critical components to freeze (`"locked": true`)? (Connectors, MCUs, Mounting holes).
+   - Which critical components should be frozen (`"locked": true`)? (e.g., Edge connectors, primary ICs/MCUs, mounting holes).
    - What routing speed mode does the user prefer?
-     - **Fast Mode (`max_passes=1`):** ~25-30 seconds (100% completion, ideal for rapid visual iteration).
-     - **Deep Quality Mode (`max_passes=5`):** ~3-5 minutes (Aggressive rip-up & reroute for ~30-40% via minimization, ideal for factory release).
+     - **Fast Mode (`max_passes=1`):** ~20-30 seconds (rapid geometric topological check; on dense dual-layer boards with default `via_costs=1000`, single-pass mode may leave unconnected airwires due to zero rip-up/reroute iterations).
+     - **Deep Quality Mode (`max_passes=5`, `via_costs=50`):** ~2-4 minutes (aggressive rip-up & reroute for guaranteed 100% completion and via minimization, ideal for factory release).
 
 🛑 **MANDATORY HUMAN GATE 3:**
-The agent MUST NOT invoke the router or commit ISRRO-X until the user confirms connector orientation, RF/antenna clearance, locked anchors, and preferred routing mode.
+The agent MUST NOT invoke the router or commit ISRRO-X until the user confirms connector orientation, RF/antenna clearance (if applicable), locked anchors, and preferred routing mode.
 
 ### 9B. ISRRO-X: Physics-Preserving Detailed Placement Optimization
 
@@ -547,7 +554,11 @@ python kicad_oracle.py "FindFootprintByReference" -c BOARD
 
 ### 9E. Hard Gatekeeper Route-Readiness Proof
 ```powershell
-python -c "import json,sys; from kaibridge.pcb.gatekeeper import placement_audit; r=placement_audit(sys.argv[1]); print(json.dumps(r,indent=2)); ok=(r.get('success') is True and r.get('route_ready') is True); sys.exit(0 if ok else 1)" "projects/<NAME>"
+# Execute fail-closed Gatekeeper Route-Readiness Proof via dedicated CLI:
+python kicad_inspect.py "projects/<NAME>" --audit
+
+# Machine-readable JSON output:
+python kicad_inspect.py "projects/<NAME>" --audit --json
 ```
 
 **Gatekeeper Invariants (Fail-Closed):**
@@ -555,7 +566,7 @@ python -c "import json,sys; from kaibridge.pcb.gatekeeper import placement_audit
 - `overlap_count`: 0
 - `outside_outline_count`: 0
 - `netclasses_without_track_width`: []
-- `route_ready`: True (Components strictly contained within board bounds, zero collisions, all nets configured with track width).
+- `route_ready`: True (Components strictly contained within board bounds, zero collisions, all nets configured with track width). Exit code is `0` if ready, `1` if unready.
 
 > **Planar Optimizer Note:** `kicad_planar_optimizer.py` seeds strictly from the live `.kicad_pcb` state and respects locked components without wiping out Step 8 placements. On a properly placed board with zero collisions and verified cells, annealing is optional and should not be invoked blindly.
 
@@ -612,7 +623,38 @@ DRC output distinguishes:
 - `PASSED CLEAN (0 Errors, 0 Warnings)`
 - `PASSED WITH WARNINGS (0 Errors, X Warnings)` — warnings like `[silk_over_copper]` are surfaced with full context
 
-### 10E. Unroute (If Needed)
+### 10E. Differential Pair & Length Matching / Skew Audit
+
+High-speed and noise-sensitive differential signals (CAN Bus, USB, Ethernet, RS485) require tightly coupled physical traces and minimal intra-pair skew ($\Delta L$). Kaibridge includes an automated, headless 3D differential pair detection, DSN constraint injector, and timing skew auditor (`kicad_diff_pair.py`).
+
+**CLI Usage:**
+```powershell
+# Run full 3D length and timing skew audit on board:
+python kicad_diff_pair.py "projects/<NAME>" --audit
+
+# Automatically synthesize 45-degree serpentine meanders to eliminate timing skew:
+python kicad_diff_pair.py "projects/<NAME>" --tune
+
+# Auto-detect all complementary differential net pairs:
+python kicad_diff_pair.py "projects/<NAME>" --detect
+
+# Synchronize differential netclasses (width & gap) into .kicad_pro:
+python kicad_diff_pair.py "projects/<NAME>" --sync-netclasses
+
+# Output machine-readable JSON:
+python kicad_diff_pair.py "projects/<NAME>" --json
+```
+
+**Key Capabilities:**
+1. **Zero-Config Auto-Detection:** Automatically discovers standard protocol pairs (`CANH`/`CANL`, `USB_D+`/`USB_D-`, `USB_DP`/`USB_DM`, `ETH_*_P`/`ETH_*_N`, `*_POS`/`*_NEG`) or explicit declarations in `design.json` (`"diff_pairs"`).
+2. **Specctra DSN Coupling Rule Injection:** Injects `(pair (net pos neg) (clearance gap))` tokens into DSN files prior to Freerouting.
+3. **3D Physical Via Barrel Compensation:** Accounts for substrate thickness ($T_{board} = 1.6\text{ mm}$) along the Z-axis when traces hop layers through vias, calculating true 3D flight path delay.
+4. **Picosecond Timing Skew:** Converts physical skew into electrical flight delay based on FR-4 microstrip propagation velocity:
+   $$t_{pd} \approx 6.85\text{ ps/mm} \quad (\epsilon_{r,eff} \approx 4.2)$$
+5. **Human-Actionable Verdicts:** Flags `[PASS]`, `[WARN]` (via asymmetry), or `[FAIL]` with exact millimeter delay meander recommendations.
+6. **Pre-Route / Locked Trace Shield:** When critical differential pairs are pre-routed or locked (`t.SetLocked(True)`), `--preserve-locked` in `kicad_route.py` prevents unrouting, marks them `(type fix)` in DSN, and routes the remainder of the board around them.
+
+### 10F. Unroute (If Needed)
 
 ```powershell
 python kicad_route.py "projects/<NAME>" --unroute
@@ -683,7 +725,7 @@ All operations are validated against physical board constraints. Invalid `ref` o
 
 | Operation | Description | Example / Parameters |
 |---|---|---|
-| `text.add` | Project branding, version, and custom text | `{"op": "text.add", "text": "OmniCore v1.0", "x": 15.0, "y": 8.0, "layer": "F.SilkS", "size": 1.2}` |
+| `text.add` | Project branding, version, and custom text | `{"op": "text.add", "text": "ProjectName v1.0", "x": 15.0, "y": 8.0, "layer": "F.SilkS", "size": 1.2}` |
 | `connector.pinout_labels` | Auto-extract net names & label connector pins | `{"op": "connector.pinout_labels", "ref": "J2", "offset": 1.5, "size": 0.8}` |
 | `dimension.add` | Fabrication dimension markings on `Dwgs.User` | `{"op": "dimension.add", "layer": "Dwgs.User", "offset": 4.0}` |
 | `silkscreen.sanitize` | Auto-hide bulky values or pad-colliding silk | `{"op": "silkscreen.sanitize", "mode": "sanitize"}` |
@@ -716,18 +758,29 @@ All operations are validated against physical board constraints. Invalid `ref` o
 
 | Operation | Description | Example |
 |---|---|---|
+| `track.delete_all` | Delete all copper tracks & vias from board (aliases: `delete_all_tracks`, `unroute_all`, `tracks.clear`) | `{"op": "track.delete_all"}` or `{"op": "track.delete_all", "remove_zones": true}` |
+| `zone.delete_all` | Delete all copper zones / fills from board (aliases: `zone.clear`, `clear_zones`) | `{"op": "zone.delete_all"}` |
 | `zone.add` | Add copper plane / ground pour (full-board or polygon) | `{"op": "zone.add", "net": "GND", "layer": "B.Cu", "full_board": true, "connection": "full"}` |
 | `rule_area.add` | RF antenna keepout (no copper, tracks, or vias) | `{"op": "rule_area.add", "x": 5.0, "y": 5.0, "w": 18.0, "h": 10.0, "no_copper": true, "no_vias": true}` |
 | `zone.delete` | Remove copper zones by layer/net | `{"op": "zone.delete", "layer": "B.Cu", "net": "GND"}` |
 | `zone.refill` | Global zone recalculation via `ZONE_FILLER` | `{"op": "zone.refill"}` |
-| `net.delete_routing` | Strip all tracks/vias for a net | `{"op": "net.delete_routing", "net": "GND"}` |
+| `net.delete_routing` | Strip all tracks/vias for a specific net | `{"op": "net.delete_routing", "net": "GND"}` |
 | `board.prep_for_route` | Purge orphaned tracks, check edge cuts, reset zones | `{"op": "board.prep_for_route"}` |
 
-### File Format
+### File Format & CLI Flags
 
 `ops.json` accepts either:
-- **Array:** `[{"op": ...}, {"op": ...}]`
-- **Structured:** `{"board": {"clear_edge_cuts": false, "clear_tracks": false, "unroute_all": false}, "ops": [...]}`
+- **Array:** `[{"op": "track.delete_all"}, {"op": "footprint.place", ...}]`
+- **Structured:** `{"clear_tracks": true, "board": {"clear_edge_cuts": false, "clear_tracks": true, "remove_zones": true}, "ops": [...]}`
+
+Direct CLI unroute without creating an `ops.json` file:
+```powershell
+# Unroute and delete all tracks & vias directly via kicad_layout.py:
+python kicad_layout.py "projects/<NAME>" --clear-tracks
+
+# Or via kicad_route.py:
+python kicad_route.py "projects/<NAME>" --unroute
+```
 
 ---
 

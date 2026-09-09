@@ -1,6 +1,6 @@
 <div align="center">
   <h1>Kaibridge</h1>
-  <p><b>An open-source framework connecting AI agents to KiCad — enabling headless PCB design: architecting circuits from natural language, sourcing verified components, compiling multi-sheet schematics, optimizing placement by deterministic visual push & shove and routing alongside a human engineer in the loop</p>
+  <p><b>An open-source framework connecting AI agents to KiCad — enabling headless PCB design: architecting circuits from natural language, sourcing verified components, compiling multi-sheet schematics, optimizing placement along with deterministic visual push-shove and routing alongside a human engineer in the loop</p>
 
 [![License: AGPL v3.0](https://img.shields.io/badge/License-AGPL_v3.0-blue.svg)](LICENSE)
 [![KiCad](https://img.shields.io/badge/KiCad-10-blue?logo=kicad)](https://www.kicad.org/)
@@ -38,8 +38,6 @@ This project is provided without any warranty, express or implied. The author(s)
 - Errors in generated schematics, PCB layouts, or manufacturing files.
 - Financial losses due to incorrect orders.
 - Data loss or corruption of KiCad project files.
-
----
 
 ## License
 
