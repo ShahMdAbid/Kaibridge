@@ -9,6 +9,11 @@ from .export import export_production_files
 from .inspector import get_board_state
 from .gatekeeper import placement_audit
 from .snapshot import snapshot_board, diff_board, restore_snapshot
+from .swap_optimizer import (
+    IsomorphicSwapRotateOptimizer,
+    OptimizerConfig,
+    optimize_placement,
+)
 
 __all__ = [
     "sync_schematic_to_pcb",
@@ -27,5 +32,8 @@ __all__ = [
     "placement_audit",
     "snapshot_board",
     "diff_board",
-    "restore_snapshot"
+    "restore_snapshot",
+    "IsomorphicSwapRotateOptimizer",
+    "OptimizerConfig",
+    "optimize_placement",
 ]

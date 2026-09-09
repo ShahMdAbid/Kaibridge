@@ -38,7 +38,8 @@ from kaibridge.pcb import (
     placement_audit,
     snapshot_board,
     diff_board,
-    restore_snapshot
+    restore_snapshot,
+    optimize_placement
 )
 
 SERVER_INFO = {
@@ -183,6 +184,24 @@ TOOLS_LIST = [
                 "project_dir": {"type": "string", "description": "Absolute path to the KiCad project directory."},
                 "steps": {"type": "integer", "description": "Number of simulated annealing iterations (default: 6000)."},
                 "temp": {"type": "number", "description": "Initial annealing temperature (default: 70.0)."}
+            },
+            "required": ["project_dir"]
+        }
+    },
+    {
+        "name": "kaibridge_optimize_swap_rotate",
+        "description": "Post-placement physics-preserving swap/rotation refinement (ISRRO-X). Uses geometry-isomorphic classes, typed constraints, pin-access and routability proxies; defaults to audit-only and emits a certificate.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project_dir": {"type": "string", "description": "Absolute path to the KiCad project directory."},
+                "commit": {"type": "boolean", "description": "Commit verified result to .kicad_pcb (default: False).", "default": False},
+                "clearance_mm": {"type": "number", "description": "Minimum clearance in mm (default: 0.25).", "default": 0.25},
+                "grid_mm": {"type": "number", "description": "Grid snap in mm (default: 0.1).", "default": 0.1},
+                "max_passes": {"type": "integer", "description": "Maximum accepted improvement passes (default: 8).", "default": 8},
+                "max_evaluations": {"type": "integer", "description": "Maximum virtual states to score (default: 12000).", "default": 12000},
+                "time_limit_s": {"type": "number", "description": "Search time limit in seconds (default: 20.0).", "default": 20.0},
+                "allow_routed_board": {"type": "boolean", "description": "Permit optimization on board with existing tracks (default: False).", "default": False}
             },
             "required": ["project_dir"]
         }
@@ -668,6 +687,18 @@ def handle_tool_call(name: str, args: dict) -> dict:
                 "total_placed": len(best_ops),
                 "pcb_committed": commit_res.get("success", False)
             }
+
+        elif name == "kaibridge_optimize_swap_rotate":
+            config = {
+                "commit": bool(args.get("commit", False)),
+                "clearance_mm": float(args.get("clearance_mm", 0.25)),
+                "grid_mm": float(args.get("grid_mm", 0.1)),
+                "max_passes": int(args.get("max_passes", 8)),
+                "max_evaluations": int(args.get("max_evaluations", 12000)),
+                "time_limit_s": float(args.get("time_limit_s", 20.0)),
+                "allow_routed_board": bool(args.get("allow_routed_board", False)),
+            }
+            return optimize_placement(proj_path, config)
 
         elif name == "kaibridge_auto_relax_layout":
             passes = int(args.get("passes", 300))

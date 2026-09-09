@@ -5,7 +5,15 @@ description: Procedural handbook for Kaibridge 3.0 — headless KiCad 10 hardwar
 
 # Kaibridge skill
 
-> **Pipeline:** Bootstrap → Idea → Source → Extract → Plan → design.json → Compile → Sync → Place → Inspect → Route → Export
+> **Pipeline with 4 Mandatory Human Interception Gates:**
+> - **Step 0–3:** Bootstrap → Idea → Source → Extract
+> - 🛑 **Human Checkpoint 1:** Architecture & Sourcing Blueprint Sign-off (Step 4)
+> - **Step 5–6:** Write `design.json` → Compile Schematic & ERC
+> - 🛑 **Human Checkpoint 2:** Schematic, Netlist & ERC Review (Post Step 6)
+> - **Step 7–8:** Sync PCB → Constructive Placement & 9-Angle 3D Snapshot (Step 8F)
+> - 🛑 **Human Checkpoint 3:** 3D Mechanical Freeze, ISRRO-X Planning & Speed Selection (Step 9A)
+> - **Step 9B–10:** ISRRO-X Physics Optimization → Headless Freerouting & Ground Pour
+> - 🛑 **Human Checkpoint 4:** Pre-Production & Manufacturing Sign-off (Step 11)
 
 ---
 
@@ -141,7 +149,7 @@ python kicad_pins.py "projects/<NAME>\libs\kaibridge.kicad_sym" --verify
 
 ---
 
-## Step 4: Implementation Plan 
+## Step 4: Implementation Plan ⟨Human Checkpoint 1: Architecture & Sourcing Blueprint⟩
 
 **What:** Using the real extracted pin data from Step 3 and the passive catalog from [`references/jlcpcb_basic_parts.md`](references/jlcpcb_basic_parts.md), author a rigorous implementation plan for the complete circuit before writing `design.json`.
 
@@ -187,6 +195,9 @@ With all evidence in hand, the agent builds a verified plan — not a hallucinat
 **Output (The Real, Evidence-Backed Design Blueprint):**
 A comprehensive, verified circuit plan presented to the user (or secondary reviewer) containing the 6 sections above with 100% verified pin numbers, footprints, and JLCPCB Basic C-IDs. This plan is solid enough that any agent or engineer can verify it directly.
 
+🛑 **MANDATORY HUMAN GATE 1 (Architecture & Sourcing Sign-off):**
+Present the completed 6-section blueprint to the user. The agent MUST NOT write `design.json` or proceed to Step 5 until the user explicitly approves the BOM, active IC choices, and power architecture.
+
 **→ Next:** Step 5 (Write design.json)
 
 ---
@@ -212,7 +223,7 @@ A comprehensive, verified circuit plan presented to the user (or secondary revie
 
 ---
 
-## Step 6: Compile Schematic & ERC Gate ⟨Checkpoint 1⟩
+## Step 6: Compile Schematic & ERC Gate ⟨Human Checkpoint 2: Schematic, Netlist & ERC Sign-off⟩
 
 **What:** Compile `design.json` into `.kicad_sch`, write netclasses into `.kicad_pro`, run KiCad ERC, and export vector SVG preview.
 
@@ -228,7 +239,7 @@ python json2sch.py "projects/<NAME>" --erc --svg --netlist
 - `.kicad_sch` generated with all symbols, wires, power flags, and net labels
 - `.kicad_pro` updated with netclass track/clearance/via rules
 - ERC automatically runs via `kicad-cli sch erc` with `--severity-all` (100% warning and error visibility)
-- Vector SVG preview saved to `<PROJECT>/kaibridge_dump/<NAME>_schematic.svg` (Checkpoint 1 Ready)
+- Vector SVG preview saved to `<PROJECT>/kaibridge_dump/<NAME>_schematic.svg` (Checkpoint 2 Ready)
 - Complete XML Netlist saved to `<PROJECT>/kaibridge_dump/netlist.xml`
 - Bill of Materials (BOM) saved to `<PROJECT>/kaibridge_dump/bom.csv`
 - Pure 1-line netlist connectivity (`NET <NAME> : <Ref.Pin> ...`) printed to console for instant cross-AI review (ChatGPT/Claude/DeepSeek)
@@ -245,6 +256,14 @@ If exporting or re-generating netlist / BOM independently without recompiling:
 
 **Audit Transparency (`warning.md`):**
 - EasyEDA active IC symbols frequently arrive with `unspecified` pin types. When `--heal-pins` resolves these into electrical types (`power_in`, `power_out`, `bidirectional`), every single modification (`Symbol`, `Pin`, `Name`, `unspecified` → `type`) is logged transparently to `<PROJECT>/kaibridge_dump/warning.md` for human review.
+
+🛑 **MANDATORY HUMAN GATE 2 (Schematic & Netlist Sign-off):**
+Present the generated vector SVG schematic preview, XML netlist, BOM CSV, and ERC report to the user.
+**Human Verifies:**
+1. ✅ ERC Report has 0 Errors (all warnings like `[pin_to_pin]` or `[power_flags]` fully explained).
+2. ✅ Netlist connectivity matches intended schematic topology.
+3. ✅ Part values and LCSC Basic Part C-IDs are confirmed.
+The agent MUST pause for user confirmation before syncing components to the PCB.
 
 **Gate:** `Status: PASSED (0 Errors)`. If errors exist, inspect `kaibridge_dump/erc_report.json` and `kaibridge_dump/warning.md`, fix `design.json`, and recompile.
 
@@ -440,24 +459,64 @@ Renders 9 unclipped perspective views to `<PROJECT>/kaibridge_dump/3d_views/`:
 
 ---
 
-## Step 9: Inspect & Audit Board ⟨Checkpoint 2⟩
+## Step 9: 3D Mechanical Freeze & ISRRO-X Optimization ⟨Human Checkpoint 3⟩
 
-**What:** Verify component positions, clearances, and connector orientations before routing.
+**What:** Verify 3D mechanical constraints, freeze connectors and RF antennas, select routing performance mode, and execute physics-preserving ISRRO-X detailed placement.
 
-### 9A. Live Board State & Free Space Inspector
+### 9A. 3D Mechanical Freeze & Visual Audit (Human Interception Gate)
+
+```powershell
+python pcb_snapshot.py "projects/<NAME>" --3d
+```
+The agent generates 9-angle 3D views (`top.png`, isometric corners) into `<PROJECT>/kaibridge_dump/3d_views/` and **MUST present them to the user with the following 3 mandatory questions**:
+
+1. **Connector Mouth Orientation:**
+   - Are all perimeter connectors (USB-C, Pin Headers, Screw Terminals) facing strictly **OUTWARD** towards the board edge with unobstructed mating clearance?
+   - *(If inverted, adjust rotation in `ops.json` by adding/subtracting 180°, re-apply with `python kicad_layout.py`, and re-render)*.
+2. **RF Antenna & Thermal Clearance:**
+   - Is the ESP32 / RF module antenna protruding or facing the board edge with clean ground keepout?
+   - Are regulator/transistor heatsink tabs oriented away from sensitive silicon?
+3. **Anchor Locking & Routing Speed Choice:**
+   - Which critical components to freeze (`"locked": true`)? (Connectors, MCUs, Mounting holes).
+   - What routing speed mode does the user prefer?
+     - **Fast Mode (`max_passes=1`):** ~25-30 seconds (100% completion, ideal for rapid visual iteration).
+     - **Deep Quality Mode (`max_passes=5`):** ~3-5 minutes (Aggressive rip-up & reroute for ~30-40% via minimization, ideal for factory release).
+
+🛑 **MANDATORY HUMAN GATE 3:**
+The agent MUST NOT invoke the router or commit ISRRO-X until the user confirms connector orientation, RF/antenna clearance, locked anchors, and preferred routing mode.
+
+### 9B. ISRRO-X: Physics-Preserving Detailed Placement Optimization
+
+Once mechanical anchors are locked, invoke the deterministic physics-preserving detailed placer:
+```powershell
+# Audit run (inspect before/after crossings, escape blockage, RUDY congestion):
+python kicad_swap_optimizer.py "projects/<NAME>" --json
+
+# Commit verified improvement with automatic backup and independent reload:
+python kicad_swap_optimizer.py "projects/<NAME>" --commit
+```
+
+**What ISRRO-X guarantees:**
+- Immovable locked anchors remain 100% untouched.
+- Swaps only strictly geometry-isomorphic passives within safe semantic roles and same-anchor decoupling groups.
+- Evaluates true lexicographic score: `Hard Legality > Physics/Anchors > Blocked Escapes > RUDY Congestion > Crossings > HPWL`.
+- Eliminates pin escape blockages and ratsnest crossings before traces are drawn.
+- Automatic rollback if post-commit verification degrades hard violations or anchor constraints.
+
+### 9C. Live Board State & Free Space Inspector
 
 ```powershell
 # Summary table (Ref, Pos, Size, Rot, Layer, Locked):
 python kicad_inspect.py "projects/<NAME>" --summary
 
-# 2D Spatial Occupancy & Available Free Rectangular Pockets (for intelligent placement):
+# 2D Spatial Occupancy & Available Free Rectangular Pockets:
 python kicad_inspect.py "projects/<NAME>" --free-space
 
 # Full JSON with pad coordinates, courtyards, nets:
 python kicad_inspect.py "projects/<NAME>" --full --json
 ```
 
-### 9B. Live SWIG API Oracle & Zero-Hallucination Autonomy Guard
+### 9D. Live SWIG API Oracle & Zero-Hallucination Autonomy Guard
 
 **Why & How This Guarantees Robustness in Autonomous Workflows & Custom Instructions:**
 KiCad 10's underlying C++ SWIG wrapper (`pcbnew`) changes breakingly between major versions (`wxPoint` -> `VECTOR2I`, `EDA_ANGLE`, `GetFootprints`). When users issue custom automation instructions or edge-case board modifications, AI models frequently hallucinate obsolete KiCad 5/6 API calls, causing fatal `AttributeError` crashes or C++ segfaults.
@@ -485,29 +544,6 @@ python kicad_oracle.py "FindFootprintByReference" -c BOARD
 ```
 
 **Available Oracle Topics (8 Total):** `drc_rules`, `jlcpcb_rules`, `swig_memory`, `zone_filling`, `power_flags`, `freerouting_limits`, `stackup_4layer`, `track_clearance`.
-
-### 9C. Visual & 9-Angle 3D Multi-Perspective Snapshot
-
-```powershell
-# 2D Vector SVG render:
-python pcb_snapshot.py "projects/<NAME>"
-
-# Comprehensive 9-Angle 3D Vision Suite (Top + 4 Corners + 4 Side Edges):
-python pcb_snapshot.py "projects/<NAME>" --3d
-
-# Full export (both 2D SVG and complete 9-angle 3D suite):
-python pcb_snapshot.py "projects/<NAME>" --all
-```
-Outputs saved to `<PROJECT_DIR>/kaibridge_dump/3d_views/` (`top.png`, `corner_*.png`, `side_*.png`). Use these 9 unclipped perspective views for AI visual critique and human sign-off.
-
-### 9D. Checkpoint 2 Audit Checklist
-
-1. **Connectors:** Mating faces flush against board edge, facing outward?
-2. **Heatsink tabs:** Facing outward toward ground pour, not toward MCU?
-3. **Silkscreen:** References outside courtyards, no pad overlaps?
-4. **Mounting holes:** Clear of courtyards by ≥ 1.5mm?
-
-If adjustments needed → write surgical `ops.json` → dry-run → commit → re-inspect.
 
 ### 9E. Hard Gatekeeper Route-Readiness Proof
 ```powershell
@@ -588,7 +624,7 @@ Present DRC pass confirmation as Checkpoint 3.
 
 ---
 
-## Step 11: Export for JLCPCB Production
+## Step 11: Export for JLCPCB Production ⟨Human Checkpoint 4: Pre-Production Sign-off⟩
 
 **What:** Generate 100% factory-ready Gerbers, BOM, and CPL files.
 
@@ -605,6 +641,14 @@ python export_jlcpcb.py "projects/<NAME>"
 | `<NAME>_cpl_jlcpcb.csv` | CPL centroid: `Designator, Val, Package, Mid X, Mid Y, Rotation, Layer` — numeric floats with **DFM-ROT** auto-correction |
 
 **DFM-ROT Rotation Compensation:** Auto-corrects the 180° discrepancy between KiCad IPC-7351 and JLCPCB EIA-481 tape feeders for `Diode_SMD`, `LED_SMD`, `SOT-23`, `SOT-223`, and polarized capacitors. EasyEDA `kaibridge:*` parts kept at 0°. Custom overrides via `"rotation_offset": <deg>` in `design.json`.
+
+🛑 **MANDATORY HUMAN GATE 4 (Manufacturing Sign-off):**
+Present the manufacturing summary to the user:
+1. ✅ KiCad DRC report confirms 0 errors and 0 unconnected items.
+2. ✅ Completed copper trace render (`top.png`) and via count summary.
+3. ✅ B.Cu Ground plane continuity confirmed (no floating copper islands).
+4. ✅ Production bundle ready: `<NAME>_gerbers.zip`, `bom_jlcpcb.csv`, `cpl_jlcpcb.csv`.
+Human engineer signs off before final zip upload to JLCPCB.
 
 **→ Done.** Upload `production_output/` to JLCPCB. See [`references/jlcpcb_production.md`](references/jlcpcb_production.md) for ordering walkthrough.
 
