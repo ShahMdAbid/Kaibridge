@@ -9,7 +9,7 @@ import json
 import math
 import subprocess
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from ..core.paths import load_kicad_python
 
 
@@ -97,6 +97,24 @@ finally:
                 except Exception:
                     return {"success": False, "error": line.replace("APPLY_OPS_ERROR:", "")}
         return {"success": False, "error": res_sub.stderr.strip() or res_sub.stdout.strip()}
+
+
+def _get_board_bounds(board) -> Tuple[float, float, float, float]:
+    """Returns (origin_x_mm, origin_y_mm, width_mm, height_mm) from Edge.Cuts drawings."""
+    import pcbnew
+    edge_drawings = [d for d in board.GetDrawings() if d.GetLayer() == pcbnew.Edge_Cuts]
+    if edge_drawings:
+        x0 = min(d.GetBoundingBox().GetLeft() for d in edge_drawings) / 1e6
+        y0 = min(d.GetBoundingBox().GetTop() for d in edge_drawings) / 1e6
+        x1 = max(d.GetBoundingBox().GetRight() for d in edge_drawings) / 1e6
+        y1 = max(d.GetBoundingBox().GetBottom() for d in edge_drawings) / 1e6
+        return (x0, y0, x1 - x0, y1 - y0)
+    bb = board.ComputeBoundingBox()
+    x0 = bb.GetX() / 1e6
+    y0 = bb.GetY() / 1e6
+    x1 = (bb.GetX() + bb.GetWidth()) / 1e6
+    y1 = (bb.GetY() + bb.GetHeight()) / 1e6
+    return (x0, y0, max(10.0, x1 - x0), max(10.0, y1 - y0))
 
 
 def apply_component_push_and_shove(
@@ -653,6 +671,428 @@ def _execute_in_process(
                     if collides:
                         ref_text.SetVisible(False)
             applied += 1
+
+        # 15. Hole / Mounting Holes (Single hole or 4 corners)
+        elif action in ("hole.add", "add_hole", "mounting_hole.add", "board.mounting_holes", "mounting_holes"):
+            drill = float(op.get("drill", op.get("diameter", 3.2)))
+            radius = drill / 2.0
+            layer_name = op.get("layer", "Edge.Cuts")
+            layer_id = pcbnew.Edge_Cuts if "edge" in str(layer_name).lower() else pcbnew.Dwgs_User
+            is_corners = bool(op.get("corners", False))
+            margin = float(op.get("margin", 3.5))
+
+            hole_coords = []
+            if is_corners:
+                bx, by, bw, bh = _get_board_bounds(b)
+                hole_coords = [
+                    (bx + margin, by + margin),
+                    (bx + bw - margin, by + margin),
+                    (bx + bw - margin, by + bh - margin),
+                    (bx + margin, by + bh - margin)
+                ]
+            else:
+                hx = float(op.get("x", op.get("cx", 0.0)))
+                hy = float(op.get("y", op.get("cy", 0.0)))
+                hole_coords = [(hx, hy)]
+
+            for hx, hy in hole_coords:
+                s = pcbnew.PCB_SHAPE(b)
+                s.SetShape(pcbnew.SHAPE_T_CIRCLE)
+                s.SetLayer(layer_id)
+                s.SetCenter(pcbnew.VECTOR2I(pcbnew.FromMM(hx), pcbnew.FromMM(hy)))
+                s.SetStart(pcbnew.VECTOR2I(pcbnew.FromMM(hx), pcbnew.FromMM(hy)))
+                s.SetEnd(pcbnew.VECTOR2I(pcbnew.FromMM(hx + radius), pcbnew.FromMM(hy)))
+                s.SetWidth(pcbnew.FromMM(0.15))
+                b.Add(s)
+                applied += 1
+
+        # 16. Board Corner Fillet (Smooth rounded corners on Edge.Cuts)
+        elif action in ("board.fillet", "fillet", "board.rounded_corners", "rounded_corners"):
+            r = float(op.get("radius", op.get("r", 2.0)))
+            edge = pcbnew.Edge_Cuts
+            bx, by, bw, bh = _get_board_bounds(b)
+            # Delete existing Edge.Cuts segments
+            for drw in list(b.GetDrawings()):
+                if drw.GetLayer() == edge:
+                    b.Delete(drw)
+
+            def add_line(x1, y1, x2, y2):
+                s = pcbnew.PCB_SHAPE(b)
+                s.SetShape(pcbnew.SHAPE_T_SEGMENT)
+                s.SetLayer(edge)
+                s.SetWidth(pcbnew.FromMM(0.15))
+                s.SetStart(pcbnew.VECTOR2I(pcbnew.FromMM(x1), pcbnew.FromMM(y1)))
+                s.SetEnd(pcbnew.VECTOR2I(pcbnew.FromMM(x2), pcbnew.FromMM(y2)))
+                b.Add(s)
+
+            def add_corner_arc(start_x, start_y, mid_x, mid_y, end_x, end_y):
+                s = pcbnew.PCB_SHAPE(b)
+                s.SetShape(pcbnew.SHAPE_T_ARC)
+                s.SetLayer(edge)
+                s.SetWidth(pcbnew.FromMM(0.15))
+                s.SetArcGeometry(
+                    pcbnew.VECTOR2I(pcbnew.FromMM(start_x), pcbnew.FromMM(start_y)),
+                    pcbnew.VECTOR2I(pcbnew.FromMM(mid_x), pcbnew.FromMM(mid_y)),
+                    pcbnew.VECTOR2I(pcbnew.FromMM(end_x), pcbnew.FromMM(end_y))
+                )
+                b.Add(s)
+
+            d = r * 0.70710678
+            # 1. Top segment
+            add_line(bx + r, by, bx + bw - r, by)
+            # 2. Top-Right Arc
+            add_corner_arc(bx + bw - r, by, bx + bw - r + d, by + r - d, bx + bw, by + r)
+            # 3. Right segment
+            add_line(bx + bw, by + r, bx + bw, by + bh - r)
+            # 4. Bottom-Right Arc
+            add_corner_arc(bx + bw, by + bh - r, bx + bw - r + d, by + bh - r + d, bx + bw - r, by + bh)
+            # 5. Bottom segment
+            add_line(bx + bw - r, by + bh, bx + r, by + bh)
+            # 6. Bottom-Left Arc
+            add_corner_arc(bx + r, by + bh, bx + r - d, by + bh - r + d, bx, by + bh - r)
+            # 7. Left segment
+            add_line(bx, by + bh - r, bx, by + r)
+            # 8. Top-Left Arc
+            add_corner_arc(bx, by + r, bx + r - d, by + r - d, bx + r, by)
+            applied += 8
+
+        # 17. Slot / Isolation Cutout
+        elif action in ("slot.add", "add_slot", "board.cutout", "cutout"):
+            edge = pcbnew.Edge_Cuts
+            w = float(op.get("width", 1.2))
+            if "start" in op or "x1" in op:
+                x1 = float(op.get("x1", op.get("start", [0, 0])[0]))
+                y1 = float(op.get("y1", op.get("start", [0, 0])[1]))
+                x2 = float(op.get("x2", op.get("end", [0, 0])[0]))
+                y2 = float(op.get("y2", op.get("end", [0, 0])[1]))
+                s = pcbnew.PCB_SHAPE(b)
+                s.SetShape(pcbnew.SHAPE_T_SEGMENT)
+                s.SetLayer(edge)
+                s.SetWidth(pcbnew.FromMM(w))
+                s.SetStart(pcbnew.VECTOR2I(pcbnew.FromMM(x1), pcbnew.FromMM(y1)))
+                s.SetEnd(pcbnew.VECTOR2I(pcbnew.FromMM(x2), pcbnew.FromMM(y2)))
+                b.Add(s)
+                applied += 1
+            elif "x" in op and ("h" in op or "height" in op):
+                cx = float(op.get("x", 0.0))
+                cy = float(op.get("y", 0.0))
+                cw = float(op.get("w", op.get("width", 5.0)))
+                ch = float(op.get("h", op.get("height", 2.0)))
+                def add_cut_seg(sx1, sy1, sx2, sy2):
+                    seg = pcbnew.PCB_SHAPE(b)
+                    seg.SetShape(pcbnew.SHAPE_T_SEGMENT)
+                    seg.SetLayer(edge)
+                    seg.SetWidth(pcbnew.FromMM(0.15))
+                    seg.SetStart(pcbnew.VECTOR2I(pcbnew.FromMM(sx1), pcbnew.FromMM(sy1)))
+                    seg.SetEnd(pcbnew.VECTOR2I(pcbnew.FromMM(sx2), pcbnew.FromMM(sy2)))
+                    b.Add(seg)
+                add_cut_seg(cx, cy, cx + cw, cy)
+                add_cut_seg(cx + cw, cy, cx + cw, cy + ch)
+                add_cut_seg(cx + cw, cy + ch, cx, cy + ch)
+                add_cut_seg(cx, cy + ch, cx, cy)
+                applied += 4
+
+        # 18. Add Silkscreen or Graphic Text
+        elif action in ("text.add", "add_text", "silkscreen.add_text", "text"):
+            txt_str = str(op.get("text", op.get("str", "")))
+            tx = float(op.get("x", 0.0))
+            ty = float(op.get("y", 0.0))
+            layer_name = str(op.get("layer", "F.SilkS"))
+            layer_id = pcbnew.B_SilkS if "b.silk" in layer_name.lower() else (
+                pcbnew.F_Cu if "f.cu" in layer_name.lower() else (
+                    pcbnew.B_Cu if "b.cu" in layer_name.lower() else pcbnew.F_SilkS
+                )
+            )
+            size = float(op.get("size", 1.0))
+            thick = float(op.get("thickness", 0.15))
+            rot = float(op.get("rot", op.get("angle", 0.0)))
+
+            t = pcbnew.PCB_TEXT(b)
+            t.SetText(txt_str)
+            t.SetPosition(pcbnew.VECTOR2I(pcbnew.FromMM(tx), pcbnew.FromMM(ty)))
+            t.SetLayer(layer_id)
+            t.SetTextSize(pcbnew.VECTOR2I(pcbnew.FromMM(size), pcbnew.FromMM(size)))
+            t.SetTextThickness(pcbnew.FromMM(thick))
+            if rot != 0.0:
+                t.SetTextAngle(pcbnew.EDA_ANGLE(rot, pcbnew.DEGREES_T))
+            b.Add(t)
+            applied += 1
+
+        # 19. Connector Pinout Automatic Labels
+        elif action in ("connector.pinout_labels", "pinout_labels", "label_pins"):
+            target_ref = op.get("ref")
+            offset_dist = float(op.get("offset", 1.5))
+            txt_size = float(op.get("size", 0.8))
+            txt_thick = float(op.get("thickness", 0.12))
+            layer_id = pcbnew.F_SilkS
+
+            fp = fps.get(target_ref)
+            if fp:
+                fcx = pcbnew.ToMM(fp.GetPosition().x)
+                fcy = pcbnew.ToMM(fp.GetPosition().y)
+                labeled_count = 0
+                for pad in fp.Pads():
+                    raw_net = pad.GetNetname()
+                    if not raw_net or raw_net.strip() == "":
+                        continue
+                    clean_name = raw_net.split("/")[-1].replace("+", "").strip()
+                    if clean_name in ("NC", "unconnected", ""):
+                        continue
+                    ppos = pad.GetPosition()
+                    px = pcbnew.ToMM(ppos.x)
+                    py = pcbnew.ToMM(ppos.y)
+                    dx = px - fcx
+                    dy = py - fcy
+                    if abs(dx) >= abs(dy):
+                        lx = px + (offset_dist if dx >= 0 else -offset_dist)
+                        ly = py
+                    else:
+                        lx = px
+                        ly = py + (offset_dist if dy >= 0 else -offset_dist)
+
+                    t = pcbnew.PCB_TEXT(b)
+                    t.SetText(clean_name)
+                    t.SetPosition(pcbnew.VECTOR2I(pcbnew.FromMM(lx), pcbnew.FromMM(ly)))
+                    t.SetLayer(layer_id)
+                    t.SetTextSize(pcbnew.VECTOR2I(pcbnew.FromMM(txt_size), pcbnew.FromMM(txt_size)))
+                    t.SetTextThickness(pcbnew.FromMM(txt_thick))
+                    b.Add(t)
+                    labeled_count += 1
+                applied += labeled_count
+            else:
+                errors.append(f"Connector footprint '{target_ref}' not found for pinout labelling.")
+
+        # 20. Dimension Markings on Fabrication Layer
+        elif action in ("dimension.add", "add_dimension", "board.dimension"):
+            layer_name = str(op.get("layer", "Dwgs.User"))
+            layer_id = pcbnew.Cmts_User if "cmts" in layer_name.lower() else pcbnew.Dwgs_User
+            offset = float(op.get("offset", 4.0))
+            bx, by, bw, bh = _get_board_bounds(b)
+
+            # Horizontal dimension across top edge
+            dim_h = pcbnew.PCB_DIM_ALIGNED(b)
+            dim_h.SetStart(pcbnew.VECTOR2I(pcbnew.FromMM(bx), pcbnew.FromMM(by)))
+            dim_h.SetEnd(pcbnew.VECTOR2I(pcbnew.FromMM(bx + bw), pcbnew.FromMM(by)))
+            dim_h.SetHeight(pcbnew.FromMM(offset))
+            dim_h.SetLayer(layer_id)
+            b.Add(dim_h)
+
+            # Vertical dimension along right edge
+            dim_v = pcbnew.PCB_DIM_ALIGNED(b)
+            dim_v.SetStart(pcbnew.VECTOR2I(pcbnew.FromMM(bx + bw), pcbnew.FromMM(by)))
+            dim_v.SetEnd(pcbnew.VECTOR2I(pcbnew.FromMM(bx + bw), pcbnew.FromMM(by + bh)))
+            dim_v.SetHeight(pcbnew.FromMM(offset))
+            dim_v.SetLayer(layer_id)
+            b.Add(dim_v)
+            applied += 2
+
+        # 21. Add Copper Zone / Ground Pour
+        elif action in ("zone.add", "add_zone", "copper_pour", "plane.add"):
+            net_name = str(op.get("net", "GND"))
+            layer_name = str(op.get("layer", "B.Cu"))
+            layer_id = pcbnew.F_Cu if "f.cu" in layer_name.lower() else pcbnew.B_Cu
+            conn_mode = str(op.get("connection", "full")).lower()
+            min_thick = float(op.get("min_thickness", 0.15))
+            margin = float(op.get("margin", 0.2))
+
+            z = pcbnew.ZONE(b)
+            z.SetLayer(layer_id)
+            net_obj = b.FindNet(net_name)
+            if net_obj:
+                z.SetNet(net_obj)
+            z.SetPadConnection(pcbnew.ZONE_CONNECTION_FULL if conn_mode == "full" else pcbnew.ZONE_CONNECTION_THERMAL)
+            z.SetMinThickness(pcbnew.FromMM(min_thick))
+
+            chain = pcbnew.SHAPE_LINE_CHAIN()
+            if "corners" in op and isinstance(op["corners"], list) and len(op["corners"]) >= 3:
+                for c in op["corners"]:
+                    chain.Append(pcbnew.VECTOR2I(pcbnew.FromMM(float(c[0])), pcbnew.FromMM(float(c[1]))))
+            else:
+                bx, by, bw, bh = _get_board_bounds(b)
+                chain.Append(pcbnew.VECTOR2I(pcbnew.FromMM(bx + margin), pcbnew.FromMM(by + margin)))
+                chain.Append(pcbnew.VECTOR2I(pcbnew.FromMM(bx + bw - margin), pcbnew.FromMM(by + margin)))
+                chain.Append(pcbnew.VECTOR2I(pcbnew.FromMM(bx + bw - margin), pcbnew.FromMM(by + bh - margin)))
+                chain.Append(pcbnew.VECTOR2I(pcbnew.FromMM(bx + margin), pcbnew.FromMM(by + bh - margin)))
+
+            chain.SetClosed(True)
+            z.AddPolygon(chain)
+            b.Add(z)
+            try:
+                filler = pcbnew.ZONE_FILLER(b)
+                filler.Fill(b.Zones())
+            except Exception:
+                pass
+            applied += 1
+
+        # 22. Rule Area / Keepout Zone (e.g. Antenna / High-Voltage)
+        elif action in ("rule_area.add", "add_rule_area", "zone.keepout", "keepout"):
+            z = pcbnew.ZONE(b)
+            z.SetIsRuleArea(True)
+            z.SetDoNotAllowZoneFills(bool(op.get("no_copper", op.get("no_zone", True))))
+            z.SetDoNotAllowTracks(bool(op.get("no_tracks", True)))
+            z.SetDoNotAllowVias(bool(op.get("no_vias", True)))
+            z.SetDoNotAllowFootprints(bool(op.get("no_footprints", False)))
+            layer_name = str(op.get("layer", "F.Cu"))
+            z.SetLayer(pcbnew.B_Cu if "b.cu" in layer_name.lower() else pcbnew.F_Cu)
+
+            chain = pcbnew.SHAPE_LINE_CHAIN()
+            if "corners" in op and isinstance(op["corners"], list) and len(op["corners"]) >= 3:
+                for c in op["corners"]:
+                    chain.Append(pcbnew.VECTOR2I(pcbnew.FromMM(float(c[0])), pcbnew.FromMM(float(c[1]))))
+            else:
+                kx = float(op.get("x", 0.0))
+                ky = float(op.get("y", 0.0))
+                kw = float(op.get("w", op.get("width", 10.0)))
+                kh = float(op.get("h", op.get("height", 10.0)))
+                chain.Append(pcbnew.VECTOR2I(pcbnew.FromMM(kx), pcbnew.FromMM(ky)))
+                chain.Append(pcbnew.VECTOR2I(pcbnew.FromMM(kx + kw), pcbnew.FromMM(ky)))
+                chain.Append(pcbnew.VECTOR2I(pcbnew.FromMM(kx + kw), pcbnew.FromMM(ky + kh)))
+                chain.Append(pcbnew.VECTOR2I(pcbnew.FromMM(kx), pcbnew.FromMM(ky + kh)))
+
+            chain.SetClosed(True)
+            z.AddPolygon(chain)
+            b.Add(z)
+            applied += 1
+
+        # 23. Via Matrix / Thermal Pad Array
+        elif action in ("via.matrix", "via.array", "thermal_vias"):
+            net_name = str(op.get("net", "GND"))
+            net_obj = b.FindNet(net_name)
+            rows = int(op.get("rows", 3))
+            cols = int(op.get("cols", 3))
+            pitch_x = float(op.get("pitch_x", op.get("pitch", 1.2)))
+            pitch_y = float(op.get("pitch_y", op.get("pitch", 1.2)))
+            drill = float(op.get("drill", 0.3))
+            size = float(op.get("size", op.get("diameter", 0.6)))
+
+            if "ref" in op and op["ref"] in fps:
+                fp = fps[op["ref"]]
+                cx = pcbnew.ToMM(fp.GetPosition().x)
+                cy = pcbnew.ToMM(fp.GetPosition().y)
+            else:
+                cx = float(op.get("center_x", op.get("cx", op.get("x", 0.0))))
+                cy = float(op.get("center_y", op.get("cy", op.get("y", 0.0))))
+
+            start_x = cx - ((cols - 1) * pitch_x) / 2.0
+            start_y = cy - ((rows - 1) * pitch_y) / 2.0
+            v_count = 0
+            for r_idx in range(rows):
+                for c_idx in range(cols):
+                    vx = start_x + c_idx * pitch_x
+                    vy = start_y + r_idx * pitch_y
+                    via = pcbnew.PCB_VIA(b)
+                    via.SetPosition(pcbnew.VECTOR2I(pcbnew.FromMM(vx), pcbnew.FromMM(vy)))
+                    via.SetWidth(pcbnew.FromMM(size))
+                    via.SetDrill(pcbnew.FromMM(drill))
+                    if net_obj:
+                        via.SetNet(net_obj)
+                    b.Add(via)
+                    v_count += 1
+            applied += v_count
+
+        # 24. Via Fence / Perimeter Ground Shielding
+        elif action in ("via.fence", "perimeter_vias", "ground_fence"):
+            net_name = str(op.get("net", "GND"))
+            net_obj = b.FindNet(net_name)
+            pitch = float(op.get("pitch", 3.0))
+            offset = float(op.get("offset", 1.5))
+            drill = float(op.get("drill", 0.3))
+            size = float(op.get("size", 0.6))
+
+            bx, by, bw, bh = _get_board_bounds(b)
+            x_min = bx + offset
+            x_max = bx + bw - offset
+            y_min = by + offset
+            y_max = by + bh - offset
+
+            fence_coords = []
+            curr_x = x_min
+            while curr_x <= x_max:
+                fence_coords.append((curr_x, y_min))
+                curr_x += pitch
+            curr_y = y_min + pitch
+            while curr_y <= y_max:
+                fence_coords.append((x_max, curr_y))
+                curr_y += pitch
+            curr_x = x_max - pitch
+            while curr_x >= x_min:
+                fence_coords.append((curr_x, y_max))
+                curr_x -= pitch
+            curr_y = y_max - pitch
+            while curr_y >= y_min + pitch:
+                fence_coords.append((x_min, curr_y))
+                curr_y -= pitch
+
+            for fx, fy in fence_coords:
+                via = pcbnew.PCB_VIA(b)
+                via.SetPosition(pcbnew.VECTOR2I(pcbnew.FromMM(fx), pcbnew.FromMM(fy)))
+                via.SetWidth(pcbnew.FromMM(size))
+                via.SetDrill(pcbnew.FromMM(drill))
+                if net_obj:
+                    via.SetNet(net_obj)
+                b.Add(via)
+            applied += len(fence_coords)
+
+        # 25. Footprint Align & Uniform Distribution
+        elif action in ("footprint.align", "align", "distribute", "fp_align"):
+            target_refs = op.get("refs", [])
+            valid_fps = [fps[r] for r in target_refs if r in fps]
+            align_mode = str(op.get("align", "top")).lower()
+            dist_val = op.get("distribute")
+
+            if valid_fps:
+                if align_mode == "top":
+                    target_y = min(pcbnew.ToMM(fp.GetPosition().y) for fp in valid_fps)
+                    for fp in valid_fps:
+                        px = pcbnew.ToMM(fp.GetPosition().x)
+                        fp.SetPosition(pcbnew.VECTOR2I(pcbnew.FromMM(round(px * 2.0) / 2.0), pcbnew.FromMM(round(target_y * 2.0) / 2.0)))
+                elif align_mode == "bottom":
+                    target_y = max(pcbnew.ToMM(fp.GetPosition().y) for fp in valid_fps)
+                    for fp in valid_fps:
+                        px = pcbnew.ToMM(fp.GetPosition().x)
+                        fp.SetPosition(pcbnew.VECTOR2I(pcbnew.FromMM(round(px * 2.0) / 2.0), pcbnew.FromMM(round(target_y * 2.0) / 2.0)))
+                elif align_mode == "left":
+                    target_x = min(pcbnew.ToMM(fp.GetPosition().x) for fp in valid_fps)
+                    for fp in valid_fps:
+                        py = pcbnew.ToMM(fp.GetPosition().y)
+                        fp.SetPosition(pcbnew.VECTOR2I(pcbnew.FromMM(round(target_x * 2.0) / 2.0), pcbnew.FromMM(round(py * 2.0) / 2.0)))
+                elif align_mode == "right":
+                    target_x = max(pcbnew.ToMM(fp.GetPosition().x) for fp in valid_fps)
+                    for fp in valid_fps:
+                        py = pcbnew.ToMM(fp.GetPosition().y)
+                        fp.SetPosition(pcbnew.VECTOR2I(pcbnew.FromMM(round(target_x * 2.0) / 2.0), pcbnew.FromMM(round(py * 2.0) / 2.0)))
+                elif align_mode in ("center_x", "center"):
+                    target_x = sum(pcbnew.ToMM(fp.GetPosition().x) for fp in valid_fps) / len(valid_fps)
+                    for fp in valid_fps:
+                        py = pcbnew.ToMM(fp.GetPosition().y)
+                        fp.SetPosition(pcbnew.VECTOR2I(pcbnew.FromMM(round(target_x * 2.0) / 2.0), pcbnew.FromMM(round(py * 2.0) / 2.0)))
+                elif align_mode == "center_y":
+                    target_y = sum(pcbnew.ToMM(fp.GetPosition().y) for fp in valid_fps) / len(valid_fps)
+                    for fp in valid_fps:
+                        px = pcbnew.ToMM(fp.GetPosition().x)
+                        fp.SetPosition(pcbnew.VECTOR2I(pcbnew.FromMM(round(px * 2.0) / 2.0), pcbnew.FromMM(round(target_y * 2.0) / 2.0)))
+
+                if dist_val is not None:
+                    step = float(dist_val)
+                    axis = str(op.get("axis", "X" if align_mode in ("top", "bottom", "center_y") else "Y")).upper()
+                    if axis == "X":
+                        sorted_fps = sorted(valid_fps, key=lambda f: pcbnew.ToMM(f.GetPosition().x))
+                        base_x = pcbnew.ToMM(sorted_fps[0].GetPosition().x)
+                        for idx, fp in enumerate(sorted_fps):
+                            new_x = round((base_x + idx * step) * 2.0) / 2.0
+                            cur_y = pcbnew.ToMM(fp.GetPosition().y)
+                            fp.SetPosition(pcbnew.VECTOR2I(pcbnew.FromMM(new_x), pcbnew.FromMM(cur_y)))
+                    else:
+                        sorted_fps = sorted(valid_fps, key=lambda f: pcbnew.ToMM(f.GetPosition().y))
+                        base_y = pcbnew.ToMM(sorted_fps[0].GetPosition().y)
+                        for idx, fp in enumerate(sorted_fps):
+                            cur_x = pcbnew.ToMM(fp.GetPosition().x)
+                            new_y = round((base_y + idx * step) * 2.0) / 2.0
+                            fp.SetPosition(pcbnew.VECTOR2I(pcbnew.FromMM(cur_x), pcbnew.FromMM(new_y)))
+
+                applied += len(valid_fps)
+            else:
+                errors.append("No valid footprints found to align.")
 
         else:
             errors.append(f"Unknown layout operation: '{action}'")

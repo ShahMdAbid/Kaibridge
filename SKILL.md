@@ -220,8 +220,8 @@ A comprehensive, verified circuit plan presented to the user (or secondary revie
 # 1. Preflight dry-run check (zero writes):
 python json2sch.py "projects/<NAME>" --dry-run
 
-# 2. Compile schematic + netclasses + run KiCad ERC + export SVG preview:
-python json2sch.py "projects/<NAME>" --erc --svg
+# 2. Compile schematic + netclasses + run KiCad ERC + export SVG preview + netlist & BOM:
+python json2sch.py "projects/<NAME>" --erc --svg --netlist
 ```
 
 **What to Expect:**
@@ -229,6 +229,19 @@ python json2sch.py "projects/<NAME>" --erc --svg
 - `.kicad_pro` updated with netclass track/clearance/via rules
 - ERC automatically runs via `kicad-cli sch erc` with `--severity-all` (100% warning and error visibility)
 - Vector SVG preview saved to `<PROJECT>/kaibridge_dump/<NAME>_schematic.svg` (Checkpoint 1 Ready)
+- Complete XML Netlist saved to `<PROJECT>/kaibridge_dump/netlist.xml`
+- Bill of Materials (BOM) saved to `<PROJECT>/kaibridge_dump/bom.csv`
+- Pure 1-line netlist connectivity (`NET <NAME> : <Ref.Pin> ...`) printed to console for instant cross-AI review (ChatGPT/Claude/DeepSeek)
+
+### 6B. Standalone Netlist & BOM Export (kicad-cli)
+If exporting or re-generating netlist / BOM independently without recompiling:
+```powershell
+# Export complete XML Netlist (Components + Pin Connectivity):
+& "C:\Program Files\KiCad\10.0\bin\kicad-cli.exe" sch export netlist --format kicadxml -o "projects/<NAME>/kaibridge_dump/netlist.xml" "projects/<NAME>/<NAME>.kicad_sch"
+
+# Export Bill of Materials (BOM CSV):
+& "C:\Program Files\KiCad\10.0\bin\kicad-cli.exe" sch export bom -o "projects/<NAME>/kaibridge_dump/bom.csv" "projects/<NAME>/<NAME>.kicad_sch"
+```
 
 **Audit Transparency (`warning.md`):**
 - EasyEDA active IC symbols frequently arrive with `unspecified` pin types. When `--heal-pins` resolves these into electrical types (`power_in`, `power_out`, `bidirectional`), every single modification (`Symbol`, `Pin`, `Name`, `unspecified` → `type`) is logged transparently to `<PROJECT>/kaibridge_dump/warning.md` for human review.
@@ -444,15 +457,34 @@ python kicad_inspect.py "projects/<NAME>" --free-space
 python kicad_inspect.py "projects/<NAME>" --full --json
 ```
 
-### 9B. Live SWIG API Oracle
+### 9B. Live SWIG API Oracle & Zero-Hallucination Autonomy Guard
+
+**Why & How This Guarantees Robustness in Autonomous Workflows & Custom Instructions:**
+KiCad 10's underlying C++ SWIG wrapper (`pcbnew`) changes breakingly between major versions (`wxPoint` -> `VECTOR2I`, `EDA_ANGLE`, `GetFootprints`). When users issue custom automation instructions or edge-case board modifications, AI models frequently hallucinate obsolete KiCad 5/6 API calls, causing fatal `AttributeError` crashes or C++ segfaults.
+
+`kicad_oracle.py` eliminates this by providing an instant (<4ms) live reflection probe directly into the host machine's KiCad C++ installation:
+1. **Zero-Hallucination Custom Execution:** When executing custom instructions or complex automation, querying `kicad_oracle.py <method>` guarantees exact signatures and copy-paste-ready tested Python idioms (`VECTOR2I`, `FromMM`, `EDA_ANGLE`), preventing trial-and-error debugging loops.
+2. **Pre-Flight DFM & Stackup Enforcement:** Before modifying traces or layers, querying `drc_rules`, `stackup_4layer`, or `track_clearance` locks in ground-truth JLCPCB constraints directly.
+3. **Memory Safety Shield:** Querying `swig_memory` enforces Appendix B invariants (`b.Delete()` and `del board; gc.collect()`), completely preventing fatal `0xC0000005` memory corruption.
 
 ```powershell
+# List all 8 architectural and manufacturing rule topics:
+python kicad_oracle.py --list
+
+# Query specific production rules & code patterns:
 python kicad_oracle.py "drc_rules"
-python kicad_oracle.py "GetFootprints" -c BOARD --json
-python kicad_oracle.py "swig_memory"
+python kicad_oracle.py "stackup_4layer"
+python kicad_oracle.py "freerouting_limits"
+
+# Live C++ class inspection with keyword filter:
+python kicad_oracle.py "BOARD" --filter "track"
+python kicad_oracle.py "PCB_VIA" --filter "layer"
+
+# Exact method signature & tested Python code snippet:
+python kicad_oracle.py "FindFootprintByReference" -c BOARD
 ```
 
-**Available Oracle Topics:** `drc_rules`, `jlcpcb_rules`, `swig_memory`, `freerouting_limits`, `stackup_4layer`, `track_clearance`.
+**Available Oracle Topics (8 Total):** `drc_rules`, `jlcpcb_rules`, `swig_memory`, `zone_filling`, `power_flags`, `freerouting_limits`, `stackup_4layer`, `track_clearance`.
 
 ### 9C. Visual & 9-Angle 3D Multi-Perspective Snapshot
 
@@ -579,18 +611,21 @@ python export_jlcpcb.py "projects/<NAME>"
 ---
 ---
 
-## Appendix A: `ops.json` Operation Catalog (17 Operations)
+## Appendix A: `ops.json` Operation Catalog (28 Operations)
 
 All operations are validated against physical board constraints. Invalid `ref` or `op` returns `{"success": false, "errors": [...]}`.
 
-### Board Dimensions
+### Board Dimensions & Mechanical Geometry
 
-| Operation | Description | Example |
+| Operation | Description | Example / Parameters |
 |---|---|---|
 | `board.set_size` | Create/update rectangular `Edge.Cuts` outline | `{"op": "board.set_size", "width": 55.0, "height": 40.0, "origin_x": 100.0, "origin_y": 100.0}` |
 | `board.fit_outline` | Auto-fit outline to footprint bounding box + margin | `{"op": "board.fit_outline", "margin": 5.0}` |
+| `board.fillet` | Smooth corner fillets/radii on `Edge.Cuts` | `{"op": "board.fillet", "radius": 2.5}` |
+| `hole.add` | M2/M3 mounting holes (single or 4 corners) | `{"op": "hole.add", "corners": true, "margin": 3.5, "drill": 3.2}` |
+| `slot.add` | High-voltage isolation slot or board cutout | `{"op": "slot.add", "x1": 30.0, "y1": 10.0, "x2": 30.0, "y2": 25.0, "width": 1.2}` |
 
-### Component Placement
+### Component Placement & Smart Alignment
 
 | Operation | Description | Key Parameters |
 |---|---|---|
@@ -598,6 +633,16 @@ All operations are validated against physical board constraints. Invalid `ref` o
 | `footprint.move` | Reposition without changing rotation | `ref`, `x`, `y` |
 | `footprint.rotate` | Change rotation (absolute or relative) | `ref`, `rot`, `relative` (bool) |
 | `array.place` | Linear array with uniform pitch | `refs` (list), `start_x`, `start_y`, `pitch_x`, `pitch_y`, `rot` |
+| `footprint.align` | Multi-footprint alignment & equal distribution | `refs` (list), `align` (top/bottom/left/right/center_x/center_y), `distribute` (pitch mm) |
+
+### Silkscreen, Branding & Labels
+
+| Operation | Description | Example / Parameters |
+|---|---|---|
+| `text.add` | Project branding, version, and custom text | `{"op": "text.add", "text": "OmniCore v1.0", "x": 15.0, "y": 8.0, "layer": "F.SilkS", "size": 1.2}` |
+| `connector.pinout_labels` | Auto-extract net names & label connector pins | `{"op": "connector.pinout_labels", "ref": "J2", "offset": 1.5, "size": 0.8}` |
+| `dimension.add` | Fabrication dimension markings on `Dwgs.User` | `{"op": "dimension.add", "layer": "Dwgs.User", "offset": 4.0}` |
+| `silkscreen.sanitize` | Auto-hide bulky values or pad-colliding silk | `{"op": "silkscreen.sanitize", "mode": "sanitize"}` |
 
 ### Locking & Fields
 
@@ -613,22 +658,26 @@ All operations are validated against physical board constraints. Invalid `ref` o
 |---|---|---|
 | `item.delete` | Delete footprint/drawing (uses `b.Delete()` for SWIG safety) | `{"op": "item.delete", "ref": "TP1"}` |
 
-### Manual Copper
+### Copper Traces, Vias & Shielding
 
 | Operation | Description | Key Parameters |
 |---|---|---|
 | `track.add` | Draw manual trace segment | `start_x/y`, `end_x/y`, `width`, `layer`, `net` |
-| `track.set_width` | Modify existing track width by net | `net`, `width` |
-| `via.add` | Place through-hole via | `x`, `y`, `size`, `drill`, `net` |
+| `track.set_width` | Modify existing track width by net/netclass | `net`, `netclass`, `width` |
+| `via.add` | Place single through-hole via | `x`, `y`, `size`, `drill`, `net` |
+| `via.matrix` | Thermal via array under exposed IC pad | `net`, `center_x`/`center_y` (or `ref`), `rows`, `cols`, `pitch`, `drill`, `size` |
+| `via.fence` | Perimeter ground shielding via fence | `net`, `pitch`, `offset` (from board edge), `drill`, `size` |
 
-### Zones & Cleanup
+### Copper Pours, Keepouts & Cleanup
 
 | Operation | Description | Example |
 |---|---|---|
+| `zone.add` | Add copper plane / ground pour (full-board or polygon) | `{"op": "zone.add", "net": "GND", "layer": "B.Cu", "full_board": true, "connection": "full"}` |
+| `rule_area.add` | RF antenna keepout (no copper, tracks, or vias) | `{"op": "rule_area.add", "x": 5.0, "y": 5.0, "w": 18.0, "h": 10.0, "no_copper": true, "no_vias": true}` |
 | `zone.delete` | Remove copper zones by layer/net | `{"op": "zone.delete", "layer": "B.Cu", "net": "GND"}` |
-| `zone.refill` | Global zone recalculation | `{"op": "zone.refill"}` |
+| `zone.refill` | Global zone recalculation via `ZONE_FILLER` | `{"op": "zone.refill"}` |
 | `net.delete_routing` | Strip all tracks/vias for a net | `{"op": "net.delete_routing", "net": "GND"}` |
-| `board.prep_for_route` | Purge tracks, check edge cuts, reset zones | `{"op": "board.prep_for_route"}` |
+| `board.prep_for_route` | Purge orphaned tracks, check edge cuts, reset zones | `{"op": "board.prep_for_route"}` |
 
 ### File Format
 

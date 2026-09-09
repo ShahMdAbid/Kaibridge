@@ -417,3 +417,168 @@ def _execute_erc(sch_path: Path, project_dir: Path) -> Dict[str, Any]:
     except Exception:
         return {"errors": 0, "warnings": 0, "error_violations": [], "warning_violations": [], "violations": []}
 
+
+def export_netlist_and_bom(sch_path: Path, project_dir: Path) -> Dict[str, Any]:
+    """Exports KiCad XML netlist and BOM CSV via kicad-cli and parses connectivity."""
+    cli = load_cli()
+    if not cli:
+        return {"success": False, "error": "kicad-cli executable not found"}
+    dump_dir = project_dir / "kaibridge_dump"
+    dump_dir.mkdir(parents=True, exist_ok=True)
+    netlist_path = dump_dir / "netlist.xml"
+    bom_path = dump_dir / "bom.csv"
+
+    # Export XML Netlist
+    cmd_net = [
+        str(cli), "sch", "export", "netlist",
+        "--format", "kicadxml",
+        "-o", str(netlist_path),
+        str(sch_path)
+    ]
+    subprocess.run(cmd_net, capture_output=True, text=True, check=False)
+
+    # Export BOM CSV
+    cmd_bom = [
+        str(cli), "sch", "export", "bom",
+        "-o", str(bom_path),
+        str(sch_path)
+    ]
+    subprocess.run(cmd_bom, capture_output=True, text=True, check=False)
+
+    nets_summary: Dict[str, list] = {}
+    pin_func_nets: Dict[str, list] = {}
+    comps_summary: list = []
+    ic_pinout_audit: list = []
+    audit_md_path = dump_dir / "pinout_audit.md"
+
+    if netlist_path.exists():
+        try:
+            import xml.etree.ElementTree as ET
+            tree = ET.parse(netlist_path)
+            root = tree.getroot()
+
+            # 1. Map all defined library symbol parts and their declared pins
+            libparts = {}
+            for lp in root.findall(".//libpart"):
+                lib = lp.get("lib", "")
+                part = lp.get("part", "")
+                pins = {}
+                for p in lp.findall(".//pin"):
+                    p_num = p.get("num", "")
+                    p_name = p.get("name", "")
+                    p_type = p.get("type", "unspecified")
+                    pins[p_num] = (p_name, p_type)
+                libparts[(lib, part)] = pins
+
+            # 2. Map pin to attached net
+            pin_to_net = {}
+            for net in root.findall(".//net"):
+                name = net.get("name", "")
+                raw_nodes = []
+                func_nodes = []
+                for node in net.findall("node"):
+                    r = node.get("ref", "")
+                    p = node.get("pin", "")
+                    pfunc = node.get("pinfunction") or ""
+                    ptype = node.get("pintype") or ""
+                    pin_to_net[(r, p)] = (name, pfunc, ptype)
+
+                    raw_nodes.append(f"{r}.{p}")
+                    clean_func = pfunc.rsplit("_", 1)[0] if ("_" in pfunc and pfunc.rsplit("_", 1)[1] == p) else pfunc
+                    if clean_func and clean_func != p:
+                        func_nodes.append(f"{r}.{p}[{clean_func}]")
+                    else:
+                        func_nodes.append(f"{r}.{p}")
+
+                if name and raw_nodes:
+                    nets_summary[name] = raw_nodes
+                    pin_func_nets[name] = func_nodes
+
+            # 3. Component inventory
+            for comp in root.findall(".//comp"):
+                ref = comp.get("ref", "")
+                val = comp.find("value").text if comp.find("value") is not None else ""
+                fp = comp.find("footprint").text if comp.find("footprint") is not None else ""
+                ls = comp.find("libsource")
+                lib = ls.get("lib", "") if ls is not None else ""
+                part = ls.get("part", "") if ls is not None else ""
+
+                lcsc = ""
+                for f in comp.findall(".//field"):
+                    if "lcsc" in f.get("name", "").lower():
+                        lcsc = f.text or ""
+                comps_summary.append({
+                    "ref": ref,
+                    "value": val or "",
+                    "footprint": fp or "",
+                    "lcsc": lcsc
+                })
+
+                # 4. Detailed IC / Multi-pin Connector Pinout Audit
+                defined_pins = libparts.get((lib, part), {})
+                if len(defined_pins) > 2 or ref.startswith(("U", "J", "IC", "Q", "SW")):
+                    comp_audit = {
+                        "ref": ref,
+                        "value": val or "",
+                        "footprint": fp or "",
+                        "total_pins": len(defined_pins),
+                        "pins": []
+                    }
+                    for p_num, (p_name, p_type) in sorted(defined_pins.items(), key=lambda x: (len(str(x[0])), str(x[0]))):
+                        conn = pin_to_net.get((ref, p_num))
+                        if conn:
+                            net_name, pfunc, actual_type = conn
+                            is_unconnected = net_name.startswith("unconnected-")
+                            status = "[UNCONNECTED / NC]" if is_unconnected else f"Net: {net_name}"
+                            clean_name = pfunc.rsplit("_", 1)[0] if ("_" in pfunc and pfunc.rsplit("_", 1)[1] == p_num) else (pfunc or p_name)
+                        else:
+                            status = "[FLOATING / NOT_CONNECTED]"
+                            clean_name = p_name
+                            actual_type = p_type
+
+                        comp_audit["pins"].append({
+                            "pin": p_num,
+                            "name": clean_name or p_num,
+                            "type": actual_type,
+                            "status": status
+                        })
+                    ic_pinout_audit.append(comp_audit)
+
+            # 5. Write pinout_audit.md report
+            md_lines = [
+                f"# Pinout & Netlist Forensic Audit: {project_dir.name}\n",
+                f"> Generated by Kaibridge Hardware Synthesis Engine\n",
+                f"## 1. Multi-Pin Components & IC Pinout Audit ({len(ic_pinout_audit)} Active Devices)\n"
+            ]
+            for ca in ic_pinout_audit:
+                md_lines.append(f"### Component `{ca['ref']}` ({ca['value']}) — Footprint: `{ca['footprint']}` ({ca['total_pins']} Pins)")
+                md_lines.append("| Pin | Symbol Name | Electrical Type | Connected Net / Status |")
+                md_lines.append("| :--- | :--- | :--- | :--- |")
+                for p in ca["pins"]:
+                    md_lines.append(f"| **{p['pin']}** | `{p['name']}` | `{p['type']}` | **{p['status']}** |")
+                md_lines.append("")
+
+            md_lines.append("## 2. Pin-Function Netlist Connectivity\n")
+            for net_name, nodes in sorted(pin_func_nets.items()):
+                if not net_name.startswith("unconnected-"):
+                    md_lines.append(f"- **`{net_name}`** : " + "  ".join(nodes))
+            md_lines.append("")
+
+            audit_md_path.write_text("\n".join(md_lines), encoding="utf-8")
+
+        except Exception:
+            pass
+
+    return {
+        "success": netlist_path.exists(),
+        "netlist_file": str(netlist_path) if netlist_path.exists() else None,
+        "bom_file": str(bom_path) if bom_path.exists() else None,
+        "audit_md_file": str(audit_md_path) if audit_md_path.exists() else None,
+        "nets_summary": nets_summary,
+        "pin_func_nets": pin_func_nets,
+        "ic_pinout_audit": ic_pinout_audit,
+        "components": comps_summary
+    }
+
+
+

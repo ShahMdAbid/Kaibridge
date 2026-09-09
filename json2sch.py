@@ -46,6 +46,8 @@ def main(argv=None):
                     help="use global labels for all inter-sheet signals instead of hierarchical sheet pins")
     ap.add_argument("--svg", action="store_true",
                     help="also export vector SVG schematic preview to kaibridge_dump/")
+    ap.add_argument("--netlist", action="store_true",
+                    help="also export XML netlist and BOM CSV to kaibridge_dump/ and print pure connectivity summary")
     args = ap.parse_args(argv)
 
     project_dir = Path(args.project_dir).expanduser().resolve()
@@ -125,8 +127,34 @@ def main(argv=None):
         if prev_res.get("success"):
             print("  Preview SVG     : Exported to kaibridge_dump/ (Checkpoint 1 Ready)")
 
+    if args.netlist:
+        from kaibridge.schematic.compiler import export_netlist_and_bom
+        root_sch = project_dir / (args.out or f"{pname}.kicad_sch")
+        net_res = export_netlist_and_bom(root_sch, project_dir)
+        if net_res.get("success"):
+            ic_audits = net_res.get("ic_pinout_audit", [])
+            if ic_audits:
+                print(f"\n  === IC & Connector Pinout Audit ({len(ic_audits)} Active Devices) ===")
+                for ca in ic_audits:
+                    print(f"\n  --- Component {ca['ref']} ({ca['value']}) | {ca['total_pins']} Pins ---")
+                    for p in ca["pins"]:
+                        print(f"    Pin {p['pin']:<4} [{p['name']:<10}] ({p['type']:<12}) ──> {p['status']}")
+
+            pin_func_nets = net_res.get("pin_func_nets", {})
+            active_nets = {k: v for k, v in pin_func_nets.items() if not k.startswith("unconnected-")}
+            print(f"\n  === Pin-Function Netlist Connectivity ({len(active_nets)} Active Nets) ===")
+            for net_name, nodes in sorted(active_nets.items()):
+                print(f"  NET {net_name:<20} : {'  '.join(nodes)}")
+
+            print(f"\n  Netlist XML     : Exported to kaibridge_dump/netlist.xml")
+            print(f"  BOM CSV         : Exported to kaibridge_dump/bom.csv")
+            print(f"  Pinout Audit MD : Exported to kaibridge_dump/pinout_audit.md")
+        else:
+            print(f"\n  [!] Netlist Export Warning: {net_res.get('error', 'Failed to export')}")
+
     print("  Next: sync to PCB via headless kicad_pcb_sync.py or KiCad F8\n")
     return 0
 
 if __name__ == "__main__":
     sys.exit(main())
+
