@@ -27,12 +27,7 @@ def is_gnd_net(net: str) -> bool:
     return "GND" in n or n == "0V" or "VSS" in n or "VSSA" in n
 
 
-def ccw(A: Tuple[float, float], B: Tuple[float, float], C: Tuple[float, float]) -> bool:
-    return (C[1] - A[1]) * (B[0] - A[0]) > (B[1] - A[1]) * (C[0] - A[0])
-
-
-def segments_intersect(A: Tuple[float, float], B: Tuple[float, float], C: Tuple[float, float], D: Tuple[float, float]) -> bool:
-    return ccw(A, C, D) != ccw(B, C, D) and ccw(A, B, C) != ccw(A, B, D)
+from ..core.geometry import ccw, segments_intersect
 
 
 class UniversalHierarchicalFloorplanner:

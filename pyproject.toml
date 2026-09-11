@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kaibridge"
+version = "2.6.0"
+description = "Headless KiCad Hardware Synthesis Engine"
+readme = "README.md"
+license = { text = "AGPL-3.0" }
+requires-python = ">=3.10"
+dependencies = [
+    "pytest>=7.0.0",
+    "pillow>=9.0.0"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0"
+]
+
+[project.scripts]
+kaibridge = "kaibridge.cli:main"
+kaibridge-layout = "kaibridge.pcb.layout:main"
+kaibridge-route = "kaibridge.pcb.router:main"
+kaibridge-sync = "kaibridge.pcb.sync:main"
+kaibridge-opt = "kaibridge.pcb.swap_optimizer:main"
+kaibridge-inspect = "kaibridge.pcb.inspector:main"
+kaibridge-oracle = "kaibridge.oracle.swig_oracle:main"
+
+[tool.setuptools.packages.find]
+include = ["kaibridge*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

@@ -840,3 +840,215 @@ def add_ground_plane(
 
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+def main(argv=None):
+    import argparse
+    from .drc import run_drc
+
+    ap = argparse.ArgumentParser(
+        description="Headless Freerouting autorouter, GND plane pour, and DRC verification gate."
+    )
+    ap.add_argument("project_dir", help="Path to KiCad project folder")
+    ap.add_argument("--track-width", type=float, default=0.25, help="Default track width in mm (default: 0.25)")
+    ap.add_argument("--timeout", type=int, default=300, help="Router timeout in seconds (default: 300)")
+    ap.add_argument("--edge-clearance-um", type=int, default=150, help="Board edge clearance in um (default: 150)")
+    ap.add_argument("--max-passes", type=int, default=None, help="Maximum Freerouting optimization passes")
+    ap.add_argument("--pour-gnd", action="store_true", default=True, help="Pour solid GND copper zone on B.Cu after routing (default: true)")
+    ap.add_argument("--no-pour-gnd", action="store_false", dest="pour_gnd", help="Do not pour ground plane")
+    ap.add_argument(
+        "--strategy",
+        choices=["auto", "fanout-first", "dual-layer"],
+        default="auto",
+        help="Routing strategy: auto (adaptive density detection), fanout-first (Strategy 1), or dual-layer (Strategy 2) (default: auto)"
+    )
+    ap.add_argument("--fanout-first", action="store_true", default=None, help="Force Dog-Bone GND fanout first protocol (Strategy 1)")
+    ap.add_argument("--no-fanout-first", action="store_true", default=None, help="Force Dual-Layer routing protocol (Strategy 2)")
+    ap.add_argument("--layers", type=int, choices=[2, 4], default=2, help="Number of copper layers (2 or 4, default: 2)")
+    ap.add_argument("--drc", action="store_true", help="Run KiCad DRC check and output violations")
+    ap.add_argument("--via-costs", type=int, default=1000, help="Via cost penalty for multilayer routing (default: 1000)")
+    ap.add_argument("--no-daemon", action="store_true", help="Disable persistent REST daemon and force direct CLI execution")
+    ap.add_argument("--preserve-locked", action="store_true", default=False, help="Preserve locked tracks (e.g. pre-routed differential pairs) during autorouting")
+    ap.add_argument("--no-neckdown", action="store_true", default=False, help="Disable automatic neckdown on fine-pitch IC pads")
+    ap.add_argument("--unroute", action="store_true", help="Unroute and delete all tracks, vias, and ground planes")
+    args = ap.parse_args(argv)
+
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.is_dir():
+        print(f"Error: {project_dir} is not a directory", file=sys.stderr)
+        return 1
+
+    if args.unroute:
+        print(f"[*] Unrouting board in: {project_dir.name}...")
+        res = unroute_board(project_dir, remove_zones=True)
+        if res.get("success"):
+            print(f"[+] Unroute complete: removed {res.get('removed_tracks', 0)} tracks/vias and {res.get('removed_zones', 0)} zones.")
+            return 0
+        else:
+            print(f"[-] Unroute failed: {res.get('error')}", file=sys.stderr)
+            return 1
+
+    strategy = args.strategy
+    if args.no_fanout_first:
+        strategy = "dual-layer"
+    elif args.fanout_first:
+        strategy = "fanout-first"
+
+    print(f"[*] Starting headless routing pipeline for: {project_dir.name}")
+    print(f"  Track width     : {args.track_width} mm")
+    print(f"  Edge clearance  : {args.edge_clearance_um} um")
+    print(f"  Router timeout  : {args.timeout} s")
+    print(f"  Strategy        : {strategy}")
+    print(f"  Layers          : {args.layers}")
+    print(f"  Via cost penalty: {args.via_costs}")
+    print(f"  Daemon mode     : {'Disabled' if args.no_daemon else 'Enabled (Port 37864)'}")
+
+    route_res = route_board(
+        project_dir=project_dir,
+        track_width_mm=args.track_width,
+        timeout_sec=args.timeout,
+        copper_edge_clearance_um=args.edge_clearance_um,
+        strict_drc=True,
+        max_passes=args.max_passes,
+        fanout_first=True if strategy == "fanout-first" else (False if strategy == "dual-layer" else None),
+        strategy=strategy,
+        via_costs=args.via_costs,
+        automatic_neckdown=not args.no_neckdown,
+        use_daemon=not args.no_daemon,
+        preserve_locked=args.preserve_locked
+    )
+
+    if not route_res.get("success"):
+        print(f"\nError in routing: {route_res.get('error', 'Routing failed')}", file=sys.stderr)
+        return 1
+
+    print("\n=== Autorouting Complete ===")
+    print(f"  Method       : {route_res.get('method', 'Freerouting 2.4.1')}")
+    print(f"  Tracks/Vias  : SES imported into .kicad_pcb")
+
+    diff_audit = route_res.get("diff_pair_audit")
+    if diff_audit and diff_audit.get("formatted_table"):
+        print("\n" + diff_audit["formatted_table"])
+
+    def _execute_copper_pours():
+        if not args.pour_gnd:
+            return
+        if args.layers == 4:
+            print("\n[*] Pouring 4-layer copper planes: In1.Cu (GND), In2.Cu (+3V3/Power), B.Cu (GND)...")
+            add_ground_plane(project_dir, net="GND", layer="In1.Cu", clearance_mm=0.3)
+            design_file = project_dir / "kaibridge_dump" / "design.json"
+            if not design_file.exists():
+                design_file = project_dir / "design.json"
+            power_net = "+3V3"
+            gnd_net = "GND"
+            if design_file.exists():
+                try:
+                    d = json.loads(design_file.read_text(encoding="utf-8"))
+                    nets = d.get("nets", {})
+                    for candidate in ("+3V3", "3V3", "+5V", "5V", "VCC", "VDD", "VBUS", "VIN", "VBAT"):
+                        if candidate in nets:
+                            power_net = candidate
+                            break
+                    for candidate in ("GND", "GND_POWER", "GND_LOGIC", "AGND", "DGND", "0V"):
+                        if candidate in nets:
+                            gnd_net = candidate
+                            break
+                except Exception:
+                    pass
+            add_ground_plane(project_dir, net=power_net, layer="In2.Cu", clearance_mm=0.3)
+            pour_res = add_ground_plane(project_dir, net=gnd_net, layer="B.Cu", clearance_mm=0.3)
+        else:
+            design_file = project_dir / "kaibridge_dump" / "design.json"
+            if not design_file.exists():
+                design_file = project_dir / "design.json"
+            gnd_net = "GND"
+            if design_file.exists():
+                try:
+                    d = json.loads(design_file.read_text(encoding="utf-8"))
+                    nets = d.get("nets", {})
+                    for candidate in ("GND", "GND_POWER", "GND_LOGIC", "AGND", "DGND", "0V"):
+                        if candidate in nets:
+                            gnd_net = candidate
+                            break
+                except Exception:
+                    pass
+            print(f"\n[*] Pouring solid {gnd_net} copper plane on B.Cu...")
+            pour_res = add_ground_plane(project_dir, net=gnd_net, layer="B.Cu", clearance_mm=0.3)
+        if pour_res.get("success"):
+            print(f"  Status: {gnd_net} copper zone filled with 0.3mm clearance")
+        else:
+            print(f"  Warning: Ground pour failed: {pour_res.get('error')}")
+
+    _execute_copper_pours()
+
+    if args.drc:
+        print("\n[*] Running Design Rules Check (DRC)...")
+        drc_res = run_drc(project_dir)
+        clr_errs = drc_res.get("geometric_clearance_errors", 0)
+        unconn = drc_res.get("unconnected_airwires_count", 0)
+
+        if unconn > 0 and route_res.get("fanout_first_used"):
+            print(f"\n[!] Strategy 1 left {unconn} unrouted nets. Automatically recovering via Strategy 2 (Dual-Layer Routing)...")
+            rules_file = project_dir / f"{project_dir.name}.rules"
+            if rules_file.exists():
+                try:
+                    rules_file.unlink()
+                except Exception:
+                    pass
+
+            route_res = route_board(
+                project_dir=project_dir,
+                track_width_mm=args.track_width,
+                timeout_sec=args.timeout,
+                copper_edge_clearance_um=args.edge_clearance_um,
+                strict_drc=True,
+                max_passes=args.max_passes or 10,
+                fanout_first=False,
+                strategy="dual-layer",
+                preserve_locked=args.preserve_locked
+            )
+
+            _execute_copper_pours()
+            drc_res = run_drc(project_dir)
+
+        clr_errs = drc_res.get("geometric_clearance_errors", 0)
+        unconn = drc_res.get("unconnected_airwires_count", 0)
+        warns = drc_res.get("clearance_warnings", 0)
+        err_violations = drc_res.get("error_violations", [])
+        warn_violations = drc_res.get("warning_violations", [])
+        if drc_res.get("error") or not drc_res.get("report_valid", True):
+            print(f"\n  [!] DRC Execution Failure: {drc_res.get('error', 'DRC report missing or malformed')}", file=sys.stderr)
+            for v in drc_res.get("error_violations", []):
+                print(f"    - {v}", file=sys.stderr)
+            return 1
+
+        print("\n=== DRC Verification Report ===")
+        print(f"  Clearance Errors  : {clr_errs}")
+        print(f"  Unconnected Nets  : {unconn}")
+        print(f"  Warnings          : {warns}")
+
+        if clr_errs > 0 or unconn > 0 or not drc_res.get("passed", False):
+            print("\n  [!] ERRORS / UNCONNECTED ITEMS:")
+            for v in err_violations[:10]:
+                print(f"    - {v}")
+            for u in drc_res.get("unconnected_items", [])[:10]:
+                print(f"    - [unconnected] {u.get('description', str(u))}")
+            if len(err_violations) > 10:
+                print(f"    ... and {len(err_violations) - 10} more errors.")
+            return 1
+
+        if warns > 0:
+            print(f"\n  [*] WARNINGS ({warns}):")
+            for w in warn_violations[:10]:
+                print(f"    - {w}")
+            if len(warn_violations) > 10:
+                print(f"    ... and {len(warn_violations) - 10} more warnings.")
+
+        if warns > 0:
+            print(f"\n  Status: PASSED WITH WARNINGS (0 Clearance Violations, 0 Unconnected Items, {warns} Warnings)")
+        else:
+            print("\n  Status: PASSED CLEAN (0 Clearance Violations, 0 Unconnected Items, 0 Warnings)")
+
+    print("\n  Next: Export manufacturing files via export_jlcpcb.py.\n")
+    return 0
+

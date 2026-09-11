@@ -61,49 +61,82 @@ def fetch_lcsc(project_dir: str | Path, lcsc_id: str, lib_name: str = "kaibridge
                 new_text = text[:idx_close] + f'\n  (lib (name "{lib_name}")(type "KiCad")(uri "${{KIPRJMOD}}/libs/{lib_name}.pretty")(options "")(descr ""))\n)'
                 fp_table_file.write_text(new_text, encoding="utf-8")
 
-    # 2. Run clean easyeda2kicad directly without lceda.cn detour
-    easyeda_exe = shutil.which("easyeda2kicad")
-    base_cmd = [easyeda_exe] if easyeda_exe else [sys.executable, "-m", "easyeda2kicad"]
-    output_target = str((libs_dir / lib_name).resolve())
-
-    cmd_full = base_cmd + [
-        "--lcsc_id", lcsc_id,
-        "--full",
-        "--output", output_target,
-        "--overwrite",
-        "--project-relative"
-    ]
-
-    cmd_fast = base_cmd + [
-        "--lcsc_id", lcsc_id,
-        "--symbol", "--footprint",
-        "--output", output_target,
-        "--overwrite",
-        "--project-relative"
-    ]
-
+    # 2. Try primary modern CAD fetcher: JLC2KiCadLib (fast mode: symbol + footprint)
+    clean_id = str(lcsc_id).strip().upper()
+    created_sym = None
+    created_fp = None
     res = None
+
     try:
-        res = subprocess.run(cmd_full, cwd=str(proj_path), capture_output=True, text=True, timeout=30)
-    except (subprocess.TimeoutExpired, Exception):
+        from .jlc_api import fetch_component_cad
+        jlc_res = fetch_component_cad(
+            lcsc_id=clean_id,
+            output_dir=libs_dir,
+            symbol_lib=lib_name,
+            prefer_jlc2kicad=True,
+            include_3d=False,
+        )
+        if jlc_res.get("success") and jlc_res.get("engine") == "JLC2KiCadLib":
+            sym_file = libs_dir / f"{lib_name}.kicad_sym"
+            if sym_file.exists():
+                text = sym_file.read_text(encoding="utf-8")
+                for chunk in text.split('(symbol "'):
+                    if clean_id in chunk:
+                        created_sym = chunk.split('"')[0]
+                        break
+            fp_dir = libs_dir / f"{lib_name}.pretty"
+            if fp_dir.exists():
+                for fp in fp_dir.glob("*.kicad_mod"):
+                    fp_text = fp.read_text(encoding="utf-8")
+                    if clean_id in fp_text:
+                        created_fp = fp.stem
+                        break
+    except Exception:
         pass
 
-    # If full failed or timed out (common when EasyEDA 3D STEP server stalls), fall back to symbol+footprint
-    if res is None or res.returncode != 0:
+    # 3. Fallback to easyeda2kicad if JLC2KiCadLib failed to create symbol and footprint
+    if not (created_sym and created_fp):
+        easyeda_exe = shutil.which("easyeda2kicad")
+        base_cmd = [easyeda_exe] if easyeda_exe else [sys.executable, "-m", "easyeda2kicad"]
+        output_target = str((libs_dir / lib_name).resolve())
+
+        cmd_full = base_cmd + [
+            "--lcsc_id", lcsc_id,
+            "--full",
+            "--output", output_target,
+            "--overwrite",
+            "--project-relative"
+        ]
+
+        cmd_fast = base_cmd + [
+            "--lcsc_id", lcsc_id,
+            "--symbol", "--footprint",
+            "--output", output_target,
+            "--overwrite",
+            "--project-relative"
+        ]
+
         try:
-            res = subprocess.run(cmd_fast, cwd=str(proj_path), capture_output=True, text=True, timeout=25)
-        except subprocess.TimeoutExpired:
-            return {"success": False, "error": f"LCSC download for {lcsc_id} timed out. EasyEDA server unresponsive."}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
+            res = subprocess.run(cmd_full, cwd=str(proj_path), capture_output=True, text=True, timeout=30)
+        except (subprocess.TimeoutExpired, Exception):
+            pass
 
-    combined = (res.stdout or "") + "\n" + (res.stderr or "")
+        # If full failed or timed out, fall back to symbol+footprint
+        if res is None or res.returncode != 0:
+            try:
+                res = subprocess.run(cmd_fast, cwd=str(proj_path), capture_output=True, text=True, timeout=25)
+            except subprocess.TimeoutExpired:
+                return {"success": False, "error": f"LCSC download for {lcsc_id} timed out. EasyEDA server unresponsive."}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
 
-    sym_name_match = re.search(r"Symbol name\s*:\s*([^\r\n]+)", combined)
-    fp_name_match = re.search(r"Footprint name\s*:\s*([^\r\n]+)", combined)
+        combined = (res.stdout or "") + "\n" + (res.stderr or "")
 
-    created_sym = sym_name_match.group(1).strip() if sym_name_match else None
-    created_fp = fp_name_match.group(1).strip() if fp_name_match else None
+        sym_name_match = re.search(r"Symbol name\s*:\s*([^\r\n]+)", combined)
+        fp_name_match = re.search(r"Footprint name\s*:\s*([^\r\n]+)", combined)
+
+        created_sym = sym_name_match.group(1).strip() if sym_name_match else None
+        created_fp = fp_name_match.group(1).strip() if fp_name_match else None
 
     # Sanitize EasyEDA footprint: convert unnumbered 0-annular mechanical post pads to np_thru_hole
     if created_fp:
@@ -150,14 +183,14 @@ def fetch_lcsc(project_dir: str | Path, lcsc_id: str, lib_name: str = "kaibridge
             pass
 
     return {
-        "success": res.returncode == 0 and bool(created_sym),
+        "success": bool(created_sym and created_fp),
         "lcsc_id": lcsc_id,
         "lib_id": f"{lib_name}:{created_sym}" if created_sym else None,
         "footprint": f"{lib_name}:{created_fp}" if created_fp else None,
         "has_3d_model": has_3d,
         "pins": pins_data,
-        "stdout": res.stdout.strip(),
-        "stderr": res.stderr.strip()
+        "stdout": res.stdout.strip() if res else jlc_res.get("log", ""),
+        "stderr": res.stderr.strip() if res else ""
     }
 
 

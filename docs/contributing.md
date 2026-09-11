@@ -8,7 +8,7 @@ Thank you for considering contributing to Kaibridge!
 If you encounter a bug, unexpected behavior, or DRC/ERC discrepancy, please report:
 - Your KiCad version (e.g. KiCad 10.0.0)
 - Your Operating System
-- The terminal traceback or MCP error log
+- The terminal traceback or error log
 - The minimal circuit prompt or `design.json` that triggered the issue
 
 ### 2. Suggesting Enhancements
@@ -16,20 +16,13 @@ Feature requests for new EDA capabilities, routing heuristics, or footprint libr
 
 ### 3. Verification & Testing
 Before submitting contributions:
-1. Verify all 8 root CLI tools:
+1. Verify the CLI:
    ```powershell
-   python kicad_lib_init.py --help
-   python kicad_pins.py --help
-   python json2sch.py --help
-   python kicad_pcb_sync.py --help
-   python kicad_layout.py --help
-   python pcb_snapshot.py --help
-   python kicad_route.py --help
-   python export_jlcpcb.py --help
+   kaibridge --help
    ```
-2. Verify MCP server loading:
+2. Run automated test suite:
    ```powershell
-   python -c "import server; print('Tools:', len(server.TOOLS_LIST))"
+   pytest -v
    ```
 
 ## Development Guidelines

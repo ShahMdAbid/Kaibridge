@@ -27,7 +27,7 @@ def _to_mm(nm: int) -> float:
 def _try(fn, default=None):
     try:
         return fn()
-    except Exception:
+    except (AttributeError, TypeError, KeyError, ValueError, RuntimeError):
         return default
 
 

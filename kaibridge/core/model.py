@@ -555,10 +555,16 @@ def load(raw, lib, prefer_global_labels: bool = False):
         if part is None:
             raise DesignError(f"no_connect: unknown part '{ref}' in '{token}'")
         no_connect.append(Conn(ref, resolve_pin(part, pin, "no_connect")))
+    raw_nc = raw.get("netclasses") or {}
+    if isinstance(raw_nc, list):
+        netclasses = {item["name"]: item for item in raw_nc if isinstance(item, dict) and "name" in item}
+    else:
+        netclasses = dict(raw_nc)
+
     design = Design(design_id=design_id,
                     meta=meta,
                     board=dict(raw.get("board") or {}),
-                    netclasses=dict(raw.get("netclasses") or {}),
+                    netclasses=netclasses,
                     checks=dict(raw.get("checks") or {}),
                     parts=parts,
                     nets=nets,

@@ -21,11 +21,13 @@ description: Procedural handbook for Kaibridge 3.0 — headless KiCad 10 hardwar
 
 **CLI:**
 ```powershell
-# 2-layer board (default):
-python kicad_lib_init.py "projects/<NAME>" -n kaibridge
-
+# Unified CLI (v2.6.0+):
+kaibridge init "projects/<NAME>"
 # 4-layer board (JLCPCB JLC04161H stackup):
-python kicad_lib_init.py "projects/<NAME>" -n kaibridge --layers 4
+kaibridge init "projects/<NAME>" --layers 4
+
+# Or direct Python wrapper:
+python kicad_lib_init.py "projects/<NAME>" -n kaibridge
 ```
 
 **Session Contract:**
@@ -66,35 +68,59 @@ python kicad_lib_init.py "projects/<NAME>" -n kaibridge --layers 4
 
 Two strict categories — do not deviate:
 
-### 2A. Active ICs & Connectors (Download on-demand)
+### 2A. Active ICs & Connectors (Hybrid Two-Stage CAD Sourcing)
 
-For all MCUs, regulators, transceivers, op-amps, sensors, and USB/power connectors. Fetches exact manufacturer symbols, pin definitions, and footprints.
+For all MCUs, regulators, transceivers, op-amps, sensors, and USB/power connectors. Kaibridge employs a fail-closed, two-stage sourcing architecture to prevent both stockout surprises and multi-megabyte 3D download stalls:
 
 ```powershell
-# 1. Essential (Immediate, < 2s): Fetch Symbol & Footprint directly to project library:
-easyeda2kicad --lcsc_id <LCSC_ID> --symbol --footprint --output "projects/<NAME>/libs/kaibridge" --overwrite --project-relative
+# 1. Pre-flight Stock, Fee & Datasheet Check (Instant):
+kaibridge check <LCSC_ID_1> <LCSC_ID_2>
 
-# 2. Background 3D Fetch (Non-blocking, 5s pacing): Downloads in background while you proceed
-python kicad_3d.py "projects/<NAME>" <LCSC_ID_1> <LCSC_ID_2> ... --bg --interval 5
+# 2. Stage 1: Fast CAD Ingestion (Symbol + Footprint ONLY, < 3-5s per part):
+kaibridge fetch <LCSC_ID_1> <LCSC_ID_2> --output-dir "projects/<NAME>/libs"
+
+# 3. Stage 2: Background 3D Model Fetch (Non-blocking, 5s pacing, detached):
+kaibridge 3d "projects/<NAME>" <LCSC_ID_1> <LCSC_ID_2> ... --bg --interval 5
+# (Or: python kicad_3d.py "projects/<NAME>" ... --bg)
 ```
 
-- Symbol saved to `<PROJECT_DIR>/libs/kaibridge.kicad_sym`
-- Footprint saved to `<PROJECT_DIR>/libs/kaibridge.pretty/`
-- 3D Models (`.step`/`.wrl`) saved to `<PROJECT_DIR>/libs/kaibridge.3dshapes/` (downloaded in background with 5s spacing; missing 3D models never block synthesis)
+#### Sourcing Architecture & Engine Tradeoffs:
 
-**Critical Rules:**
-- Must pass exact LCSC ID (e.g. `C6186`), never component names (`AMS1117`).
-- Core fetch uses `--symbol --footprint` only. Never use `--full` or `--3d` in the main fetch.
-- **NEVER download passives from EasyEDA** (their symbols trigger `[pin_not_driven]` ERC errors and footprints lack standardized courtyards).
+| Sourcing Engine | Speed (Per Part) | DRC / Quality Profile | Use Case |
+|---|---|---|---|
+| **`JLC2KiCadLib 1.3.1` (Default Primary)** | ~4.0s – 6.5s (Batch ~3.4s) | **100% DRC-Clean.** Maps plastic alignment pegs to `F.Fab` (0 annular ring errors), native KiCad 10 S-expressions, IPC-7351 courtyards, relative `$(KIPRJMOD)` 3D paths. | Standard synthesis (`kaibridge fetch`). |
+| **`easyeda2kicad` (Fail-Closed Fallback)** | ~1.1s – 1.6s | **Fast but Raw.** Raw JSON string translator. May map plastic mechanical pegs as unplated copper through-holes (triggers KiCad 10 zero-annular-ring DRC warnings). | Automatic fallback on unparseable parts, or manual via `--prefer-easyeda`. |
 
-**Batch Download:** When multiple active ICs are needed, download them in sequence:
+#### Two-Stage Sourcing Rules (Never Block on 3D):
+1. **Fast CAD Ingestion (Stage 1):**
+   - By default, `kaibridge fetch` runs with `include_3d=False` (`-models` with no arguments in JLC2KiCadLib; `--symbol --footprint` in easyeda2kicad).
+   - Downloads **Symbol and Footprint ONLY** in ~3–5 seconds.
+   - **NEVER** synchronously block on downloading 3–5MB 3D STEP models during initial schematic compilation or pin extraction.
+   - Saved directly to `<PROJECT_DIR>/libs/kaibridge.kicad_sym` and `<PROJECT_DIR>/libs/kaibridge.pretty/`.
+2. **Paced Background 3D Ingestion (Stage 2):**
+   - `kaibridge 3d` launches detached in background with `--interval 5.0` (rate pacing).
+   - Primary: Uses `JLC2KiCadLib` to download clean STEP and WRL models into `<PROJECT_DIR>/libs/kaibridge.3dshapes/`.
+   - Fallback: Uses `easyeda2kicad --3d` if JLC2KiCadLib lacks the 3D asset.
+   - Missing or in-progress 3D models NEVER block schematic compilation, netlist synchronization, or Freerouting autorouting.
+3. **Passives Invariant:**
+   - **NEVER download passives (resistors, capacitors, LEDs, diodes) from EasyEDA or JLC2KiCadLib.** Their symbols trigger `[pin_not_driven]` ERC errors and footprints lack standardized courtyards. Passives MUST follow Step 2B native KiCad IPC libraries.
+
+#### Available CLI Options:
 ```powershell
-# Download each active IC / connector identified in Step 1:
-easyeda2kicad --lcsc_id <LCSC_ID_1> --symbol --footprint --output "projects/<NAME>/libs/kaibridge" --overwrite --project-relative
-easyeda2kicad --lcsc_id <LCSC_ID_2> --symbol --footprint --output "projects/<NAME>/libs/kaibridge" --overwrite --project-relative
+# Sourcing & Inventory Intelligence:
+kaibridge check <C_ID...>                 # Terminal HUD display
+kaibridge check <C_ID...> --json          # Machine-readable JSON output
+kaibridge check <C_ID...> --timeout 4.0   # Configurable network timeout
 
-# Then fire-and-forget 3D models in background:
-python kicad_3d.py "projects/<NAME>" <LCSC_ID_1> <LCSC_ID_2> ... --bg --interval 5
+# CAD Fetcher:
+kaibridge fetch <C_ID...>                 # Fast fetch (symbol + footprint, no 3D)
+kaibridge fetch <C_ID...> --with-3d       # Include 3D models immediately (slower)
+kaibridge fetch <C_ID...> --prefer-easyeda # Force raw easyeda2kicad speed
+kaibridge fetch <C_ID...> --skip-stock-check # Skip live inventory check before download
+
+# Background 3D Downloader:
+kaibridge 3d "projects/<NAME>" <C_ID...> --bg           # Detached background process
+kaibridge 3d "projects/<NAME>" <C_ID...> --interval 5.0 # Pacing interval in seconds
 ```
 
 ### 2B. Standard Passives (Native KiCad + JLCPCB ID Binding)
@@ -118,14 +144,13 @@ NEVER download passives from EasyEDA.
 
 **CLI:**
 ```powershell
-# For downloaded active ICs in project library:
+# Unified CLI (v2.6.0+):
+kaibridge pins "projects/<NAME>\libs\kaibridge.kicad_sym" -s <SYMBOL_NAME> --json
+kaibridge pins --native <LIBRARY_NAME> -s <SYMBOL_NAME> --json
+kaibridge pins "projects/<NAME>\libs\kaibridge.kicad_sym" --verify
+
+# Or direct Python wrapper:
 python kicad_pins.py "projects/<NAME>\libs\kaibridge.kicad_sym" -s <SYMBOL_NAME> --json
-
-# For stock KiCad native library symbols:
-python kicad_pins.py --native <LIBRARY_NAME> -s <SYMBOL_NAME> --json
-
-# Verify pad counts match symbol pin counts:
-python kicad_pins.py "projects/<NAME>\libs\kaibridge.kicad_sym" --verify
 ```
 
 **What to Expect (JSON Output):**
@@ -226,10 +251,11 @@ Present the completed 6-section blueprint to the user. The agent MUST NOT write 
 **What:** Compile `design.json` into `.kicad_sch`, write netclasses into `.kicad_pro`, run KiCad ERC, and export vector SVG preview.
 
 ```powershell
-# 1. Preflight dry-run check (zero writes):
-python json2sch.py "projects/<NAME>" --dry-run
+# Unified CLI (v2.6.0+):
+kaibridge build "projects/<NAME>" --dry-run
+kaibridge build "projects/<NAME>" --erc --svg --netlist
 
-# 2. Compile schematic + netclasses + run KiCad ERC + export SVG preview + netlist & BOM:
+# Or direct Python wrapper:
 python json2sch.py "projects/<NAME>" --erc --svg --netlist
 ```
 
@@ -281,6 +307,11 @@ python pcb_snapshot.py "projects/<NAME>" --tag pre_sync
 
 ### 7B. Execute Netlist Reconciliation
 ```powershell
+# Unified CLI (v2.6.0+):
+kaibridge sync "projects/<NAME>"
+
+# Or console entry point / Python wrapper:
+kaibridge-sync "projects/<NAME>"
 python kicad_pcb_sync.py "projects/<NAME>"
 ```
 
@@ -349,7 +380,10 @@ Write `<PROJECT>/kaibridge_dump/ops.json` with:
 2. One `footprint.place` per edge connector (with `locked: true`)
 
 ```powershell
-python kicad_layout.py "projects/<NAME>"
+# Console command (v2.6.0+):
+kaibridge-layout "projects/<NAME>"
+# Or Python wrapper: python kicad_layout.py "projects/<NAME>"
+
 python pcb_snapshot.py "projects/<NAME>" --inspect
 ```
 **Gate:** View `dual_view.png` or `top.png`. Every connector mouth must face outward. If any is inverted → fix rotation in `ops.json` → re-apply → re-render until correct.
@@ -360,7 +394,9 @@ python pcb_snapshot.py "projects/<NAME>" --inspect
 
 #### Step 1: Query Available Free Pockets
 ```powershell
-python kicad_inspect.py "projects/<NAME>" --free-space
+# Console command (v2.6.0+):
+kaibridge-inspect "projects/<NAME>" --free-space
+# Or: python kicad_inspect.py "projects/<NAME>" --free-space
 ```
 This reports:
 - **Board occupancy density** (% of courtyard area used)
@@ -377,8 +413,12 @@ Using the free-pocket report, apply these placement principles:
 #### Step 3: Apply & Verify
 Add `footprint.place` entries for core ICs to `ops.json` and apply:
 ```powershell
-python kicad_layout.py "projects/<NAME>" --shove
-python kicad_inspect.py "projects/<NAME>" --free-space
+# Console command (v2.6.0+):
+kaibridge-layout "projects/<NAME>" --shove
+kaibridge-inspect "projects/<NAME>" --free-space
+# Or Python wrappers:
+# python kicad_layout.py "projects/<NAME>" --shove
+# python kicad_inspect.py "projects/<NAME>" --free-space
 ```
 **Check:** Core ICs now show `Status: ON BOARD`. Free pockets have shrunk. No collisions.
 
@@ -472,6 +512,11 @@ python pcb_snapshot.py "projects/<NAME>" --3d
 ### 9A. 3D Mechanical Freeze & Visual Audit (Human Interception Gate)
 
 ```powershell
+# Unified CLI (v2.6.0+):
+kaibridge snapshot "projects/<NAME>" --inspect
+kaibridge snapshot "projects/<NAME>" --3d
+
+# Or direct Python wrapper:
 python pcb_snapshot.py "projects/<NAME>" --inspect
 python pcb_snapshot.py "projects/<NAME>" --3d
 ```
@@ -479,7 +524,7 @@ The agent presents the dual-view inspection map and 9-angle 3D views into `<PROJ
 
 1. **Connector Mouth Orientation:**
    - Are all board edge / perimeter connectors (e.g., USB, headers, screw terminals, barrel jacks, if present) facing strictly **OUTWARD** towards the board edge with unobstructed mating clearance?
-   - *(If inverted, adjust rotation in `ops.json` by adding/subtracting 180°, re-apply with `python kicad_layout.py`, and re-render)*.
+   - *(If inverted, adjust rotation in `ops.json` by adding/subtracting 180°, re-apply with `kaibridge layout "projects/<NAME>"`, and re-render)*.
 2. **RF Antenna & Thermal Clearance (If applicable to this design):**
    - If an onboard RF module / PCB antenna (e.g. ESP32, nRF, LoRa) is present, is it protruding past or facing the board edge with clean ground keepout?
    - Are regulator/transistor heatsink tabs oriented away from heat-sensitive silicon?
@@ -496,10 +541,12 @@ The agent MUST NOT invoke the router or commit ISRRO-X until the user confirms c
 
 Once mechanical anchors are locked, invoke the deterministic physics-preserving detailed placer:
 ```powershell
-# Audit run (inspect before/after crossings, escape blockage, RUDY congestion):
-python kicad_swap_optimizer.py "projects/<NAME>" --json
+# Unified CLI (v2.6.0+):
+kaibridge opt "projects/<NAME>" --json
+kaibridge opt "projects/<NAME>" --commit
 
-# Commit verified improvement with automatic backup and independent reload:
+# Or console entry point / Python wrapper:
+kaibridge-opt "projects/<NAME>" --commit
 python kicad_swap_optimizer.py "projects/<NAME>" --commit
 ```
 
@@ -514,13 +561,16 @@ python kicad_swap_optimizer.py "projects/<NAME>" --commit
 
 ```powershell
 # Summary table (Ref, Pos, Size, Rot, Layer, Locked):
-python kicad_inspect.py "projects/<NAME>" --summary
+kaibridge-inspect "projects/<NAME>" --summary
+# Or: python kicad_inspect.py "projects/<NAME>" --summary
 
 # 2D Spatial Occupancy & Available Free Rectangular Pockets:
-python kicad_inspect.py "projects/<NAME>" --free-space
+kaibridge-inspect "projects/<NAME>" --free-space
+# Or: python kicad_inspect.py "projects/<NAME>" --free-space
 
 # Full JSON with pad coordinates, courtyards, nets:
-python kicad_inspect.py "projects/<NAME>" --full --json
+kaibridge-inspect "projects/<NAME>" --full --json
+# Or: python kicad_inspect.py "projects/<NAME>" --full --json
 ```
 
 ### 9D. Live SWIG API Oracle & Zero-Hallucination Autonomy Guard
@@ -528,37 +578,40 @@ python kicad_inspect.py "projects/<NAME>" --full --json
 **Why & How This Guarantees Robustness in Autonomous Workflows & Custom Instructions:**
 KiCad 10's underlying C++ SWIG wrapper (`pcbnew`) changes breakingly between major versions (`wxPoint` -> `VECTOR2I`, `EDA_ANGLE`, `GetFootprints`). When users issue custom automation instructions or edge-case board modifications, AI models frequently hallucinate obsolete KiCad 5/6 API calls, causing fatal `AttributeError` crashes or C++ segfaults.
 
-`kicad_oracle.py` eliminates this by providing an instant (<4ms) live reflection probe directly into the host machine's KiCad C++ installation:
-1. **Zero-Hallucination Custom Execution:** When executing custom instructions or complex automation, querying `kicad_oracle.py <method>` guarantees exact signatures and copy-paste-ready tested Python idioms (`VECTOR2I`, `FromMM`, `EDA_ANGLE`), preventing trial-and-error debugging loops.
+`kicad_oracle.py` / `kaibridge-oracle` eliminates this by providing an instant (<4ms) live reflection probe directly into the host machine's KiCad C++ installation:
+1. **Zero-Hallucination Custom Execution:** When executing custom instructions or complex automation, querying `kaibridge-oracle <method>` guarantees exact signatures and copy-paste-ready tested Python idioms (`VECTOR2I`, `FromMM`, `EDA_ANGLE`), preventing trial-and-error debugging loops.
 2. **Pre-Flight DFM & Stackup Enforcement:** Before modifying traces or layers, querying `drc_rules`, `stackup_4layer`, or `track_clearance` locks in ground-truth JLCPCB constraints directly.
 3. **Memory Safety Shield:** Querying `swig_memory` enforces Appendix B invariants (`b.Delete()` and `del board; gc.collect()`), completely preventing fatal `0xC0000005` memory corruption.
 
 ```powershell
 # List all 8 architectural and manufacturing rule topics:
-python kicad_oracle.py --list
+kaibridge-oracle --list
+# Or: python kicad_oracle.py --list
 
 # Query specific production rules & code patterns:
-python kicad_oracle.py "drc_rules"
-python kicad_oracle.py "stackup_4layer"
-python kicad_oracle.py "freerouting_limits"
+kaibridge-oracle "drc_rules"
+kaibridge-oracle "stackup_4layer"
+kaibridge-oracle "freerouting_limits"
 
 # Live C++ class inspection with keyword filter:
-python kicad_oracle.py "BOARD" --filter "track"
-python kicad_oracle.py "PCB_VIA" --filter "layer"
+kaibridge-oracle "BOARD" --filter "track"
+kaibridge-oracle "PCB_VIA" --filter "layer"
 
 # Exact method signature & tested Python code snippet:
-python kicad_oracle.py "FindFootprintByReference" -c BOARD
+kaibridge-oracle "FindFootprintByReference" -c BOARD
 ```
 
 **Available Oracle Topics (8 Total):** `drc_rules`, `jlcpcb_rules`, `swig_memory`, `zone_filling`, `power_flags`, `freerouting_limits`, `stackup_4layer`, `track_clearance`.
 
 ### 9E. Hard Gatekeeper Route-Readiness Proof
 ```powershell
-# Execute fail-closed Gatekeeper Route-Readiness Proof via dedicated CLI:
-python kicad_inspect.py "projects/<NAME>" --audit
+# Unified CLI (v2.6.0+):
+kaibridge inspect "projects/<NAME>" --audit
+kaibridge inspect "projects/<NAME>" --audit --json
 
-# Machine-readable JSON output:
-python kicad_inspect.py "projects/<NAME>" --audit --json
+# Or console entry point / Python wrapper:
+kaibridge-inspect "projects/<NAME>" --audit
+python kicad_inspect.py "projects/<NAME>" --audit
 ```
 
 **Gatekeeper Invariants (Fail-Closed):**
@@ -568,7 +621,7 @@ python kicad_inspect.py "projects/<NAME>" --audit --json
 - `netclasses_without_track_width`: []
 - `route_ready`: True (Components strictly contained within board bounds, zero collisions, all nets configured with track width). Exit code is `0` if ready, `1` if unready.
 
-> **Planar Optimizer Note:** `kicad_planar_optimizer.py` seeds strictly from the live `.kicad_pcb` state and respects locked components without wiping out Step 8 placements. On a properly placed board with zero collisions and verified cells, annealing is optional and should not be invoked blindly.
+> **Planar Optimizer Note:** `kaibridge.pcb.planar_optimizer` / `kicad_planar_optimizer.py` seeds strictly from the live `.kicad_pcb` state and respects locked components without wiping out Step 8 placements. On a properly placed board with zero collisions and verified cells, annealing is optional and should not be invoked blindly.
 
 **→ Next:** Step 10 (Route & DRC)
 
@@ -581,11 +634,14 @@ python kicad_inspect.py "projects/<NAME>" --audit --json
 ### 10A. Headless Autorouting
 
 ```powershell
-# Full pipeline: route + GND plane + DRC:
-python kicad_route.py "projects/<NAME>" --pour-gnd --drc
-
+# Unified CLI (v2.6.0+):
+kaibridge route "projects/<NAME>" --pour-gnd --drc
 # 4-layer boards:
-python kicad_route.py "projects/<NAME>" --layers 4 --pour-gnd --drc
+kaibridge route "projects/<NAME>" --layers 4 --pour-gnd --drc
+
+# Or console entry point / Python wrapper:
+kaibridge-route "projects/<NAME>" --pour-gnd --drc
+python kicad_route.py "projects/<NAME>" --pour-gnd --drc
 ```
 
 **What to Expect:**
@@ -629,20 +685,14 @@ High-speed and noise-sensitive differential signals (CAN Bus, USB, Ethernet, RS4
 
 **CLI Usage:**
 ```powershell
-# Run full 3D length and timing skew audit on board:
+# Unified CLI (v2.6.0+):
+kaibridge diff-pair "projects/<NAME>" --audit
+kaibridge diff-pair "projects/<NAME>" --tune
+kaibridge diff-pair "projects/<NAME>" --detect
+kaibridge diff-pair "projects/<NAME>" --sync-netclasses
+
+# Or direct Python wrapper:
 python kicad_diff_pair.py "projects/<NAME>" --audit
-
-# Automatically synthesize 45-degree serpentine meanders to eliminate timing skew:
-python kicad_diff_pair.py "projects/<NAME>" --tune
-
-# Auto-detect all complementary differential net pairs:
-python kicad_diff_pair.py "projects/<NAME>" --detect
-
-# Synchronize differential netclasses (width & gap) into .kicad_pro:
-python kicad_diff_pair.py "projects/<NAME>" --sync-netclasses
-
-# Output machine-readable JSON:
-python kicad_diff_pair.py "projects/<NAME>" --json
 ```
 
 **Key Capabilities:**
@@ -657,7 +707,8 @@ python kicad_diff_pair.py "projects/<NAME>" --json
 ### 10F. Unroute (If Needed)
 
 ```powershell
-python kicad_route.py "projects/<NAME>" --unroute
+kaibridge route "projects/<NAME>" --unroute
+# Or: python kicad_route.py "projects/<NAME>" --unroute
 ```
 
 Present DRC pass confirmation as Checkpoint 3.
@@ -671,6 +722,10 @@ Present DRC pass confirmation as Checkpoint 3.
 **What:** Generate 100% factory-ready Gerbers, BOM, and CPL files.
 
 ```powershell
+# Unified CLI (v2.6.0+):
+kaibridge export "projects/<NAME>"
+
+# Or direct Python wrapper:
 python export_jlcpcb.py "projects/<NAME>"
 ```
 

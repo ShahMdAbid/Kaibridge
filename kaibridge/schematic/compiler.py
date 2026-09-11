@@ -2,8 +2,10 @@
 Direct in-process compilation from design.json -> KiCad hierarchical .kicad_sch schematics.
 """
 import os
+import sys
 import re
 import json
+import argparse
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -51,14 +53,15 @@ def compile_schematic(
     root_out = folder / (output_name or f"{project_name}.kicad_sch")
 
     # 1.5. Auto-heal unspecified pin types in project libraries if requested
+    heal_warnings: list[str] = []
     if auto_heal_pins:
         libs_dir = folder / "libs"
         if libs_dir.exists():
             for sym_f in libs_dir.glob("*.kicad_sym"):
                 try:
                     heal_symbol_pins(sym_f, project_dir=folder)
-                except Exception:
-                    pass
+                except Exception as e:
+                    heal_warnings.append(f"Failed to auto-heal symbol {sym_f.name}: {e}")
 
     # 2. Load LibIndex & Design Model
     try:
@@ -69,6 +72,7 @@ def compile_schematic(
     try:
         raw_data = json.loads(design_path.read_text(encoding="utf-8-sig"))
         design = load(raw_data, lib, prefer_global_labels=prefer_global_labels)
+        design.warnings.extend(heal_warnings)
     except DesignError as e:
         return {"success": False, "error": f"Design error: {e}"}
     except Exception as e:
@@ -111,8 +115,8 @@ def compile_schematic(
         dump_dir = folder / "kaibridge_dump"
         dump_dir.mkdir(parents=True, exist_ok=True)
         (dump_dir / "kaibridge_build.json").write_text(json.dumps(sc, indent=2), encoding="utf-8")
-    except Exception:
-        pass
+    except Exception as e:
+        design.warnings.append(f"Could not write build sidecar metadata: {e}")
 
     # 6. Apply Netclasses & JLCPCB Design Rules to .kicad_pro
     if apply_netclasses and pro_path.exists():
@@ -579,6 +583,144 @@ def export_netlist_and_bom(sch_path: Path, project_dir: Path) -> Dict[str, Any]:
         "ic_pinout_audit": ic_pinout_audit,
         "components": comps_summary
     }
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(
+        description="Compile design.json into KiCad hierarchical schematics.")
+    ap.add_argument("project_dir", help="folder that holds the .kicad_pro")
+    ap.add_argument("design_json", nargs="?",
+                    help="default: <project_dir>/kaibridge_dump/design.json or <project_dir>/design.json")
+    ap.add_argument("-o", "--out",
+                    help="root schematic filename or path")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="compile and report, write nothing")
+    ap.add_argument("--apply-netclasses", action="store_true", default=True,
+                    help="also write netclasses into the .kicad_pro (default: true)")
+    ap.add_argument("--no-netclasses", action="store_false", dest="apply_netclasses",
+                    help="do not modify .kicad_pro netclasses")
+    ap.add_argument("--erc", action="store_true",
+                    help="run KiCad ERC check automatically and output report")
+    ap.add_argument("--heal-pins", action="store_true", default=True,
+                    help="auto-heal unspecified pin types in project libraries (default: true)")
+    ap.add_argument("--no-heal-pins", action="store_false", dest="heal_pins",
+                    help="do not auto-heal pin types")
+    ap.add_argument("--global-labels", action="store_true",
+                    help="use global labels for all inter-sheet signals instead of hierarchical sheet pins")
+    ap.add_argument("--svg", action="store_true",
+                    help="also export vector SVG schematic preview to kaibridge_dump/")
+    ap.add_argument("--netlist", action="store_true",
+                    help="also export XML netlist and BOM CSV to kaibridge_dump/ and print pure connectivity summary")
+    args = ap.parse_args(argv)
+
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.is_dir():
+        print(f"Error: {project_dir} is not a directory", file=sys.stderr)
+        return 1
+
+    res = compile_schematic(
+        project_dir=project_dir,
+        design_file=args.design_json,
+        output_name=args.out,
+        apply_netclasses=args.apply_netclasses,
+        run_erc=args.erc,
+        dry_run=args.dry_run,
+        auto_heal_pins=args.heal_pins,
+        prefer_global_labels=args.global_labels
+    )
+
+    if not res.get("success") and not res.get("dry_run"):
+        print(f"Error: {res.get('error', 'Compilation failed')}", file=sys.stderr)
+        return 1
+
+    pname = res.get("project_name", project_dir.name)
+    print(f"\n[*] Kaibridge Schematic Compiler -- Project '{pname}'")
+
+    if res.get("dry_run"):
+        print("  Mode: DRY RUN (no files written)")
+        sheets = res.get("sheets", [])
+        pad = max([len(s["id"]) for s in sheets] + [5]) if sheets else 5
+        print(f"  {'sheet'.ljust(pad)}  parts  nets  paper")
+        for s in sheets:
+            print(f"  {s['id'].ljust(pad)}  {s['parts']:>5}  {s['nets']:>4}  {s['paper']}")
+        print(f"\n  Total parts: {res.get('total_parts', 0)}, Total nets: {res.get('total_nets', 0)}")
+        return 0
+
+    sch_files = res.get("schematic_files", [])
+    print(f"  Generated {len(sch_files)} schematic sheet(s):")
+    for f in sch_files:
+        print(f"    - {f}")
+
+    if args.erc:
+        erc = res.get("erc", {})
+        errs = erc.get("errors", 0)
+        warns = erc.get("warnings", 0)
+        err_violations = res.get("error_violations", []) or erc.get("error_violations", [])
+        warn_violations = res.get("warning_violations", []) or erc.get("warning_violations", [])
+
+        print("\n  === ERC Verification Report ===")
+        print(f"  Total Errors: {errs}, Total Warnings: {warns}")
+
+        if errs > 0:
+            print(f"\n  [!] ERRORS ({errs}):")
+            for v in err_violations[:10]:
+                print(f"    - {v}")
+            if len(err_violations) > 10:
+                print(f"    ... and {len(err_violations) - 10} more errors.")
+
+        if warns > 0:
+            print(f"\n  [*] WARNINGS ({warns}):")
+            for v in warn_violations[:10]:
+                print(f"    - {v}")
+            if len(warn_violations) > 10:
+                print(f"    ... and {len(warn_violations) - 10} more warnings.")
+            print("  (Notice: Pin-type warnings like 'unspecified <-> passive' are non-fatal symbol metadata warnings and do not affect PCB netlist generation or copper connectivity).")
+
+        if errs > 0:
+            print(f"\n  Status: FAILED ({errs} Errors)")
+            return 1
+        elif warns > 0:
+            print(f"\n  Status: PASSED WITH WARNINGS (0 Errors, {warns} Warnings)")
+        else:
+            print(f"\n  Status: PASSED CLEAN (0 Errors, 0 Warnings)")
+
+    if args.svg:
+        from ..pcb.preview import render_schematic_preview
+        prev_res = render_schematic_preview(project_dir)
+        if prev_res.get("success"):
+            print("  Preview SVG     : Exported to kaibridge_dump/ (Checkpoint 1 Ready)")
+
+    if args.netlist:
+        root_sch = project_dir / (args.out or f"{pname}.kicad_sch")
+        net_res = export_netlist_and_bom(root_sch, project_dir)
+        if net_res.get("success"):
+            ic_audits = net_res.get("ic_pinout_audit", [])
+            if ic_audits:
+                print(f"\n  === IC & Connector Pinout Audit ({len(ic_audits)} Active Devices) ===")
+                for ca in ic_audits:
+                    print(f"\n  --- Component {ca['ref']} ({ca['value']}) | {ca['total_pins']} Pins ---")
+                    for p in ca["pins"]:
+                        print(f"    Pin {p['pin']:<4} [{p['name']:<10}] ({p['type']:<12}) ──> {p['status']}")
+
+            pin_func_nets = net_res.get("pin_func_nets", {})
+            active_nets = {k: v for k, v in pin_func_nets.items() if not k.startswith("unconnected-")}
+            print(f"\n  === Pin-Function Netlist Connectivity ({len(active_nets)} Active Nets) ===")
+            for net_name, nodes in sorted(active_nets.items()):
+                print(f"  NET {net_name:<20} : {'  '.join(nodes)}")
+
+            print(f"\n  Netlist XML     : Exported to kaibridge_dump/netlist.xml")
+            print(f"  BOM CSV         : Exported to kaibridge_dump/bom.csv")
+            print(f"  Pinout Audit MD : Exported to kaibridge_dump/pinout_audit.md")
+        else:
+            print(f"\n  [!] Netlist Export Warning: {net_res.get('error', 'Failed to export')}")
+
+    print("  Next: sync to PCB via headless kicad_pcb_sync.py or KiCad F8\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
 
 
 

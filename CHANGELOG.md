@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Beta v2.6.0] - 2026-09-11
+
+### Added
+- **Unified CLI (`kaibridge <subcommand>`):** Single entry point dispatching 16 subcommands (`init`, `3d`, `pins`, `build`, `sync`, `layout`, `snapshot`, `opt`, `planar-opt`, `inspect`, `route`, `diff-pair`, `export`, `oracle`, `check`, `fetch`) with lazy dynamic imports (<20ms startup), fuzzy typo matching suggestions, and standard `python -m kaibridge` execution.
+- **Automated End-to-End Synthesis Pipeline Test (`tests/test_e2e_pipeline.py`):** Full integration test validating the entire synthesis lifecycle in temporary workspace: project bootstrap (`init`) ➔ circuit specification ➔ schematic compilation (`build`) ➔ netlist sync (`sync`) ➔ planar placement (`planar-opt`) ➔ collision audit (`inspect`) ➔ JLCPCB release export (`export`).
+- **Live Inventory Intelligence & SMT Fee Classifier (`kaibridge check`):** Real-time querying of JLCPCB warehouse stock, automatic SMT classification (`[BASIC]` vs `[EXTENDED]`), volume pricing tiers, manufacturer datasheet URLs, and electrical specifications.
+- **Hybrid CAD Ingestion Engine (`kaibridge fetch`):** Primary CAD generation via `JLC2KiCadLib 1.3.1` (native KiCad 10 syntax, non-plated alignment pegs on `F.Fab` preventing zero-annular-ring DRC errors, and relative `$(KIPRJMOD)` STEP/WRL paths) with fail-closed automatic fallback to `easyeda2kicad`.
+- **Standard Python Packaging (`pyproject.toml`):** PEP 517/621 packaging specification enabling editable installation (`pip install -e .`) and standard console entry points (`kaibridge`, `kaibridge-layout`, `kaibridge-route`, `kaibridge-sync`, `kaibridge-opt`, `kaibridge-inspect`, `kaibridge-oracle`).
+- **Programmatic Planar Layout API (`kaibridge.pcb.planar_optimizer`):** Exposed `optimize_planar_layout()` functional entry point for programmatic simulated annealing placement and hierarchical molecular floorplanning.
+- **Unified 2D Computational Geometry Engine (`kaibridge.core.geometry`):** Consolidated orientation (`ccw`), segment intersection, coordinate rotation, and polygon distance calculations into a standalone module.
+- **Automated Test Suite (64 Tests):** Unit and integration test coverage across CLI dispatcher, sourcing API, CAD fetchers, geometry algorithms, nanometer `BoardIR` & pre-flight proof gates E0–E3, AST models, LCSC golden cache, Kruskal MST, pin swapper, and full E2E lifecycle.
+
+### Changed
+- **Modular Subpackage Decomposition:** Modularized root scripts into isolated subpackages (`kaibridge.core.init`, `kaibridge.sourcing.pins`, `kaibridge.sourcing.fetch_3d`, `kaibridge.sourcing.jlc_api`, `kaibridge.sourcing.check_cli`, `kaibridge.pcb.snapshot_cli`, `kaibridge.pcb.planar_optimizer`), while keeping 5-line delegation wrappers at repository root.
+- **Documentation Overhaul:** Updated `README.md` with explicit system requirements (Python 3.10+, KiCad 10, Java 17+), installation instructions, and Freerouting JAR setup guidelines. Synchronized `SKILL.md` and `.agents/AGENTS.md` to reflect two-stage CAD sourcing and unified CLI commands.
+
+### Removed
+- **Legacy MCP Server Layer:** Removed STDIO JSON-RPC MCP server (`server.py`, `kaibridge/server.py`, `kaibridge-mcp` console script, and `test_server_mcp.py`), establishing Kaibridge strictly as a standalone Python CLI and library.
+
+### Fixed & Hardened
+- **Symbol Name Normalization (`kaibridge.sourcing.pins`):** Added dot-vs-underscore normalization to symbol lookup to match `JLC2KiCadLib` naming conventions (e.g. resolving `AMS1117-3_3` when queried with `AMS1117-3.3`).
+- **Netclasses Schema Parsing (`kaibridge.core.model`):** Supported both dictionary mapping and list-of-dictionaries formats for `netclasses` definitions in `design.json`.
+- **Git Test Tracking:** Fixed `.gitignore` pattern that previously masked test files in version control.
+
+---
+
 ## [Beta v2.5.0] - 2026-09-09
 
 ### Added

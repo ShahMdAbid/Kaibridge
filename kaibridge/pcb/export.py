@@ -8,6 +8,7 @@ import sys
 import json
 import csv
 import zipfile
+import argparse
 import subprocess
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -285,4 +286,34 @@ def _generate_bom_and_cpl(pcb_file: str | Path, design_file: str | Path, out_dir
     del board
     gc.collect()
     return bom_file.exists() and cpl_file.exists()
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description="Export JLCPCB manufacturing bundle (Gerbers, Drill, BOM, CPL).")
+    ap.add_argument("project_dir", help="KiCad project folder")
+    args = ap.parse_args(argv)
+
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.is_dir():
+        print(f"Error: Not a directory: {project_dir}", file=sys.stderr)
+        return 1
+
+    print(f"[*] Exporting JLCPCB production files for: {project_dir}")
+    res = export_production_files(project_dir)
+
+    if not res.get("success"):
+        print(f"Error: {res.get('error')}", file=sys.stderr)
+        return 1
+
+    print("\n=== JLCPCB Production Export Successful ===")
+    print(f"  Gerber ZIP : {res.get('gerber_zip') or res.get('gerbers_zip')}")
+    print(f"  BOM CSV    : {res.get('bom_csv')}")
+    print(f"  CPL CSV    : {res.get('cpl_csv')}")
+    print(f"  Total Parts: {res.get('bom_rows') or res.get('total_bom_items')}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
 
